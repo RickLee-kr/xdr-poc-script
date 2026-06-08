@@ -1,0 +1,1 @@
+"""Command runtime binding tests."""
