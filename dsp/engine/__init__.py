@@ -9,6 +9,7 @@ from dsp.engine.scenario_engine import (
     ScenarioSkipError,
     ScenarioSummary,
     TargetSet,
+    emit_activity,
 )
 from dsp.engine.target_engine import resolve_targets
 
@@ -20,6 +21,7 @@ __all__ = [
     "ScenarioSkipError",
     "ScenarioSummary",
     "TargetSet",
+    "emit_activity",
     "resolve_targets",
     "run_scenario",
 ]

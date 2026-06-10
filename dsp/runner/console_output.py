@@ -25,6 +25,14 @@ def format_duration(seconds: float) -> str:
     return str(timedelta(seconds=total))
 
 
+def format_elapsed(seconds: float) -> str:
+    """Format elapsed seconds as HH:MM:SS for heartbeat output."""
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 class OperationalConsole:
     """Emit structured progress lines during an operational run."""
 
@@ -42,6 +50,8 @@ class OperationalConsole:
         self._stream = stream or sys.stdout
         self._run_started = False
         self._traffic_summaries: dict[str, dict[str, Any]] = {}
+        self._scenario_total = 0
+        self._scenario_index = 0
 
     def handle_progress(self, phase: str, data: dict[str, Any]) -> None:
         if phase == "run_started":
@@ -50,13 +60,23 @@ class OperationalConsole:
             self._write("Discovery Started")
         elif phase == "discovery_completed":
             hosts = data.get("hosts_found", 0)
+            probed = data.get("probed_hosts", 0)
+            alive = data.get("alive_hosts") or []
             self._write("Discovery Completed")
+            if probed:
+                self._write(f"Probed Hosts: {probed}")
             self._write(f"Hosts Found: {hosts}")
+            if alive:
+                self._write(f"Alive: {', '.join(str(h) for h in alive[:8])}{'...' if len(alive) > 8 else ''}")
             self._write("")
-            self._write("Scenario Execution Started")
-            self._write("")
+        elif phase == "targets_selected":
+            self._emit_selected_targets(data)
         elif phase == "scenario_started":
-            pass
+            self._emit_scenario_started(data)
+        elif phase == "activity":
+            self._emit_activity(data)
+        elif phase == "heartbeat":
+            self._emit_heartbeat(data)
         elif phase == "scenario_completed":
             sid = data.get("scenario_id", "")
             metrics = data.get("metrics") or {}
@@ -109,6 +129,73 @@ class OperationalConsole:
         self._write(f"Target Net: {target_net}")
         self._write(f"Profile: {profile}")
         self._write("")
+
+    def _emit_selected_targets(self, data: dict[str, Any]) -> None:
+        groups: dict[str, list[str]] = data.get("groups") or {}
+        if not groups:
+            return
+        self._write("Selected Targets")
+        self._write("")
+        for protocol, hosts in groups.items():
+            self._write(f"{protocol}:")
+            for host in hosts:
+                self._write(f"  {host}")
+            self._write("")
+
+    def _emit_scenario_started(self, data: dict[str, Any]) -> None:
+        scenario_id = data.get("scenario_id", "")
+        if not scenario_id:
+            return
+        index = int(data.get("index", self._scenario_index + 1))
+        total = int(data.get("total", self._scenario_total or 1))
+        self._scenario_index = index
+        self._scenario_total = total
+        self._write(f"[{index}/{total}] {scenario_id} STARTED")
+        self._write("")
+        meta = data.get("metadata") or {}
+        if "targets" in meta:
+            self._write(f"targets={meta['targets']}")
+        if "ports" in meta:
+            self._write(f"ports={meta['ports']}")
+        if meta:
+            self._write("")
+
+    _ACTIVITY_FIELD_ORDER = (
+        "target",
+        "port",
+        "url",
+        "query",
+        "user",
+        "action",
+        "result",
+    )
+
+    def _emit_activity(self, data: dict[str, Any]) -> None:
+        scenario_id = data.get("scenario_id", "")
+        if not scenario_id:
+            return
+        self._write(f"[{scenario_id}]")
+        emitted: set[str] = set()
+        for key in self._ACTIVITY_FIELD_ORDER:
+            if key in data:
+                self._write(f"{key}={data[key]}")
+                emitted.add(key)
+        for key in sorted(data):
+            if key in ("scenario_id", *emitted):
+                continue
+            self._write(f"{key}={data[key]}")
+
+    def _emit_heartbeat(self, data: dict[str, Any]) -> None:
+        scenario_id = data.get("scenario_id", "")
+        if not scenario_id:
+            return
+        elapsed = float(data.get("elapsed_sec", 0.0))
+        counters: dict[str, int] = data.get("counters") or {}
+        self._write(f"[{scenario_id}]")
+        self._write("running")
+        self._write(f"elapsed={format_elapsed(elapsed)}")
+        for key in sorted(counters):
+            self._write(f"{key}={counters[key]}")
 
     def print_evidence_summary(self, run_dir: Path) -> None:
         """Print artifact paths after run completion."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
 from dsp.protocols.http import HttpClient
 from dsp.protocols.http.sqli_events import (
     append_sqli_outcome_event,
@@ -118,6 +118,13 @@ def run(
         )
         payload_count += 1
 
+        emit_activity(
+            ctx,
+            scenario_id,
+            target=plan.host,
+            url=request.url,
+            action="request",
+        )
         ctx.event_store.append(
             build_sql_request_sent_event(
                 run_id=ctx.run_id,

@@ -9,6 +9,7 @@ from dsp.engine.scenario_engine import TargetSet
 DEFAULT_LAB_TARGET_NET = "10.10.10.0/24"
 DEFAULT_LAB_FALLBACK_HOST = "10.10.10.20"
 MAX_EXPANDED_HOSTS = 32
+DISCOVERY_MAX_HOSTS = 254
 
 
 def expand_target_net_hosts(target_net: str, *, max_hosts: int = MAX_EXPANDED_HOSTS) -> list[str]:
@@ -32,8 +33,10 @@ def resolve_targets(
     required_capabilities: list[str] | None = None,
     *,
     max_hosts: int | None = None,
+    discovery: bool = False,
+    dry_run: bool = False,
 ) -> TargetSet:
-    """Build TargetSet from target_net; lab fallback only when target_net is absent."""
+    """Build TargetSet from target_net; optional bash-aligned TCP service discovery."""
     caps = {cap: True for cap in (required_capabilities or [])}
     caps.setdefault("alive_host", True)
 
@@ -45,13 +48,35 @@ def resolve_targets(
             capabilities=caps,
         )
 
-    host_cap = max_hosts if max_hosts is not None else MAX_EXPANDED_HOSTS
-    hosts = expand_target_net_hosts(net, max_hosts=host_cap)
+    expand_limit = DISCOVERY_MAX_HOSTS if discovery else (max_hosts if max_hosts is not None else MAX_EXPANDED_HOSTS)
+    hosts = expand_target_net_hosts(net, max_hosts=expand_limit)
     if not hosts:
         raise ValueError(f"target_net has no usable hosts: {net}")
+
+    service_hosts: dict[str, list[str]] = {}
+    discovery_enabled = False
+    discovery_meta: dict[str, object] = {}
+
+    if discovery and not dry_run:
+        from dsp.discovery.legacy_bash import discover_services
+
+        result = discover_services(net, max_hosts=DISCOVERY_MAX_HOSTS)
+        service_hosts = result.service_hosts
+        discovery_enabled = True
+        discovery_meta = {
+            "probed_hosts": result.probed_hosts,
+            "alive_hosts": result.alive_hosts,
+            "open_endpoints": result.open_endpoints,
+            "service_hosts": service_hosts,
+        }
+        if result.alive_hosts:
+            hosts = result.alive_hosts
 
     return TargetSet(
         target_net=net,
         hosts=hosts,
         capabilities=caps,
+        service_hosts=service_hosts,
+        discovery_enabled=discovery_enabled,
+        discovery_meta=discovery_meta,
     )

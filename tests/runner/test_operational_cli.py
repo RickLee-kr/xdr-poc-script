@@ -75,7 +75,19 @@ def test_cli_profile_run_prints_progress_and_evidence(tmp_path: Path, capsys) ->
             )
             on_progress("discovery_started", {})
             on_progress("discovery_completed", {"hosts_found": 4})
-            on_progress("scenario_started", {"scenario_id": "dummy"})
+            on_progress(
+                "targets_selected",
+                {"groups": {"DNS": ["221.139.249.4"], "HTTP": ["221.139.249.20"]}},
+            )
+            on_progress(
+                "scenario_started",
+                {
+                    "scenario_id": "port_sweep",
+                    "index": 1,
+                    "total": 9,
+                    "metadata": {"targets": 2, "ports": 13},
+                },
+            )
             on_progress(
                 "scenario_completed",
                 {
@@ -126,6 +138,8 @@ def test_cli_profile_run_prints_progress_and_evidence(tmp_path: Path, capsys) ->
     assert "Profile: normal" in captured
     assert "Discovery Completed" in captured
     assert "Hosts Found: 4" in captured
+    assert "Selected Targets" in captured
+    assert "[1/9] port_sweep STARTED" in captured
     assert "Duration: 0:03:12" in captured
     assert "Events Generated: 517" in captured
     assert "Port Sweep Completed" in captured

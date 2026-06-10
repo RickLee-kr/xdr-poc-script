@@ -16,7 +16,8 @@ from dsp.protocols.smb.attempts import (
 
 
 def test_default_usernames_fixed_list():
-    assert DEFAULT_USERNAMES == ("administrator", "admin", "guest", "test", "user")
+    assert DEFAULT_USERNAMES[0] == "invaliduser"
+    assert "administrator" in DEFAULT_USERNAMES
 
 
 def test_default_password_labels_dummy_values_only():

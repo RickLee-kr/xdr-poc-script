@@ -51,14 +51,14 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
         "high": {"phase1_count": 30, "phase2_count": 15, "timeout": 0.05},
     },
     "http_followup": {
-        "low": {"max_hosts": 1, "max_per_host": 3, "max_total": 5, "timeout": 15.0},
-        "normal": {"max_hosts": 2, "max_per_host": 10, "max_total": 20, "timeout": 10.0},
-        "high": {"max_hosts": 3, "max_per_host": 30, "max_total": 60, "timeout": 5.0},
+        "low": {"max_hosts": 1, "max_per_host": 12, "max_total": 12, "timeout": 15.0, "include_attack_paths": True},
+        "normal": {"max_hosts": 2, "max_per_host": 22, "max_total": 44, "timeout": 10.0, "include_attack_paths": True},
+        "high": {"max_hosts": 3, "max_per_host": 30, "max_total": 60, "timeout": 5.0, "include_attack_paths": True},
     },
     "ssh_failure": {
-        "low": {"max_hosts": 1, "max_per_host": 5, "max_total": 5, "timeout": 15.0},
-        "normal": {"max_hosts": 2, "max_per_host": 15, "max_total": 25, "timeout": 10.0},
-        "high": {"max_hosts": 2, "max_per_host": 30, "max_total": 50, "timeout": 5.0},
+        "low": {"max_hosts": 1, "max_per_host": 30, "max_total": 30, "timeout": 5.0},
+        "normal": {"max_hosts": 2, "max_per_host": 150, "max_total": 150, "timeout": 5.0},
+        "high": {"max_hosts": 2, "max_per_host": 300, "max_total": 300, "timeout": 5.0},
     },
     "sql_injection": {
         "low": {"max_hosts": 1, "max_per_host": 3, "max_total": 5, "timeout": 15.0},
@@ -66,9 +66,9 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
         "high": {"max_hosts": 3, "max_per_host": 25, "max_total": 50, "timeout": 5.0},
     },
     "port_sweep": {
-        "low": {"max_hosts": 1, "max_ports": 5, "timeout": 5.0},
-        "normal": {"max_hosts": 2, "max_ports": 15, "timeout": 3.0},
-        "high": {"max_hosts": 3, "max_ports": 30, "timeout": 2.0},
+        "low": {"max_hosts": 64, "max_ports": 10, "timeout": 0.5},
+        "normal": {"max_hosts": 254, "max_ports": 10, "timeout": 0.5},
+        "high": {"max_hosts": 254, "max_ports": 10, "timeout": 0.5},
     },
     "kerberos_failure": {
         "low": {"max_hosts": 1, "attempts_per_host": 3, "timeout": 15.0},

@@ -1,4 +1,4 @@
-"""HTTP Follow-up URL planning — fixed paths and port priority."""
+"""HTTP Follow-up URL planning — fixed paths, attack paths, port priority."""
 
 from __future__ import annotations
 
@@ -19,6 +19,21 @@ FIXED_PATHS = (
     "/index.html",
     "/dashboard",
 )
+# stellar_poc_followup.sh mandatory_payload_urls + payload_recon_urls (subset)
+ATTACK_SCAN_PATHS = (
+    "/WEB-INF/web.xml",
+    "/.env",
+    "/../../etc/passwd",
+    "/cmd.jsp",
+    "/backdoor.jsp",
+    "/shell.jsp",
+    "/actuator/env",
+    "/swagger",
+    "/graphql",
+    "/WEB-INF/classes/",
+    "/swagger-ui.html",
+    "/graphql/console",
+)
 MAX_HOSTS_DEFAULT = 2
 MAX_REQUESTS_PER_HOST_DEFAULT = 10
 MAX_REQUESTS_TOTAL_DEFAULT = 20
@@ -31,6 +46,7 @@ class PlannedHttpRequest:
     port: int
     path: str
     method: str = "GET"
+    headers: dict[str, str] | None = None
 
     @property
     def url(self) -> str:
@@ -60,6 +76,17 @@ def select_port_for_host(host_index: int, port_priority: tuple[int, ...] = PORT_
     return port_priority[host_index % len(port_priority)]
 
 
+def _dedupe_paths(*groups: tuple[str, ...]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for group in groups:
+        for path in group:
+            if path not in seen:
+                seen.add(path)
+                ordered.append(path)
+    return ordered
+
+
 def plan_followup_requests(
     hosts: list[str],
     *,
@@ -67,11 +94,12 @@ def plan_followup_requests(
     max_per_host: int = MAX_REQUESTS_PER_HOST_DEFAULT,
     max_total: int = MAX_REQUESTS_TOTAL_DEFAULT,
     port_priority: tuple[int, ...] = PORT_PRIORITY,
+    include_attack_paths: bool = True,
 ) -> list[PlannedHttpRequest]:
     """
-    Plan HTTP follow-up requests across hosts and fixed paths.
+    Plan HTTP follow-up / URL scan requests across hosts.
 
-    Caps: max 2 hosts, 10 requests per host, 20 requests total.
+    When include_attack_paths is True, bash mandatory attack paths are prepended.
     """
     if max_hosts < 1 or max_per_host < 1 or max_total < 1:
         raise HttpProtocolError("request caps must be positive")
@@ -80,7 +108,11 @@ def plan_followup_requests(
     if not selected:
         raise HttpProtocolError("at least one host is required")
 
-    paths = list(FIXED_PATHS)[:max_per_host]
+    if include_attack_paths:
+        all_paths = _dedupe_paths(ATTACK_SCAN_PATHS, FIXED_PATHS)
+    else:
+        all_paths = list(FIXED_PATHS)
+    paths = all_paths[:max_per_host]
     plans: list[PlannedHttpRequest] = []
 
     for host_index, host in enumerate(selected):

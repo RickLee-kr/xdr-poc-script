@@ -1,10 +1,13 @@
-"""SSH login failure executor — planned auth-failure attempts."""
+"""SSH login failure executor — discovery ssh_hosts + invaliduser burst."""
 
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
+from dsp.engine.host_selection import select_hosts_for_capability
 from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.event_store import Event
 from dsp.protocols.ssh import (
     MAX_ATTEMPTS_PER_HOST_DEFAULT,
     MAX_ATTEMPTS_TOTAL_DEFAULT,
@@ -20,12 +23,7 @@ from dsp.protocols.ssh import (
 
 
 def select_ssh_hosts(targets: TargetSet, config: dict, *, max_hosts: int = MAX_HOSTS_DEFAULT) -> list[str]:
-    """Select up to max_hosts targets without discovery."""
-    if config.get("hosts"):
-        return [str(h) for h in config["hosts"]][:max_hosts]
-    if targets.hosts:
-        return list(targets.hosts)[:max_hosts]
-    return ["10.10.10.20"]
+    return select_hosts_for_capability(targets, config, capability="ssh_hosts", max_hosts=max_hosts)
 
 
 def run(
@@ -42,9 +40,29 @@ def run(
     port = int(params.get("port", SSH_PORT_DEFAULT))
     source = "dry_run" if ctx.dry_run else "local"
     mode = "mock" if ctx.dry_run else "live"
-    client = SshClient(mode=mode, timeout=float(params.get("timeout", 10.0)))
+    client = SshClient(mode=mode, timeout=float(params.get("timeout", 5.0)))
 
     hosts = select_ssh_hosts(targets, params, max_hosts=max_hosts)
+    if not hosts:
+        ctx.event_store.append(
+            Event(
+                run_id=ctx.run_id,
+                scenario_id=scenario_id,
+                timestamp=datetime.now(timezone.utc),
+                stage="executor",
+                event="ssh_failure_skipped",
+                status="info",
+                source=source,
+                evidence={
+                    "reason": "skipped_no_open_service: no ssh_hosts from discovery",
+                    "skipped_no_open_service": True,
+                    "auth_attempts_planned": 0,
+                    "auth_attempts": 0,
+                },
+            )
+        )
+        return
+
     plans = plan_ssh_attempts(
         hosts,
         max_hosts=max_hosts,
@@ -56,6 +74,7 @@ def run(
     sample_usernames: list[str] = []
     attempt_count = 0
     failure_count = 0
+    timeout_count = 0
     t0 = time.monotonic()
 
     ctx.event_store.append(
@@ -67,9 +86,11 @@ def run(
             evidence={
                 "hosts": hosts,
                 "planned_attempts": len(plans),
+                "auth_attempts_planned": len(plans),
                 "max_total": max_total,
                 "port": port,
                 "mode": mode,
+                "discovery": targets.discovery_enabled,
             },
         )
     )
@@ -119,6 +140,8 @@ def run(
         )
         if result.outcome == "auth_failed":
             failure_count += 1
+        elif result.outcome == "timeout":
+            timeout_count += 1
 
     elapsed = round(time.monotonic() - t0, 3)
     ctx.event_store.append(
@@ -131,7 +154,10 @@ def run(
                 "targets": hosts,
                 "port": port,
                 "attempt_count": attempt_count,
+                "auth_attempts": attempt_count,
                 "failure_count": failure_count,
+                "auth_failed": failure_count,
+                "timeouts": timeout_count,
                 "duration_sec": elapsed,
                 "sample_usernames": sample_usernames,
             },

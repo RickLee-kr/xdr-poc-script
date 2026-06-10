@@ -31,6 +31,11 @@ from dsp.manual_verification import (
 )
 from dsp.plugins import PluginLoader, PluginStatus
 from dsp.reporting import ReportingEngine
+from dsp.runner.progress_emitter import ProgressEmitter
+from dsp.runner.target_selection import (
+    resolve_selected_targets_by_protocol,
+    scenario_start_metadata,
+)
 from dsp.validation import ValidationEngine
 
 SUPPORTED_EXECUTION_PROVIDERS = frozenset({"local", "webshell"})
@@ -57,6 +62,10 @@ def compute_exit_code(results: list) -> int:
         return 3
     decisions = [r.decision for r in results]
     if all(d == ValidationDecision.SUCCESS for d in decisions):
+        return 0
+    if all(
+        d in (ValidationDecision.SUCCESS, ValidationDecision.SKIPPED) for d in decisions
+    ) and any(d == ValidationDecision.SUCCESS for d in decisions):
         return 0
     if any(d == ValidationDecision.CODE_FAILURE for d in decisions):
         return 2
@@ -189,8 +198,9 @@ class RunManager:
         run_dir.mkdir(parents=True, exist_ok=True)
         run_started_at = datetime.now(timezone.utc)
 
-        if on_progress is not None:
-            on_progress(
+        emitter = ProgressEmitter(on_progress) if on_progress is not None else None
+        if emitter is not None:
+            emitter.emit(
                 "run_started",
                 {
                     "provider": execution_provider,
@@ -230,15 +240,32 @@ class RunManager:
             event_store=store,
             config=config,
             dry_run=dry_run,
+            activity_emitter=emitter.emit_activity if emitter is not None else None,
         )
-        targets = resolve_targets(target_net, max_hosts=max_hosts)
+        targets = resolve_targets(
+            target_net,
+            max_hosts=max_hosts or 254,
+            discovery=not dry_run,
+            dry_run=dry_run,
+        )
 
-        if on_progress is not None:
-            on_progress("discovery_started", {})
-            on_progress(
+        if emitter is not None:
+            emitter.emit("discovery_started", {})
+            emitter.emit(
                 "discovery_completed",
-                {"hosts_found": len(targets.hosts)},
+                {
+                    "hosts_found": len(targets.hosts),
+                    "probed_hosts": targets.discovery_meta.get("probed_hosts", 0),
+                    "alive_hosts": targets.discovery_meta.get("alive_hosts", []),
+                    "service_hosts": targets.discovery_meta.get("service_hosts", {}),
+                },
             )
+            selected = resolve_selected_targets_by_protocol(
+                scenario_ids,
+                targets,
+                config.scenario_params,
+            )
+            emitter.emit("targets_selected", {"groups": selected})
 
         provider = self._create_execution_provider(
             execution_provider,
@@ -263,13 +290,24 @@ class RunManager:
         collector = RemoteEventCollector() if execution_provider == "webshell" else None
 
         summaries: dict[str, dict] = {}
+        total_scenarios = len(scenario_ids)
         try:
-            for sid in scenario_ids:
+            for index, sid in enumerate(scenario_ids, start=1):
                 record = self.registry.get(sid)
                 assert record is not None
                 exec_ctx.scenario_id = sid
-                if on_progress is not None:
-                    on_progress("scenario_started", {"scenario_id": sid})
+                if emitter is not None:
+                    params = config.scenario_params.get(sid, {})
+                    emitter.emit(
+                        "scenario_started",
+                        {
+                            "scenario_id": sid,
+                            "index": index,
+                            "total": total_scenarios,
+                            "metadata": scenario_start_metadata(sid, targets, params),
+                        },
+                    )
+                    emitter.on_scenario_started(sid)
                 summary = provider.execute(
                     exec_ctx,
                     record,
@@ -284,9 +322,10 @@ class RunManager:
                         "event_count": summary.event_count,
                         "notes": summary.notes,
                     }
-                if on_progress is not None:
+                if emitter is not None:
+                    emitter.on_scenario_completed()
                     completed_metrics = summaries.get(sid, {}).get("metrics", {})
-                    on_progress(
+                    emitter.emit(
                         "scenario_completed",
                         {
                             "scenario_id": sid,
@@ -347,18 +386,33 @@ class RunManager:
 
         store.export_jsonl(run_dir / "events.jsonl")
         event_count = store.count(EventQuery(run_id=run_id))
+
+        from dsp.runtime.traffic_summary import build_traffic_summary
+
+        traffic_summary = build_traffic_summary(
+            store,
+            run_id=run_id,
+            scenario_ids=scenario_ids,
+            targets=targets,
+            traffic_profile=operational_profile or "normal",
+        )
+        (run_dir / "traffic_summary.json").write_text(
+            json.dumps(traffic_summary, indent=2),
+            encoding="utf-8",
+        )
+
         store.close_run()
         self._write_run_json(run_dir / "run.json", run)
 
         if export_evidence:
             self._export_evidence(store, run_id=run_id, run_dir=run_dir)
-            if on_progress is not None:
-                on_progress("evidence_generated", {})
+            if emitter is not None:
+                emitter.emit("evidence_generated", {})
 
         exit_code = compute_exit_code(results)
         duration_sec = (datetime.now(timezone.utc) - run_started_at).total_seconds()
-        if on_progress is not None:
-            on_progress(
+        if emitter is not None:
+            emitter.emit(
                 "run_completed",
                 {
                     "duration_sec": duration_sec,

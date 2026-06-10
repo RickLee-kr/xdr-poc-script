@@ -98,7 +98,7 @@ def discover_host_count(target_net: str, *, max_hosts: int | None = None) -> int
     if not net:
         targets = resolve_targets("")
         return len(targets.hosts)
-    cap = max_hosts if max_hosts is not None else 32
+    cap = max_hosts if max_hosts is not None else 254
     return len(expand_target_net_hosts(net, max_hosts=cap))
 
 
@@ -164,12 +164,16 @@ def build_operational_scenario_params(
     params: dict[str, dict[str, Any]] = {}
     for scenario_id in scenario_ids:
         base = scenario_params_for_profile(scenario_id, traffic_profile)
-        params[scenario_id] = _apply_host_limit(
+        merged = _apply_host_limit(
             base,
             profile,
             host_count,
             max_hosts_override=max_hosts,
         )
+        if scenario_id == "port_sweep":
+            merged["max_hosts"] = min(254, host_count)
+            merged["max_ports"] = 10
+        params[scenario_id] = merged
     return params
 
 

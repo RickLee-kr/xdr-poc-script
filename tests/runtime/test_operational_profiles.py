@@ -78,10 +78,11 @@ def test_build_operational_scenario_params_uses_all_hosts_for_high() -> None:
 def test_build_operational_scenario_params_low_limits_hosts() -> None:
     params = build_operational_scenario_params(
         "low",
-        ["port_sweep"],
+        ["port_sweep", "http_followup"],
         target_net="10.10.10.0/24",
     )
-    assert params["port_sweep"]["max_hosts"] == 1
+    assert params["port_sweep"]["max_hosts"] == 254
+    assert params["http_followup"]["max_hosts"] == 1
 
 
 def test_build_operational_scenario_params_max_hosts_override_caps_high() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
 from dsp.protocols.ldap import (
     DEFAULT_SAFE_FILTERS,
     LDAP_PORT_DEFAULT,
@@ -109,6 +109,14 @@ def run(
             if plan.search_filter not in sample_filters and len(sample_filters) < 4:
                 sample_filters.append(plan.search_filter)
 
+        if plan.action_type == "bind":
+            emit_activity(
+                ctx,
+                scenario_id,
+                target=plan.host,
+                user="administrator",
+                action="bind_attempt",
+            )
         ctx.event_store.append(
             build_attempt_event(
                 run_id=ctx.run_id,

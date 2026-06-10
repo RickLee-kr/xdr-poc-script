@@ -4,25 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from dsp.discovery.legacy_bash import FAST_SAFE_DISCOVERY_PORTS
 from dsp.protocols.base import ReconProtocolError
 
-DEFAULT_PORTS: tuple[int, ...] = (
-    22,
-    23,
-    25,
-    53,
-    80,
-    110,
-    135,
-    139,
-    143,
-    389,
-    443,
-    445,
-    3389,
-)
-MAX_HOSTS_DEFAULT = 5
-MAX_PORTS_DEFAULT = 13
+# Bash fast-safe discovery ports (stellar_poc_fast_safe.sh)
+DEFAULT_PORTS: tuple[int, ...] = FAST_SAFE_DISCOVERY_PORTS
+MAX_HOSTS_DEFAULT = 32
+MAX_PORTS_DEFAULT = len(FAST_SAFE_DISCOVERY_PORTS)
 MAX_PORTS_LIMIT = 100
 
 SAFE_ALLOWED_PORTS = frozenset(DEFAULT_PORTS)
@@ -54,7 +42,7 @@ def plan_port_sweep(
     """
     Plan horizontal port sweep probes — same port set across each host.
 
-    Caps: max 5 hosts, max 100 ports (default 13).
+    Caps: max 32 hosts (bash /24 sweep), max 100 ports (default 10 fast-safe ports).
     Safe mode restricts ports to the default allowlist.
     """
     if max_hosts < 1:

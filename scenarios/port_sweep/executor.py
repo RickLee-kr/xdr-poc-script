@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.engine.target_engine import expand_target_net_hosts
 from dsp.protocols.recon import (
     DEFAULT_PORTS,
     MAX_HOSTS_DEFAULT,
@@ -24,12 +25,10 @@ def select_port_sweep_hosts(
     *,
     max_hosts: int = MAX_HOSTS_DEFAULT,
 ) -> list[str]:
-    """Select up to max_hosts targets without discovery."""
+    """Select hosts for horizontal sweep — full /24 expansion (bash service discovery)."""
     if config.get("hosts"):
         return [str(h) for h in config["hosts"]][:max_hosts]
-    if targets.hosts:
-        return list(targets.hosts)[:max_hosts]
-    return ["10.10.10.30"]
+    return expand_target_net_hosts(targets.target_net, max_hosts=max_hosts)[:max_hosts]
 
 
 def _resolve_ports(config: dict, max_ports: int) -> tuple[int, ...]:
@@ -83,9 +82,11 @@ def run(
                 "hosts": hosts,
                 "ports": list(ports),
                 "planned_probes": len(plans),
+                "probes_planned": len(plans),
                 "max_ports": max_ports,
                 "mode": mode,
                 "safe_mode": safe_mode,
+                "discovery": targets.discovery_enabled,
             },
         )
     )
@@ -146,7 +147,9 @@ def run(
                 "hosts": hosts,
                 "ports": list(ports),
                 "probe_count": probe_count,
+                "probes_sent": probe_count,
                 "connection_success_count": success_count,
+                "connections_open": success_count,
                 "connection_failure_count": failure_count,
                 "duration_sec": elapsed,
                 "safe_mode": safe_mode,

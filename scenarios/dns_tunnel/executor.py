@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 
-from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
 from dsp.protocols.dns import DnsClient, build_dns_events
 from dsp.protocols.dns.tunnel import (
     CHUNK_SIZE_DEFAULT,
@@ -120,6 +120,13 @@ def run(
             )
 
             query = client.make_query(target, fqdn)
+            emit_activity(
+                ctx,
+                scenario_id,
+                target=target,
+                query=fqdn,
+                action="send",
+            )
             if mode == "mock":
                 result = client.query(target, fqdn, mock_outcome="response")
             else:

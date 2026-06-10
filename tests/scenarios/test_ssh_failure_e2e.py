@@ -53,7 +53,7 @@ def test_ssh_failure_dry_run_e2e(tmp_runs_dir):
     report = (run_dir / "report.md").read_text()
     assert "## SSH Login Failure Details" in report
     assert "ssh_auth_attempt_count" in report
-    assert "admin" in report or "root" in report
+    assert "invaliduser" in report
 
 
 def test_ssh_failure_live_e2e(tmp_runs_dir, mock_ssh_subprocess):

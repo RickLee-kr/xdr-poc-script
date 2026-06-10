@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
 from dsp.protocols.dns import DnsClient, build_dns_events
 from dsp.protocols.dns.dga import (
     EFFECTIVE_TLD_DEFAULT,
@@ -99,6 +99,13 @@ def run(
             domains_generated += 1
 
             query = client.make_query(resolver, fqdn)
+            emit_activity(
+                ctx,
+                scenario_id,
+                target=resolver,
+                query=fqdn,
+                action="send",
+            )
             if mode == "mock":
                 result = client.query(resolver, fqdn, mock_outcome=mock_outcome)
             else:

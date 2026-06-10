@@ -1,0 +1,107 @@
+"""Resolve per-scenario targets for operational progress output."""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+from typing import Any
+
+from dsp.engine.scenario_engine import TargetSet
+
+_SCENARIOS_ROOT = Path(__file__).resolve().parents[2] / "scenarios"
+
+_PROTOCOL_GROUPS: dict[str, str] = {
+    "port_sweep": "Recon",
+    "dns_tunnel": "DNS",
+    "dga": "DNS",
+    "http_followup": "HTTP",
+    "sql_injection": "HTTP",
+    "ldap_enumeration": "LDAP",
+    "smb_login_failure": "SMB",
+    "ssh_failure": "SSH",
+    "kerberos_failure": "Kerberos",
+}
+
+_SELECTOR_SPECS: dict[str, tuple[str, bool]] = {
+    "port_sweep": ("select_port_sweep_hosts", True),
+    "dns_tunnel": ("select_tunnel_targets", True),
+    "dga": ("select_dga_resolver", False),
+    "http_followup": ("select_followup_hosts", True),
+    "sql_injection": ("select_sqli_hosts", True),
+    "ldap_enumeration": ("select_ldap_hosts", True),
+    "smb_login_failure": ("select_smb_hosts", True),
+    "ssh_failure": ("select_ssh_hosts", True),
+    "kerberos_failure": ("select_kerberos_hosts", True),
+}
+
+_PROTOCOL_ORDER = ("Recon", "DNS", "HTTP", "LDAP", "SMB", "SSH", "Kerberos")
+
+
+def _load_executor_module(scenario_id: str):
+    path = _SCENARIOS_ROOT / scenario_id / "executor.py"
+    spec = importlib.util.spec_from_file_location(f"{scenario_id}_executor", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load executor for scenario {scenario_id!r}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def resolve_scenario_targets(
+    scenario_id: str,
+    targets: TargetSet,
+    params: dict[str, Any],
+) -> list[str]:
+    """Return host IPs selected for a scenario using its executor selector."""
+    spec = _SELECTOR_SPECS.get(scenario_id)
+    if spec is None:
+        return []
+    func_name, is_list = spec
+    module = _load_executor_module(scenario_id)
+    selector = getattr(module, func_name)
+    max_hosts = int(params.get("max_hosts", 2))
+    if is_list:
+        return [str(h) for h in selector(targets, params, max_hosts=max_hosts)]
+    return [str(selector(targets, params))]
+
+
+def resolve_selected_targets_by_protocol(
+    scenario_ids: list[str],
+    targets: TargetSet,
+    scenario_params: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Group selected scenario targets by protocol label for console output."""
+    grouped: dict[str, set[str]] = {}
+    for scenario_id in scenario_ids:
+        protocol = _PROTOCOL_GROUPS.get(scenario_id)
+        if protocol is None:
+            continue
+        params = scenario_params.get(scenario_id, {})
+        hosts = resolve_scenario_targets(scenario_id, targets, params)
+        if not hosts:
+            continue
+        bucket = grouped.setdefault(protocol, set())
+        bucket.update(hosts)
+
+    ordered: dict[str, list[str]] = {}
+    for protocol in _PROTOCOL_ORDER:
+        if protocol in grouped:
+            ordered[protocol] = sorted(grouped[protocol])
+    for protocol in sorted(grouped):
+        if protocol not in ordered:
+            ordered[protocol] = sorted(grouped[protocol])
+    return ordered
+
+
+def scenario_start_metadata(
+    scenario_id: str,
+    targets: TargetSet,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Build metadata lines for scenario STARTED progress output."""
+    hosts = resolve_scenario_targets(scenario_id, targets, params)
+    meta: dict[str, Any] = {"targets": len(hosts)}
+    if scenario_id == "port_sweep":
+        max_ports = int(params.get("max_ports", 13))
+        meta["ports"] = max_ports
+    return meta

@@ -21,15 +21,16 @@ def test_mock_probe_returns_connection_refused():
 
 
 def test_plan_port_sweep_default_ports():
+    from dsp.discovery.legacy_bash import FAST_SAFE_DISCOVERY_PORTS
+
     plans = plan_port_sweep(["10.10.10.30"], max_ports=5)
     assert len(plans) == 5
-    assert plans[0].port == 22
-    assert plans[4].port == 80
+    assert [p.port for p in plans] == list(FAST_SAFE_DISCOVERY_PORTS[:5])
 
 
 def test_plan_port_sweep_rejects_unsafe_port():
     with pytest.raises(ReconProtocolError, match="not allowed in safe mode"):
-        plan_port_sweep(["10.10.10.30"], ports=[8080], safe_mode=True)
+        plan_port_sweep(["10.10.10.30"], ports=[31337], safe_mode=True)
 
 
 def test_live_safe_mode_requires_enabled():

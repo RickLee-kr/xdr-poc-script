@@ -33,10 +33,12 @@ def send_request(
     request_id = uuid.uuid4().hex[:8]
     evidence: dict[str, Any] = {"url": url, "method": method.upper()}
 
+    request_headers = dict(headers) if headers else {}
+    request_headers.setdefault("User-Agent", "dsp-http-followup/1.0")
     req = urllib.request.Request(
         url,
         method=method.upper(),
-        headers=headers or {"User-Agent": "dsp-http-followup/1.0"},
+        headers=request_headers,
     )
     context = None
     if url.lower().startswith("https://"):
@@ -148,6 +150,7 @@ class HttpClient:
                 method=planned.method,
                 timeout=self.timeout,
                 verify_tls=self.verify_tls,
+                headers=planned.headers,
             )
         return self._mock_request(planned, mock_status_code=mock_status_code, mock_outcome=mock_outcome)
 
@@ -192,4 +195,5 @@ class HttpClient:
             host=planned.host,
             port=planned.port,
             path=planned.path,
+            headers=planned.headers,
         )

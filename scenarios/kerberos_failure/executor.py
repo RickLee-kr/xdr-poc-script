@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
 from dsp.protocols.kerberos import (
     ATTEMPTS_PER_HOST_DEFAULT,
     DEFAULT_REALM,
@@ -117,6 +117,13 @@ def run(
             )
         )
 
+        emit_activity(
+            ctx,
+            scenario_id,
+            target=plan.host,
+            user=plan.username,
+            action="auth_attempt",
+        )
         ctx.event_store.append(
             build_kerberos_auth_attempt_event(
                 run_id=ctx.run_id,

@@ -12,7 +12,13 @@ MAX_HOSTS_DEFAULT = 5
 ATTEMPTS_PER_HOST_DEFAULT = 10
 MAX_ATTEMPTS_PER_HOST = 50
 
-DEFAULT_USERNAMES: tuple[str, ...] = ("administrator", "admin", "guest", "test", "user")
+DEFAULT_USERNAMES: tuple[str, ...] = (
+    "invaliduser",
+    "administrator",
+    "admin",
+    "guest",
+    "test",
+)
 DEFAULT_PASSWORD_LABELS: tuple[str, ...] = ("InvalidPass1", "InvalidPass2", "InvalidPass3")
 
 
