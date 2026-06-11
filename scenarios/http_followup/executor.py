@@ -31,6 +31,8 @@ from dsp.protocols.http.urls import (
 )
 from dsp.protocols.http.user_agents import classify_user_agent, pick_burst_user_agent
 from dsp.protocols.types import HttpRequest, HttpResponseResult
+from dsp.runner.activity_reporter import ActivityReporter
+from dsp.runner.activity_reporter import ActivityReporter
 
 # stellar_poc_followup.sh: inter_sleep=0, ~300 unique URLs in HTTP_SCAN_WINDOW_SECONDS (~40s)
 DEFAULT_CONCURRENCY = 32
@@ -316,6 +318,7 @@ def run(
         )
     )
 
+    activity = ActivityReporter(ctx, scenario_id, total=len(plans))
     worker_count = min(concurrency, len(plans)) if plans else 1
     pending = list(enumerate(plans, start=1))
     with ThreadPoolExecutor(max_workers=worker_count) as pool:
@@ -407,6 +410,23 @@ def run(
             elif outcome.result.outcome == "timeout":
                 timeout_count += 1
 
+            activity.update(
+                responses=response_count,
+                unique_paths=len(path_counts),
+                unique_user_agents=len({o.ua for o in outcomes}),
+            )
+            activity.record(
+                action="request",
+                target=f"{plan.host}:{plan.port}",
+                method=plan.method,
+                url=plan.url,
+                path=plan.path,
+                query=plan.query,
+                user_agent=outcome.ua,
+                response_code=outcome.result.status_code,
+            )
+
+    activity.emit_final_progress()
     outcomes.sort(key=lambda o: o.seq)
     request_evidence = [_evidence_dump_record(o) for o in outcomes]
     request_dump = [_request_dump_record(o) for o in outcomes[:REQUEST_DUMP_SAMPLE_SIZE]]

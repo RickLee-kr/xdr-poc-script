@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from dsp.event_store import EventStore
@@ -35,6 +36,7 @@ class RunContext:
     cancelled: bool = False
     deadline: datetime | None = None
     activity_emitter: Any | None = None
+    artifact_dir: Path | None = None
 
 
 def emit_activity(ctx: RunContext, scenario_id: str, **fields: Any) -> None:

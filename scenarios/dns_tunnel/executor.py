@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 import uuid
 
-from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
+from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.dns import DnsClient, build_dns_events
 from dsp.protocols.dns.tunnel import (
     CHUNK_SIZE_DEFAULT,
@@ -89,6 +90,7 @@ def run(
         chunks_sent = 0
         bytes_encoded = 0
         t0 = time.monotonic()
+        activity = ActivityReporter(ctx, scenario_id, total=total_planned)
 
         for seq, chunk in enumerate(iter_payload_chunks(payload_mb, chunk_size), start=1):
             if ctx.cancelled:
@@ -120,13 +122,8 @@ def run(
             )
 
             query = client.make_query(target, fqdn)
-            emit_activity(
-                ctx,
-                scenario_id,
-                target=target,
-                query=fqdn,
-                action="send",
-            )
+            activity.update(target=target, sample_query=fqdn)
+            activity.record(action="send", target=target, query=fqdn)
             if mode == "mock":
                 result = client.query(target, fqdn, mock_outcome="response")
             else:
@@ -166,6 +163,7 @@ def run(
             chunks_sent += 1
             bytes_encoded += len(chunk)
 
+        activity.emit_final_progress()
         elapsed = round(time.monotonic() - t0, 3)
         completed_evidence = {
             "session_id": session_id,

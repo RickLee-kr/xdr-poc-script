@@ -102,6 +102,30 @@ def scenario_start_metadata(
     hosts = resolve_scenario_targets(scenario_id, targets, params)
     meta: dict[str, Any] = {"targets": len(hosts)}
     if scenario_id == "port_sweep":
+        max_hosts = int(params.get("max_hosts", 2))
         max_ports = int(params.get("max_ports", 13))
         meta["ports"] = max_ports
-    return meta
+        meta["planned_probes"] = min(len(hosts), max_hosts) * max_ports
+        meta["concurrency"] = int(params.get("concurrency", 32))
+    elif scenario_id == "http_followup":
+        from dsp.engine.host_selection import select_http_followup_endpoints
+        from dsp.protocols.http.curl_transport import curl_available
+
+        max_hosts = int(params.get("max_hosts", 1))
+        max_total = int(params.get("max_total", 300))
+        endpoints, _skip = select_http_followup_endpoints(targets, params, max_hosts=max_hosts)
+        if endpoints:
+            ep = endpoints[0]
+            meta["target"] = f"{ep.scheme}://{ep.host}:{ep.port}"
+        meta["planned_requests"] = max_total
+        meta["transport"] = "curl" if curl_available() else "urllib"
+        meta["evidence"] = "http_followup_requests.jsonl"
+    elif scenario_id == "dns_tunnel":
+        meta["planned_queries"] = int(params.get("max_queries", params.get("max_total", 50)))
+    elif scenario_id == "dga":
+        meta["planned_domains"] = int(params.get("max_domains", params.get("max_total", 15)))
+    elif scenario_id in ("ssh_failure", "ldap_enumeration", "kerberos_failure", "smb_login_failure"):
+        meta["planned_attempts"] = int(params.get("max_total", 0)) or None
+    elif scenario_id == "sql_injection":
+        meta["planned_requests"] = int(params.get("max_total", params.get("max_payloads", 10)))
+    return {k: v for k, v in meta.items() if v is not None}

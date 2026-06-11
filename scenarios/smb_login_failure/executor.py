@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from dsp.engine.host_selection import select_hosts_for_capability
 from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.runner.activity_reporter import ActivityReporter
 from dsp.event_store import Event
 from dsp.protocols.smb import (
     ATTEMPTS_PER_HOST_DEFAULT,
@@ -42,6 +43,10 @@ def run(
 
     hosts = select_smb_hosts(targets, params, max_hosts=max_hosts)
     if not hosts:
+        ActivityReporter(ctx, scenario_id).emit_skipped(
+            reason="no_open_445_service",
+            auth_attempts=0,
+        )
         ctx.event_store.append(
             Event(
                 run_id=ctx.run_id,
@@ -101,6 +106,7 @@ def run(
     tcp_open = 0
     tcp_failed = 0
     t0 = time.monotonic()
+    activity = ActivityReporter(ctx, scenario_id, total=len(plans))
 
     ctx.event_store.append(
         build_smb_scenario_started_event(
@@ -169,6 +175,15 @@ def run(
         else:
             tcp_failed += 1
 
+        activity.record(
+            action="auth_attempt",
+            target=plan.host,
+            port=plan.port,
+            user=plan.username,
+            result=result.outcome,
+        )
+
+    activity.emit_final_progress()
     elapsed = round(time.monotonic() - t0, 3)
     ctx.event_store.append(
         build_smb_scenario_completed_event(

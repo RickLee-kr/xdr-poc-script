@@ -20,6 +20,7 @@ from dsp.protocols.recon import (
     plan_port_sweep,
 )
 from dsp.protocols.types import PortProbeResult
+from dsp.runner.activity_reporter import ActivityReporter
 
 # stellar_poc.sh / fast-safe FALLBACK_SCAN_PARALLELISM
 DEFAULT_CONCURRENCY = 32
@@ -110,6 +111,7 @@ def run(
         )
     )
 
+    activity = ActivityReporter(ctx, scenario_id, total=len(plans))
     worker_count = min(concurrency, len(plans)) if plans else 1
     pending = list(enumerate(plans, start=1))
     with ThreadPoolExecutor(max_workers=worker_count) as pool:
@@ -165,9 +167,23 @@ def run(
 
             if result.connection_opened:
                 success_count += 1
+                activity.emit_open(target=plan.host, port=plan.port)
             else:
                 failure_count += 1
 
+            activity.update(
+                open=success_count,
+                failed=failure_count,
+                current=f"{plan.host}:{plan.port}",
+            )
+            activity.record(
+                action="probe",
+                target=plan.host,
+                port=plan.port,
+                result=result.outcome,
+            )
+
+    activity.emit_final_progress()
     elapsed = round(time.monotonic() - t0, 3)
     probes_per_second = round(probe_count / elapsed, 2) if elapsed > 0 else 0.0
     ctx.event_store.append(

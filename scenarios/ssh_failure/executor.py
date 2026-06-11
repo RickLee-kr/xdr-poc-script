@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from dsp.engine.host_selection import select_hosts_for_capability
 from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.runner.activity_reporter import ActivityReporter
 from dsp.event_store import Event
 from dsp.protocols.ssh import (
     MAX_ATTEMPTS_PER_HOST_DEFAULT,
@@ -76,6 +77,7 @@ def run(
     failure_count = 0
     timeout_count = 0
     t0 = time.monotonic()
+    activity = ActivityReporter(ctx, scenario_id, total=len(plans))
 
     ctx.event_store.append(
         build_ssh_failure_started_event(
@@ -143,6 +145,15 @@ def run(
         elif result.outcome == "timeout":
             timeout_count += 1
 
+        activity.update(auth_failed=failure_count, timeouts=timeout_count)
+        activity.record(
+            action="auth_attempt",
+            target=plan.host,
+            username=plan.username,
+            result=result.outcome,
+        )
+
+    activity.emit_final_progress()
     elapsed = round(time.monotonic() - t0, 3)
     ctx.event_store.append(
         build_ssh_failure_completed_event(

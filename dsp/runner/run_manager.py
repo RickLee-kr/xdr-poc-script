@@ -43,6 +43,68 @@ SUPPORTED_WEBSHELL_FAMILIES = frozenset({"jsp", "php", "aspx"})
 DEFAULT_REMOTE_WORK_DIR = "/tmp/dsp"
 
 
+def _latest_completed_evidence(
+    store: EventStore,
+    run_id: str,
+    scenario_id: str,
+) -> dict[str, Any]:
+    for event in reversed(store.list_events(run_id)):
+        if event.scenario_id == scenario_id and str(event.event).endswith("_completed"):
+            return dict(event.evidence or {})
+    return {}
+
+
+def _scenario_completion_extras(scenario_id: str, evidence: dict[str, Any]) -> dict[str, Any]:
+    extras: dict[str, Any] = {}
+    if scenario_id == "http_followup":
+        dump_summary = evidence.get("request_dump_summary") or {}
+        extras["unique_paths"] = dump_summary.get("unique_paths")
+        extras["unique_user_agents"] = dump_summary.get("unique_user_agents")
+        extras["malicious_rare_ua_count"] = evidence.get("malicious_rare_ua_count")
+        extras["requests_per_second"] = evidence.get("requests_per_second")
+        extras["duration_sec"] = evidence.get("duration_sec")
+        extras["concurrency"] = evidence.get("concurrency")
+    elif scenario_id == "port_sweep":
+        extras["duration_sec"] = evidence.get("duration_sec")
+        extras["probes_per_second"] = evidence.get("probes_per_second")
+        extras["concurrency"] = evidence.get("concurrency")
+    return {k: v for k, v in extras.items() if v is not None}
+
+
+def _scenario_artifact_paths(scenario_id: str, run_dir: Path) -> dict[str, str]:
+    artifacts: dict[str, str] = {}
+    if scenario_id == "http_followup":
+        artifacts["evidence_file"] = str(run_dir / "http_followup_requests.jsonl")
+        artifacts["sample_dump"] = str(run_dir / "http_request_dump.json")
+    return artifacts
+
+
+def _write_http_followup_artifacts(run_dir: Path, evidence: dict[str, Any]) -> None:
+    request_evidence = evidence.get("request_evidence")
+    if request_evidence:
+        evidence_lines = "".join(
+            json.dumps(record, ensure_ascii=False) + "\n"
+            for record in request_evidence
+        )
+        (run_dir / "http_followup_requests.jsonl").write_text(
+            evidence_lines,
+            encoding="utf-8",
+        )
+    dump = evidence.get("request_dump")
+    if dump:
+        (run_dir / "http_request_dump.json").write_text(
+            json.dumps(
+                {
+                    "sample_count": len(dump),
+                    "summary": evidence.get("request_dump_summary", {}),
+                    "samples": dump,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
 def default_runs_dir() -> Path:
     override = os.environ.get("DSP_RUNS_DIR")
     if override:
@@ -241,6 +303,7 @@ class RunManager:
             config=config,
             dry_run=dry_run,
             activity_emitter=emitter.emit_activity if emitter is not None else None,
+            artifact_dir=run_dir,
         )
         targets = resolve_targets(
             target_net,
@@ -305,6 +368,7 @@ class RunManager:
                             "index": index,
                             "total": total_scenarios,
                             "metadata": scenario_start_metadata(sid, targets, params),
+                            "run_dir": str(run_dir),
                         },
                     )
                     emitter.on_scenario_started(sid)
@@ -325,11 +389,16 @@ class RunManager:
                 if emitter is not None:
                     emitter.on_scenario_completed()
                     completed_metrics = summaries.get(sid, {}).get("metrics", {})
+                    completed_evidence = _latest_completed_evidence(store, run_id, sid)
+                    if sid == "http_followup" and completed_evidence:
+                        _write_http_followup_artifacts(run_dir, completed_evidence)
                     emitter.emit(
                         "scenario_completed",
                         {
                             "scenario_id": sid,
                             "metrics": completed_metrics,
+                            "extras": _scenario_completion_extras(sid, completed_evidence),
+                            "artifacts": _scenario_artifact_paths(sid, run_dir),
                         },
                     )
 
@@ -410,29 +479,7 @@ class RunManager:
             None,
         )
         if http_completed is not None:
-            http_evidence = (http_completed.evidence or {}).get("request_evidence")
-            if http_evidence:
-                evidence_lines = "".join(
-                    json.dumps(record, ensure_ascii=False) + "\n"
-                    for record in http_evidence
-                )
-                (run_dir / "http_followup_requests.jsonl").write_text(
-                    evidence_lines,
-                    encoding="utf-8",
-                )
-            dump = (http_completed.evidence or {}).get("request_dump")
-            if dump:
-                (run_dir / "http_request_dump.json").write_text(
-                    json.dumps(
-                        {
-                            "sample_count": len(dump),
-                            "summary": (http_completed.evidence or {}).get("request_dump_summary", {}),
-                            "samples": dump,
-                        },
-                        indent=2,
-                    ),
-                    encoding="utf-8",
-                )
+            _write_http_followup_artifacts(run_dir, http_completed.evidence or {})
 
         store.close_run()
         self._write_run_json(run_dir / "run.json", run)
@@ -451,6 +498,7 @@ class RunManager:
                     "duration_sec": duration_sec,
                     "event_count": event_count,
                     "summaries": summaries,
+                    "run_dir": str(run_dir),
                 },
             )
         store.close()

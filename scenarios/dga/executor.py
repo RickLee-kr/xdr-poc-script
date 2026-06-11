@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import time
 
-from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
+from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.dns import DnsClient, build_dns_events
 from dsp.protocols.dns.dga import (
     EFFECTIVE_TLD_DEFAULT,
@@ -52,6 +53,8 @@ def run(
     resolved_observed = 0
     domains_generated = 0
     t0 = time.monotonic()
+    total_domains = phase1_count + phase2_count
+    activity = ActivityReporter(ctx, scenario_id, total=total_domains)
 
     ctx.event_store.append(
         build_dga_started_event(
@@ -99,13 +102,8 @@ def run(
             domains_generated += 1
 
             query = client.make_query(resolver, fqdn)
-            emit_activity(
-                ctx,
-                scenario_id,
-                target=resolver,
-                query=fqdn,
-                action="send",
-            )
+            activity.update(sample_domain=fqdn)
+            activity.record(action="send", target=resolver, query=fqdn)
             if mode == "mock":
                 result = client.query(resolver, fqdn, mock_outcome=mock_outcome)
             else:
@@ -153,6 +151,7 @@ def run(
             ):
                 ctx.event_store.append(event)
 
+    activity.emit_final_progress()
     elapsed = round(time.monotonic() - t0, 3)
     ctx.event_store.append(
         build_dga_completed_event(

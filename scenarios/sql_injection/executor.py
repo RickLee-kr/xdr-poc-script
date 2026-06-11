@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import time
 
-from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
+from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.http import HttpClient
 from dsp.protocols.http.sqli_events import (
     append_sqli_outcome_event,
@@ -71,6 +72,7 @@ def run(
     sent_count = 0
     response_count = 0
     t0 = time.monotonic()
+    activity = ActivityReporter(ctx, scenario_id, total=len(plans))
 
     ctx.event_store.append(
         build_sql_injection_started_event(
@@ -118,13 +120,6 @@ def run(
         )
         payload_count += 1
 
-        emit_activity(
-            ctx,
-            scenario_id,
-            target=plan.host,
-            url=request.url,
-            action="request",
-        )
         ctx.event_store.append(
             build_sql_request_sent_event(
                 run_id=ctx.run_id,
@@ -158,6 +153,16 @@ def run(
         if result.outcome == "response":
             response_count += 1
 
+        activity.record(
+            action="request",
+            method=plan.method,
+            target=plan.host,
+            url=request.url,
+            payload_type=plan.payload,
+            response_code=result.status_code,
+        )
+
+    activity.emit_final_progress()
     elapsed = round(time.monotonic() - t0, 3)
     ctx.event_store.append(
         build_sql_injection_completed_event(

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import time
 
-from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
+from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.kerberos import (
     ATTEMPTS_PER_HOST_DEFAULT,
     DEFAULT_REALM,
@@ -69,6 +70,7 @@ def run(
     attempt_count = 0
     failure_count = 0
     t0 = time.monotonic()
+    activity = ActivityReporter(ctx, scenario_id, total=len(plans))
 
     ctx.event_store.append(
         build_kerberos_scenario_started_event(
@@ -117,13 +119,6 @@ def run(
             )
         )
 
-        emit_activity(
-            ctx,
-            scenario_id,
-            target=plan.host,
-            user=plan.username,
-            action="auth_attempt",
-        )
         ctx.event_store.append(
             build_kerberos_auth_attempt_event(
                 run_id=ctx.run_id,
@@ -153,6 +148,14 @@ def run(
         if result.outcome == "auth_failed":
             failure_count += 1
 
+        activity.record(
+            action="auth_attempt",
+            target=plan.host,
+            user=plan.username,
+            result=result.outcome,
+        )
+
+    activity.emit_final_progress()
     elapsed = round(time.monotonic() - t0, 3)
     ctx.event_store.append(
         build_kerberos_scenario_completed_event(

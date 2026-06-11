@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import time
 
-from dsp.engine.scenario_engine import RunContext, TargetSet, emit_activity
+from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.ldap import (
     DEFAULT_SAFE_FILTERS,
     LDAP_PORT_DEFAULT,
@@ -74,6 +75,7 @@ def run(
     search_count = 0
     sample_filters: list[str] = []
     t0 = time.monotonic()
+    activity = ActivityReporter(ctx, scenario_id, total=len(plans))
 
     ctx.event_store.append(
         build_ldap_enum_started_event(
@@ -109,14 +111,6 @@ def run(
             if plan.search_filter not in sample_filters and len(sample_filters) < 4:
                 sample_filters.append(plan.search_filter)
 
-        if plan.action_type == "bind":
-            emit_activity(
-                ctx,
-                scenario_id,
-                target=plan.host,
-                user="administrator",
-                action="bind_attempt",
-            )
         ctx.event_store.append(
             build_attempt_event(
                 run_id=ctx.run_id,
@@ -144,6 +138,20 @@ def run(
         else:
             result = client.execute(plan)
 
+        if plan.action_type == "bind":
+            activity.record(
+                action="bind_attempt",
+                target=plan.host,
+                user="administrator",
+                result=result.outcome,
+            )
+        elif plan.action_type == "search":
+            activity.record(
+                action="search",
+                target=plan.host,
+                result=result.outcome,
+            )
+
         for outcome_event in append_outcome_events(
             run_id=ctx.run_id,
             scenario_id=scenario_id,
@@ -153,6 +161,7 @@ def run(
         ):
             ctx.event_store.append(outcome_event)
 
+    activity.emit_final_progress()
     elapsed = round(time.monotonic() - t0, 3)
     ctx.event_store.append(
         build_ldap_enum_completed_event(
