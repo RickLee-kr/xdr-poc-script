@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, NamedTuple
 
@@ -42,6 +43,7 @@ class _RequestOutcome(NamedTuple):
     result: HttpResponseResult
     ua: str
     ua_kind: str
+    timestamp: str
 
 
 def select_followup_endpoints(
@@ -112,6 +114,21 @@ def _attach_burst_user_agents(
     return enriched
 
 
+def _evidence_dump_record(outcome: _RequestOutcome) -> dict[str, Any]:
+    """Per-request evidence for http_followup_requests.jsonl (all sent requests)."""
+    plan = outcome.plan
+    return {
+        "timestamp": outcome.timestamp,
+        "target": plan.host,
+        "port": plan.port,
+        "method": plan.method,
+        "path": plan.path,
+        "query": plan.query,
+        "user_agent": outcome.ua,
+        "response_code": outcome.result.status_code,
+    }
+
+
 def _request_dump_record(outcome: _RequestOutcome) -> dict[str, Any]:
     plan = outcome.plan
     result = outcome.result
@@ -166,16 +183,23 @@ def _execute_request(
     request = client.make_request(plan)
     ua = (plan.headers or {}).get("User-Agent", "")
     ua_kind = classify_user_agent(ua) if ua else "unknown"
+    sent_at = datetime.now(timezone.utc).isoformat()
     if mode == "mock":
         result = client.request(request, mock_outcome="response", mock_status_code=404)
     else:
         result = client.request(request)
-    return _RequestOutcome(seq=seq, plan=plan, request=request, result=result, ua=ua, ua_kind=ua_kind)
+    return _RequestOutcome(
+        seq=seq,
+        plan=plan,
+        request=request,
+        result=result,
+        ua=ua,
+        ua_kind=ua_kind,
+        timestamp=sent_at,
+    )
 
 
 def _emit_skipped(ctx: RunContext, *, hosts: list[str], reason: str, scenario_id: str, source: str) -> None:
-    from datetime import datetime, timezone
-
     ctx.event_store.append(
         Event(
             run_id=ctx.run_id,
@@ -321,6 +345,7 @@ def run(
                     ),
                     ua=(plan.headers or {}).get("User-Agent", ""),
                     ua_kind="unknown",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                 )
 
             outcomes.append(outcome)
@@ -383,6 +408,7 @@ def run(
                 timeout_count += 1
 
     outcomes.sort(key=lambda o: o.seq)
+    request_evidence = [_evidence_dump_record(o) for o in outcomes]
     request_dump = [_request_dump_record(o) for o in outcomes[:REQUEST_DUMP_SAMPLE_SIZE]]
 
     malicious_rare_count = sum(
@@ -425,6 +451,7 @@ def run(
                 "https_fallback": https_fallback,
                 "http_targets": targets.hosts_for_capability("http_targets"),
                 "https_targets": targets.hosts_for_capability("https_targets"),
+                "request_evidence": request_evidence,
                 "request_dump": request_dump,
                 "request_dump_summary": dump_summary,
                 "host_distribution": dict(host_counts),

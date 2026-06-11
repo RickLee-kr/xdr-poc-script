@@ -410,6 +410,16 @@ class RunManager:
             None,
         )
         if http_completed is not None:
+            http_evidence = (http_completed.evidence or {}).get("request_evidence")
+            if http_evidence:
+                evidence_lines = "".join(
+                    json.dumps(record, ensure_ascii=False) + "\n"
+                    for record in http_evidence
+                )
+                (run_dir / "http_followup_requests.jsonl").write_text(
+                    evidence_lines,
+                    encoding="utf-8",
+                )
             dump = (http_completed.evidence or {}).get("request_dump")
             if dump:
                 (run_dir / "http_request_dump.json").write_text(
