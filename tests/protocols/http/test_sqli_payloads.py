@@ -14,21 +14,38 @@ from dsp.protocols.http.sqli_payloads import (
 )
 
 
-def test_sqli_paths_fixed_list():
-    assert SQLI_PATHS == ("/login", "/admin", "/api", "/search", "/index.html")
+def test_sqli_paths_include_realistic_web_endpoints():
+    expected = {
+        "/search",
+        "/search.php",
+        "/product",
+        "/product.php",
+        "/item",
+        "/item.php",
+        "/login",
+        "/login.php",
+        "/admin/login",
+        "/graphql",
+        "/api/search",
+        "/api/product",
+        "/api/user",
+        "/catalog",
+        "/query",
+    }
+    assert expected.issubset(set(SQLI_PATHS))
 
 
 def test_sqli_payload_categories_defined():
-    assert set(SQLI_PAYLOAD_CATEGORIES) == {
-        "boolean_based",
-        "union_select",
-        "time_based",
-        "error_based",
-        "comment_bypass",
-        "encoded",
-        "case_variation",
-    }
-    assert len(SQLI_PAYLOADS) > 5
+    assert "boolean_based" in SQLI_PAYLOAD_CATEGORIES
+    assert "boolean_extended" in SQLI_PAYLOAD_CATEGORIES
+    assert "union_extended" in SQLI_PAYLOAD_CATEGORIES
+    assert "order_by_enumeration" in SQLI_PAYLOAD_CATEGORIES
+    assert "db_metadata" in SQLI_PAYLOAD_CATEGORIES
+    assert "mysql_error" in SQLI_PAYLOAD_CATEGORIES
+    assert "mysql_time" in SQLI_PAYLOAD_CATEGORIES
+    assert "mssql_time" in SQLI_PAYLOAD_CATEGORIES
+    assert "file_access" in SQLI_PAYLOAD_CATEGORIES
+    assert len(SQLI_PAYLOADS) > 30
 
 
 def test_build_sqli_url_https_with_payload():
@@ -67,14 +84,15 @@ def test_plan_sqli_requests_respects_max_total():
 
 def test_plan_sqli_requests_cycles_paths_and_categories():
     plans = plan_sqli_requests(["10.10.10.20"], max_total=5, max_per_host=5)
-    assert plans[0].path == "/login"
+    assert plans[0].path in SQLI_PATHS
     assert plans[0].payload_category in SQLI_PAYLOAD_CATEGORIES
     assert plans[0].parameter == "id"
 
 
 def test_planned_sqli_request_url_property():
     plans = plan_sqli_requests(["lab.local"], max_total=1, max_per_host=1)
-    assert "/login" in plans[0].url or plans[0].method == "POST"
+    assert plans[0].path in SQLI_PATHS
+    assert plans[0].url.startswith("http://lab.local")
 
 
 def test_plan_sqli_post_form_has_body():

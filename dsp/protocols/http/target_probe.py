@@ -163,3 +163,14 @@ def selection_reason_for(stats: HttpEndpointProbeStats) -> str:
     if stats.is_redirect_only:
         return "redirect_only_low_priority"
     return "not_redirect_only"
+
+
+def is_eligible_url_scan_target(stats: HttpEndpointProbeStats) -> bool:
+    """
+    URL scan target eligibility — must show 400 or 404 probe responses.
+
+    Excludes timeout-only and connection-reset-only candidates (no HTTP status).
+    """
+    if not stats.status_counts:
+        return False
+    return stats.status_counts.get(400, 0) > 0 or stats.status_counts.get(404, 0) > 0

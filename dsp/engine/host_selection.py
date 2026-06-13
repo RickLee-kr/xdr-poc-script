@@ -164,6 +164,8 @@ def probe_and_select_http_followup_endpoints(
         return _select_without_probe(candidates, max_hosts=max_hosts)
 
     from dsp.protocols.http.target_probe import (
+        HttpEndpointProbeStats,
+        is_eligible_url_scan_target,
         rank_probe_candidates,
         selection_reason_for,
         selection_tier,
@@ -174,10 +176,18 @@ def probe_and_select_http_followup_endpoints(
     if not ranked:
         return HttpFollowupSelection(endpoints=[], skip_reason="skipped_no_http_service")
 
+    eligible = [(stats, score) for stats, score in ranked if is_eligible_url_scan_target(stats)]
+    pool = eligible if eligible else ranked
     ordered = sorted(
-        ranked,
+        pool,
         key=lambda item: (selection_tier(item[0]), -item[1]),
     )
+    if not eligible:
+        fallback = sorted(
+            ranked,
+            key=lambda item: (selection_tier(item[0]), -item[1]),
+        )
+        ordered = fallback
 
     selected: list[HttpFollowupEndpoint] = []
     probe_summaries: list[dict[str, int | str]] = []

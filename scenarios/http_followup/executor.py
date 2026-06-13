@@ -133,6 +133,16 @@ def _requests_per_target(plans: list[PlannedHttpRequest]) -> dict[str, int]:
     return counts
 
 
+def _errors_per_target(outcomes: list[_RequestOutcome]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for outcome in outcomes:
+        code = outcome.result.status_code
+        if code is not None and 400 <= int(code) < 600:
+            key = _target_key(outcome.plan.host, outcome.plan.port)
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def _evidence_dump_record(outcome: _RequestOutcome) -> dict[str, Any]:
     """Per-request evidence for http_followup_requests.jsonl (all sent requests)."""
     plan = outcome.plan
@@ -487,6 +497,8 @@ def run(
     normal_user_agents = sent_count - abnormal_user_agents
     payload_only_ua = sum(1 for o in outcomes if is_payload_only_user_agent(o.ua))
     target_distribution = _requests_per_target([o.plan for o in outcomes])
+    per_target_request_count = dict(target_distribution)
+    per_target_error_count = _errors_per_target(outcomes)
     abnormal_user_agent_ratio = round(abnormal_user_agents / sent_count, 4) if sent_count else 0.0
     malicious_rare_count = abnormal_user_agents
     dump_summary = _build_dump_summary(
@@ -532,6 +544,8 @@ def run(
                 "target_count": len(target_distribution),
                 "target_distribution": target_distribution,
                 "selected_targets": selected_targets,
+                "per_target_request_count": per_target_request_count,
+                "per_target_error_count": per_target_error_count,
                 "requests_per_target": requests_per_target,
                 "abnormal_ua_ratio": abnormal_ua_ratio,
                 "expected_url_scan_distribution": dict(requests_per_target),

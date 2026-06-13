@@ -155,6 +155,8 @@ def build_traffic_summary(
                 or started.get("selected_targets", []),
                 "requests_per_target": completed.get("requests_per_target")
                 or started.get("requests_per_target", {}),
+                "per_target_request_count": completed.get("per_target_request_count", {}),
+                "per_target_error_count": completed.get("per_target_error_count", {}),
                 "abnormal_user_agents": completed.get("abnormal_user_agents", 0),
                 "normal_user_agents": completed.get("normal_user_agents", 0),
                 "abnormal_user_agent_ratio": completed.get("abnormal_user_agent_ratio", 0.0),

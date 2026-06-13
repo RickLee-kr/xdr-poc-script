@@ -58,7 +58,9 @@ def test_http_followup_skipped_no_service():
 def test_http_followup_probe_prefers_error_responses():
     targets = TargetSet(
         target_net="10.10.10.0/24",
-        service_hosts={"http_targets": ["10.10.10.20", "10.10.10.21"]},
+        service_hosts={
+            "http_targets": ["10.10.10.20", "10.10.10.21"],
+        },
         service_endpoints={
             "http_targets": [("10.10.10.20", 80), ("10.10.10.21", 8080)],
         },

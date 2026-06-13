@@ -63,3 +63,19 @@ def test_profile_for_scenario_includes_scenario_params() -> None:
     assert profile.name == "high"
     assert profile.scenario_params["max_total"] == 300
     assert profile.scenario_params["max_hosts"] == 1
+
+
+def test_normal_profile_http_followup_dual_target_v139() -> None:
+    params = scenario_params_for_profile("http_followup", "normal")
+    assert params.get("include_attack_paths") is True
+    assert params["max_hosts"] == 2
+    assert params["max_total"] == 300
+    assert params["max_per_host"] == 150
+    assert params["abnormal_ua_ratio"] == 0.10
+
+
+def test_normal_profile_sql_injection_800_requests_v139() -> None:
+    params = scenario_params_for_profile("sql_injection", "normal")
+    assert params["max_total"] == 800
+    assert params["max_per_host"] == 400
+    assert params["max_hosts"] == 2
