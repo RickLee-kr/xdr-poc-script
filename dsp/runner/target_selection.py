@@ -118,7 +118,7 @@ def scenario_start_metadata(
         max_total = int(params.get("max_total", 300))
         min_requests_per_target = int(params.get("min_requests_per_target", 100))
         abnormal_ua_ratio = float(params.get("abnormal_ua_ratio", 0.25))
-        client = HttpClient(mode="live", timeout=float(params.get("timeout", 2.0)), transport="auto")
+        client = HttpClient(mode="live", timeout=float(params.get("timeout", 2.0)))
         selection = probe_and_select_http_followup_endpoints(
             targets, params, max_hosts=max_hosts, client=client
         )
