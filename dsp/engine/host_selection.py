@@ -262,6 +262,114 @@ def format_selected_target_labels(endpoints: list[HttpFollowupEndpoint]) -> list
     return [f"{ep.host}:{ep.port} ({ep.selection_reason})" for ep in endpoints]
 
 
+def response_quality_label(row: dict[str, int | str | bool]) -> str:
+    """Summarize probe response quality for operator diagnostics."""
+    if int(row.get("probe_400", 0)) or int(row.get("probe_403", 0)) or int(row.get("probe_404", 0)):
+        return "error_responses"
+    if int(row.get("probe_success", 0)) > 0:
+        return "success_responses"
+    if int(row.get("redirect_only", 0)):
+        return "redirect_only"
+    if int(row.get("probe_timeout", 0)) and not int(row.get("probe_error", 0)):
+        return "timeout_only"
+    if int(row.get("probe_error", 0)):
+        return "connection_error"
+    return "no_response"
+
+
+def cached_http_endpoint_selection(
+    scenario_params: dict[str, dict[str, object]],
+    scenario_ids: list[str],
+) -> HttpFollowupSelection | None:
+    """Return shared cached HTTP endpoint selection when present."""
+    for sid in scenario_ids:
+        if sid not in ("http_followup", "sql_injection"):
+            continue
+        cached = scenario_params.get(sid, {}).get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
+        if cached:
+            return selection_from_cache(cached)  # type: ignore[arg-type]
+    return None
+
+
+def format_http_probe_diagnostic_lines(
+    selection: HttpFollowupSelection,
+    *,
+    discovered_http_hosts: list[str] | None = None,
+) -> list[str]:
+    """Format operator-readable probe diagnostics for each HTTP endpoint."""
+    lines: list[str] = []
+    if discovered_http_hosts is not None:
+        lines.append(f"discovery_http_hosts={discovered_http_hosts}")
+    lines.append("HTTP endpoint probe diagnostics:")
+    if not selection.probe_summaries:
+        lines.append("  (no endpoints probed)")
+    else:
+        selected_labels = {
+            f"{ep.host}:{ep.port}" for ep in selection.endpoints
+        }
+        for row in selection.probe_summaries:
+            host = str(row["host"])
+            port = int(row["port"])
+            label = f"{host}:{port}"
+            quality = response_quality_label(row)
+            if label in selected_labels:
+                status = "selected"
+                reason = next(
+                    (ep.selection_reason for ep in selection.endpoints if ep.host == host and ep.port == port),
+                    "",
+                )
+            else:
+                status = "rejected"
+                reason = str(row.get("rejection_reason") or "")
+            line = f"  {label} scheme=http response_quality={quality} {status}"
+            if reason:
+                line += f" reason={reason}"
+            lines.append(line)
+    if selection.endpoints:
+        lines.append(f"selected_endpoints={format_selected_target_labels(selection.endpoints)}")
+    else:
+        lines.append(
+            "selected_endpoints=[] "
+            f"skip_reason={selection.skip_reason or SKIP_REASON_HTTP_TARGETS_NOT_FOUND}"
+        )
+    return lines
+
+
+def print_http_endpoint_probe_diagnostics(
+    scenario_params: dict[str, dict[str, object]],
+    scenario_ids: list[str],
+    *,
+    discovered_http_hosts: list[str] | None = None,
+) -> HttpFollowupSelection | None:
+    """Print probe diagnostics and return cached selection when available."""
+    selection = cached_http_endpoint_selection(scenario_params, scenario_ids)
+    if selection is None:
+        return None
+    for line in format_http_probe_diagnostic_lines(
+        selection,
+        discovered_http_hosts=discovered_http_hosts,
+    ):
+        print(line)
+    return selection
+
+
+def http_target_probe_payload(
+    selection: HttpFollowupSelection,
+    *,
+    discovered_http_hosts: list[str] | None = None,
+) -> dict[str, object]:
+    """Serialize probe diagnostics for traffic_summary / run artifacts."""
+    return {
+        "discovery_http_hosts": discovered_http_hosts or [],
+        "target_probe": selection.probe_summaries,
+        "selected_targets": format_selected_target_labels(selection.endpoints)
+        if selection.endpoints
+        else [],
+        "rejected_targets": selection.rejected_targets,
+        "skip_reason": selection.skip_reason,
+    }
+
+
 def select_http_followup_endpoints(
     targets: TargetSet,
     config: dict,

@@ -62,6 +62,8 @@ class OperationalConsole:
             self._write("")
         elif phase == "targets_selected":
             self._emit_selected_targets(data)
+        elif phase == "http_probe_diagnostics":
+            self._emit_http_probe_diagnostics(data)
         elif phase == "scenario_started":
             self._emit_scenario_started(data)
         elif phase == "activity":
@@ -70,6 +72,8 @@ class OperationalConsole:
             self._emit_heartbeat(data)
         elif phase == "scenario_completed":
             self._emit_scenario_completed(data)
+        elif phase == "scenario_skipped":
+            self._emit_scenario_skipped(data)
         elif phase == "evidence_generated":
             self._write("Evidence Generated")
             self._write("")
@@ -125,6 +129,39 @@ class OperationalConsole:
             self._write(f"{protocol}:")
             for host in hosts:
                 self._write(f"  {host}")
+            self._write("")
+
+    def _emit_http_probe_diagnostics(self, data: dict[str, Any]) -> None:
+        from dsp.engine.host_selection import HttpFollowupSelection, format_http_probe_diagnostic_lines
+
+        probe_rows = data.get("target_probe") or []
+        if not probe_rows:
+            self._write("HTTP endpoint probe diagnostics:")
+            self._write("  (no endpoints probed)")
+            self._write("")
+            return
+        selection = HttpFollowupSelection(
+            endpoints=[],
+            skip_reason=data.get("skip_reason"),
+            probe_summaries=list(probe_rows),
+            rejected_targets=list(data.get("rejected_targets") or []),
+        )
+        for line in format_http_probe_diagnostic_lines(
+            selection,
+            discovered_http_hosts=list(data.get("discovery_http_hosts") or []),
+        ):
+            self._write(line)
+        self._write("")
+
+    def _emit_scenario_skipped(self, data: dict[str, Any]) -> None:
+        sid = data.get("scenario_id", "")
+        reason = data.get("reason", "scenario_skipped")
+        if sid:
+            self._write(f"{scenario_display_name(sid)} SKIPPED")
+            self._write(f"  skip_reason={reason}")
+            evidence = data.get("evidence") or {}
+            if evidence.get("requests_sent") == 0:
+                self._write("  requests_sent=0")
             self._write("")
 
     def _emit_scenario_started(self, data: dict[str, Any]) -> None:

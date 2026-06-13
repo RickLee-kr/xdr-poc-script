@@ -15,7 +15,7 @@ from dsp.engine.host_selection import (
     probe_and_select_http_followup_endpoints,
     resolve_http_endpoint_selection,
 )
-from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.engine.scenario_engine import RunContext, ScenarioSkipError, TargetSet
 from dsp.event_store import Event
 from dsp.protocols.http import (
     HttpClient,
@@ -225,17 +225,18 @@ def run(
         targets, params, max_hosts=max_hosts, client=client
     )
     if selection.skip_reason or not selection.endpoints:
+        reason = selection.skip_reason or SKIP_REASON_HTTP_TARGETS_NOT_FOUND
         _emit_skipped(
             ctx,
             hosts=[],
-            reason=selection.skip_reason or SKIP_REASON_HTTP_TARGETS_NOT_FOUND,
+            reason=reason,
             scenario_id=scenario_id,
             source=source,
             https_targets_skipped=selection.https_targets_skipped,
             probe_summaries=selection.probe_summaries,
             rejected_targets=selection.rejected_targets,
         )
-        return
+        raise ScenarioSkipError(reason)
 
     endpoints = selection.endpoints
     endpoint_tuples = [(ep.host, ep.port) for ep in endpoints]

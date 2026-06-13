@@ -101,8 +101,17 @@ def run_scenario(
             "executor",
             source="runner",
         )
-    except ScenarioSkipError:
-        raise
+    except ScenarioSkipError as exc:
+        _append_lifecycle(
+            ctx.event_store,
+            ctx.run_id,
+            scenario_id,
+            "scenario_skipped",
+            "info",
+            "executor",
+            evidence={"reason": str(exc)},
+        )
+        return None
     except Exception as exc:
         _append_lifecycle(
             ctx.event_store,

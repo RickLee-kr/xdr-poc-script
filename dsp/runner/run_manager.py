@@ -19,7 +19,11 @@ from dsp.detection.factory import (
 from dsp.detection.manager import DetectionManager
 from dsp.detection.reporting import build_detection_confirmation_entries
 from dsp.engine import RunConfig, RunContext, resolve_targets
-from dsp.engine.host_selection import cache_http_endpoint_selection
+from dsp.engine.host_selection import (
+    cache_http_endpoint_selection,
+    http_target_probe_payload,
+    print_http_endpoint_probe_diagnostics,
+)
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
@@ -42,6 +46,40 @@ from dsp.validation import ValidationEngine
 SUPPORTED_EXECUTION_PROVIDERS = frozenset({"local", "webshell"})
 SUPPORTED_WEBSHELL_FAMILIES = frozenset({"jsp", "php", "aspx"})
 DEFAULT_REMOTE_WORK_DIR = "/tmp/dsp"
+
+
+def _latest_skip_evidence(
+    store: EventStore,
+    run_id: str,
+    scenario_id: str,
+) -> dict[str, Any]:
+    skip_names = (
+        f"{scenario_id}_skipped",
+        "http_followup_skipped",
+        "sql_injection_skipped",
+        "scenario_skipped",
+    )
+    for event in reversed(store.list_events(run_id)):
+        if event.scenario_id != scenario_id:
+            continue
+        if event.event in skip_names:
+            return dict(event.evidence or {})
+    return {}
+
+
+def _scenario_executor_skipped(store: EventStore, run_id: str, scenario_id: str) -> bool:
+    skip_names = (
+        f"{scenario_id}_skipped",
+        "http_followup_skipped",
+        "sql_injection_skipped",
+        "scenario_skipped",
+    )
+    for event_name in skip_names:
+        if store.count(
+            EventQuery(run_id=run_id, scenario_id=scenario_id, event=event_name)
+        ) > 0:
+            return True
+    return False
 
 
 def _latest_completed_evidence(
@@ -337,6 +375,29 @@ class RunManager:
             dry_run=dry_run,
         )
 
+        cache_http_endpoint_selection(
+            config.scenario_params,
+            scenario_ids=scenario_ids,
+            targets=targets,
+            dry_run=dry_run,
+        )
+        http_probe_selection = print_http_endpoint_probe_diagnostics(
+            config.scenario_params,
+            scenario_ids,
+            discovered_http_hosts=targets.hosts_for_capability("http_targets"),
+        )
+        if http_probe_selection is not None:
+            probe_payload = http_target_probe_payload(
+                http_probe_selection,
+                discovered_http_hosts=targets.hosts_for_capability("http_targets"),
+            )
+            (run_dir / "http_target_probe.json").write_text(
+                json.dumps(probe_payload, indent=2),
+                encoding="utf-8",
+            )
+            if emitter is not None:
+                emitter.emit("http_probe_diagnostics", probe_payload)
+
         if emitter is not None:
             emitter.emit("discovery_started", {})
             emitter.emit(
@@ -347,12 +408,6 @@ class RunManager:
                     "alive_hosts": targets.discovery_meta.get("alive_hosts", []),
                     "service_hosts": targets.discovery_meta.get("service_hosts", {}),
                 },
-            )
-            cache_http_endpoint_selection(
-                config.scenario_params,
-                scenario_ids=scenario_ids,
-                targets=targets,
-                dry_run=dry_run,
             )
             selected = resolve_selected_targets_by_protocol(
                 scenario_ids,
@@ -418,22 +473,34 @@ class RunManager:
                         "notes": summary.notes,
                     }
                 if emitter is not None:
-                    emitter.on_scenario_completed()
-                    completed_metrics = summaries.get(sid, {}).get("metrics", {})
-                    completed_evidence = _latest_completed_evidence(store, run_id, sid)
-                    if sid == "http_followup" and completed_evidence:
-                        _write_http_followup_artifacts(run_dir, completed_evidence)
-                    if sid == "sql_injection" and completed_evidence:
-                        _write_sql_injection_artifacts(run_dir, completed_evidence)
-                    emitter.emit(
-                        "scenario_completed",
-                        {
-                            "scenario_id": sid,
-                            "metrics": completed_metrics,
-                            "extras": _scenario_completion_extras(sid, completed_evidence),
-                            "artifacts": _scenario_artifact_paths(sid, run_dir),
-                        },
-                    )
+                    if _scenario_executor_skipped(store, run_id, sid):
+                        skip_evidence = _latest_skip_evidence(store, run_id, sid)
+                        emitter.on_scenario_completed()
+                        emitter.emit(
+                            "scenario_skipped",
+                            {
+                                "scenario_id": sid,
+                                "reason": skip_evidence.get("reason", "scenario_skipped"),
+                                "evidence": skip_evidence,
+                            },
+                        )
+                    else:
+                        emitter.on_scenario_completed()
+                        completed_metrics = summaries.get(sid, {}).get("metrics", {})
+                        completed_evidence = _latest_completed_evidence(store, run_id, sid)
+                        if sid == "http_followup" and completed_evidence:
+                            _write_http_followup_artifacts(run_dir, completed_evidence)
+                        if sid == "sql_injection" and completed_evidence:
+                            _write_sql_injection_artifacts(run_dir, completed_evidence)
+                        emitter.emit(
+                            "scenario_completed",
+                            {
+                                "scenario_id": sid,
+                                "metrics": completed_metrics,
+                                "extras": _scenario_completion_extras(sid, completed_evidence),
+                                "artifacts": _scenario_artifact_paths(sid, run_dir),
+                            },
+                        )
 
                 if execution_provider == "webshell" and collector is not None:
                     assert isinstance(provider, WebshellExecutionProvider)

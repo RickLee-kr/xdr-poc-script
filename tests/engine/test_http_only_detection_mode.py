@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from dsp.engine import RunConfig
 from dsp.engine.host_selection import (
     SKIP_REASON_HTTP_TARGETS_NOT_FOUND,
     format_selected_target_labels,
     probe_and_select_http_followup_endpoints,
 )
-from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.engine.scenario_engine import RunContext, ScenarioSkipError, TargetSet
 from dsp.event_store import EventStore
 from dsp.protocols.http.client import HttpClient
 from dsp.protocols.http.sqli_payloads import plan_sqli_requests
@@ -244,7 +246,8 @@ def test_http_followup_executor_skips_when_only_https():
         config=RunConfig(dry_run=True),
         dry_run=True,
     )
-    http_followup_executor.run(ctx, _only_https_targets(), {})
+    with pytest.raises(ScenarioSkipError, match=SKIP_REASON_HTTP_TARGETS_NOT_FOUND):
+        http_followup_executor.run(ctx, _only_https_targets(), {})
     summary = build_traffic_summary(
         store,
         run_id=run_id,
@@ -275,7 +278,8 @@ def test_sql_injection_executor_skips_when_only_https():
         service_endpoints={"https_targets": [("10.10.10.21", 8443)]},
         discovery_enabled=True,
     )
-    sql_injection_executor.run(ctx, targets, {})
+    with pytest.raises(ScenarioSkipError, match=SKIP_REASON_HTTP_TARGETS_NOT_FOUND):
+        sql_injection_executor.run(ctx, targets, {})
     summary = build_traffic_summary(
         store,
         run_id=run_id,
@@ -376,7 +380,8 @@ def test_empty_endpoint_selection_emits_skip_not_zero_send_completed(monkeypatch
         config=RunConfig(dry_run=True),
         dry_run=True,
     )
-    http_followup_executor.run(ctx, targets, {"max_hosts": 2})
+    with pytest.raises(ScenarioSkipError, match=SKIP_REASON_HTTP_TARGETS_NOT_FOUND):
+        http_followup_executor.run(ctx, targets, {"max_hosts": 2})
     skipped = [e for e in store.list_events(run_id) if e.event == "http_followup_skipped"]
     completed = [e for e in store.list_events(run_id) if e.event == "http_followup_completed"]
     assert skipped
