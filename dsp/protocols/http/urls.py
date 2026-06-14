@@ -154,17 +154,15 @@ def compute_requests_per_target(
 
 
 def plan_followup_requests(
-    hosts: list[str] | None = None,
     *,
-    endpoints: list[tuple[str, int]] | None = None,
+    endpoints: list[tuple[str, int]],
     max_hosts: int = MAX_HOSTS_DEFAULT,
     max_per_host: int = MAX_REQUESTS_PER_HOST_DEFAULT,
     max_total: int = MAX_REQUESTS_TOTAL_DEFAULT,
-    port_priority: tuple[int, ...] = PORT_PRIORITY,
     include_attack_paths: bool = True,
 ) -> list[PlannedHttpRequest]:
     """
-    Plan HTTP follow-up / URL scan requests across hosts or explicit endpoints.
+    Plan HTTP follow-up / URL scan requests across explicit host:port endpoints.
 
     When include_attack_paths is True, bash mandatory attack paths are prepended.
     Paths cycle when max_per_host exceeds unique path count (bash HTTP_SCAN_REPEAT parity).
@@ -172,18 +170,11 @@ def plan_followup_requests(
     if max_hosts < 1 or max_per_host < 1 or max_total < 1:
         raise HttpProtocolError("request caps must be positive")
 
-    if endpoints:
-        selected: list[tuple[str, int]] = [(h.strip(), int(p)) for h, p in endpoints if h.strip()][:max_hosts]
-    elif hosts:
-        selected = [
-            (h.strip(), select_port_for_host(i, port_priority))
-            for i, h in enumerate(h for h in hosts if h.strip())
-        ][:max_hosts]
-    else:
-        raise HttpProtocolError("at least one host or endpoint is required")
-
+    selected: list[tuple[str, int]] = [
+        (h.strip(), int(p)) for h, p in endpoints if h.strip() and int(p) > 0
+    ][:max_hosts]
     if not selected:
-        raise HttpProtocolError("at least one host is required")
+        raise HttpProtocolError("at least one endpoint is required")
 
     if include_attack_paths:
         mandatory_paths = list(MANDATORY_ATTACK_PATHS)

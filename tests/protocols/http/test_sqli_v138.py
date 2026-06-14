@@ -42,7 +42,7 @@ def test_normal_profile_sql_injection_at_least_800_requests():
 def test_plan_sqli_requests_normal_profile_volume():
     params = scenario_params_for_profile("sql_injection", "normal")
     plans = plan_sqli_requests(
-        ["10.10.10.20", "10.10.10.21"],
+        endpoints=[("10.10.10.20", 8080), ("10.10.10.21", 9000)],
         max_hosts=params["max_hosts"],
         max_per_host=params["max_per_host"],
         max_total=params["max_total"],
@@ -58,7 +58,7 @@ def test_plan_sqli_requests_normal_profile_volume():
 
 def test_plan_sqli_includes_all_payload_categories():
     plans = plan_sqli_requests(
-        ["10.10.10.20"],
+        endpoints=[("10.10.10.20", 8080)],
         max_total=800,
         max_per_host=800,
     )
@@ -68,7 +68,7 @@ def test_plan_sqli_includes_all_payload_categories():
 
 def test_plan_sqli_endpoint_diversity():
     plans = plan_sqli_requests(
-        ["10.10.10.20", "10.10.10.21"],
+        endpoints=[("10.10.10.20", 8080), ("10.10.10.21", 9000)],
         max_hosts=2,
         max_total=800,
         max_per_host=400,
@@ -82,7 +82,7 @@ def test_plan_sqli_endpoint_diversity():
 
 def test_plan_sqli_uses_all_transports():
     plans = plan_sqli_requests(
-        ["10.10.10.20"],
+        endpoints=[("10.10.10.20", 8080)],
         max_total=800,
         max_per_host=800,
     )
@@ -95,7 +95,7 @@ def test_plan_sqli_uses_all_transports():
 
 def test_plan_sqli_varied_parameters():
     plans = plan_sqli_requests(
-        ["10.10.10.20"],
+        endpoints=[("10.10.10.20", 8080)],
         max_total=100,
         max_per_host=100,
     )
@@ -111,7 +111,7 @@ def test_sql_injection_writes_jsonl_evidence(tmp_runs_dir):
         dry_run=True,
         scenario_params={
             "sql_injection": {
-                "hosts": ["10.10.10.20", "10.10.10.21"],
+                "endpoints": [["10.10.10.20", 8080], ["10.10.10.21", 9000]],
                 "max_hosts": 2,
                 "max_total": 800,
                 "max_per_host": 400,
@@ -150,7 +150,7 @@ def test_sql_injection_no_detection_success_inference(tmp_runs_dir):
         dry_run=True,
         scenario_params={
             "sql_injection": {
-                "hosts": ["10.10.10.20"],
+                "endpoints": [["10.10.10.20", 8080]],
                 "max_total": 5,
                 "max_per_host": 5,
             }

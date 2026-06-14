@@ -113,30 +113,33 @@ def scenario_start_metadata(
             format_selected_target_labels,
             resolve_http_endpoint_selection,
         )
-        from dsp.protocols.http import HttpClient, plan_followup_requests
         from dsp.protocols.http.curl_transport import curl_available
-        from dsp.protocols.http.urls import compute_requests_per_target
+        from dsp.protocols.http.urls import compute_requests_per_target, plan_followup_requests
 
         max_hosts = int(params.get("max_hosts", 3))
         max_per_host = int(params.get("max_per_host", 150))
         max_total = int(params.get("max_total", 300))
         min_requests_per_target = int(params.get("min_requests_per_target", 100))
         abnormal_ua_ratio = float(params.get("abnormal_ua_ratio", 0.25))
-        client = HttpClient(mode="live", timeout=float(params.get("timeout", 2.0)))
+        timeout = float(params.get("timeout", 2.0))
         selection = resolve_http_endpoint_selection(
-            targets, params, max_hosts=max_hosts, client=client
+            targets,
+            params,
+            max_hosts=max_hosts,
+            dry_run=False,
+            timeout=timeout,
         )
         meta["target_probe"] = selection.probe_summaries
         meta["probe_summaries"] = selection.probe_summaries
         meta["rejected_targets"] = selection.rejected_targets
-        if not selection.endpoints:
+        if not selection.selected:
             meta["skip_reason"] = selection.skip_reason or SKIP_REASON_HTTP_TARGETS_NOT_FOUND
             meta["selected_targets"] = []
         else:
-            ep = selection.endpoints[0]
+            ep = selection.selected[0]
             meta["target"] = f"{ep.scheme}://{ep.host}:{ep.port}"
             meta["selected_http_target_reason"] = selection.selected_http_target_reason
-            endpoint_tuples = [(e.host, e.port) for e in selection.endpoints]
+            endpoint_tuples = [(e.host, e.port) for e in selection.selected]
             per_target = compute_requests_per_target(
                 len(endpoint_tuples),
                 max_total,
@@ -153,7 +156,7 @@ def scenario_start_metadata(
             for plan in planned:
                 key = f"{plan.host}:{plan.port}"
                 requests_per_target[key] = requests_per_target.get(key, 0) + 1
-            meta["selected_targets"] = format_selected_target_labels(selection.endpoints)
+            meta["selected_targets"] = format_selected_target_labels(selection.selected)
             meta["requests_per_target"] = requests_per_target
             meta["abnormal_ua_ratio"] = f"{abnormal_ua_ratio:.0%}"
             meta["expected_url_scan_distribution"] = requests_per_target
@@ -173,22 +176,26 @@ def scenario_start_metadata(
             format_selected_target_labels,
             resolve_http_endpoint_selection,
         )
-        from dsp.protocols.http.client import HttpClient
+        from dsp.protocols.http.urls import compute_requests_per_target, plan_followup_requests
 
         max_hosts = int(params.get("max_hosts", 2))
         max_total = int(params.get("max_total", params.get("max_payloads", 10)))
-        client = HttpClient(mode="live", timeout=float(params.get("timeout", 10.0)))
+        timeout = float(params.get("timeout", 10.0))
         selection = resolve_http_endpoint_selection(
-            targets, params, max_hosts=max_hosts, client=client
+            targets,
+            params,
+            max_hosts=max_hosts,
+            dry_run=False,
+            timeout=timeout,
         )
         meta["target_probe"] = selection.probe_summaries
         meta["probe_summaries"] = selection.probe_summaries
         meta["rejected_targets"] = selection.rejected_targets
-        if not selection.endpoints:
+        if not selection.selected:
             meta["skip_reason"] = selection.skip_reason or SKIP_REASON_HTTP_TARGETS_NOT_FOUND
             meta["selected_targets"] = []
         else:
-            meta["selected_targets"] = format_selected_target_labels(selection.endpoints)
+            meta["selected_targets"] = format_selected_target_labels(selection.selected)
             meta["selected_http_target_reason"] = selection.selected_http_target_reason
             meta["planned_requests"] = max_total
     return {k: v for k, v in meta.items() if v is not None}

@@ -12,9 +12,7 @@ from dsp.protocols.http.urls import (
     MAX_HOSTS_DEFAULT,
     MAX_REQUESTS_PER_HOST_DEFAULT,
     MAX_REQUESTS_TOTAL_DEFAULT,
-    PORT_PRIORITY,
     build_url,
-    select_port_for_host,
 )
 
 SQLI_PATHS: tuple[str, ...] = (
@@ -224,17 +222,15 @@ def _build_request_for_transport(
 
 
 def plan_sqli_requests(
-    hosts: list[str],
     *,
-    endpoints: list[tuple[str, int]] | None = None,
+    endpoints: list[tuple[str, int]],
     max_hosts: int = MAX_HOSTS_DEFAULT,
     max_per_host: int = MAX_REQUESTS_PER_HOST_DEFAULT,
     max_total: int = MAX_REQUESTS_TOTAL_DEFAULT,
-    port_priority: tuple[int, ...] = PORT_PRIORITY,
     paths: tuple[str, ...] = SQLI_PATHS,
 ) -> list[PlannedSqliRequest]:
     """
-    Plan SQL injection HTTP requests across hosts, paths, parameters, and payload categories.
+    Plan SQL injection HTTP requests across explicit endpoints.
 
     Uses GET query strings, POST form bodies, and JSON POST bodies.
     Endpoints are chosen randomly from the path pool for realistic web-app coverage.
@@ -244,16 +240,11 @@ def plan_sqli_requests(
     if not paths:
         raise HttpProtocolError("at least one path is required")
 
-    if endpoints:
-        selected: list[tuple[str, int]] = [(h.strip(), int(p)) for h, p in endpoints if h.strip()][:max_hosts]
-    else:
-        selected = [
-            (h.strip(), select_port_for_host(i, port_priority))
-            for i, h in enumerate(h for h in hosts if h.strip())
-        ][:max_hosts]
-
+    selected: list[tuple[str, int]] = [
+        (h.strip(), int(p)) for h, p in endpoints if h.strip() and int(p) > 0
+    ][:max_hosts]
     if not selected:
-        raise HttpProtocolError("at least one host is required")
+        raise HttpProtocolError("at least one endpoint is required")
 
     specs = _payload_specs()
     path_pool = list(paths)

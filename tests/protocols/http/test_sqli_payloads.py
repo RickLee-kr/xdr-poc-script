@@ -62,14 +62,18 @@ def test_build_sqli_url_http_nonstandard_port():
 
 
 def test_plan_sqli_requests_single_host_default_caps():
-    plans = plan_sqli_requests(["10.10.10.20"], max_per_host=10, max_total=10)
+    plans = plan_sqli_requests(
+        endpoints=[("10.10.10.20", 8080)],
+        max_per_host=10,
+        max_total=10,
+    )
     assert len(plans) == 10
     assert all(p.host == "10.10.10.20" for p in plans)
 
 
 def test_plan_sqli_requests_two_hosts_max_total():
     plans = plan_sqli_requests(
-        ["10.10.10.20", "10.10.10.21"],
+        endpoints=[("10.10.10.20", 8080), ("10.10.10.21", 9000)],
         max_hosts=2,
         max_per_host=10,
         max_total=20,
@@ -78,25 +82,41 @@ def test_plan_sqli_requests_two_hosts_max_total():
 
 
 def test_plan_sqli_requests_respects_max_total():
-    plans = plan_sqli_requests(["10.10.10.20"], max_total=5, max_per_host=5)
+    plans = plan_sqli_requests(
+        endpoints=[("10.10.10.20", 8080)],
+        max_total=5,
+        max_per_host=5,
+    )
     assert len(plans) == 5
 
 
 def test_plan_sqli_requests_cycles_paths_and_categories():
-    plans = plan_sqli_requests(["10.10.10.20"], max_total=5, max_per_host=5)
+    plans = plan_sqli_requests(
+        endpoints=[("10.10.10.20", 8080)],
+        max_total=5,
+        max_per_host=5,
+    )
     assert plans[0].path in SQLI_PATHS
     assert plans[0].payload_category in SQLI_PAYLOAD_CATEGORIES
     assert plans[0].parameter == "id"
 
 
 def test_planned_sqli_request_url_property():
-    plans = plan_sqli_requests(["lab.local"], max_total=1, max_per_host=1)
+    plans = plan_sqli_requests(
+        endpoints=[("lab.local", 8080)],
+        max_total=1,
+        max_per_host=1,
+    )
     assert plans[0].path in SQLI_PATHS
-    assert plans[0].url.startswith("http://lab.local")
+    assert plans[0].url.startswith("http://lab.local:8080")
 
 
 def test_plan_sqli_post_form_has_body():
-    plans = plan_sqli_requests(["10.10.10.20"], max_total=30, max_per_host=30)
+    plans = plan_sqli_requests(
+        endpoints=[("10.10.10.20", 8080)],
+        max_total=30,
+        max_per_host=30,
+    )
     form_plans = [p for p in plans if p.transport == "form"]
     assert form_plans
     assert form_plans[0].method == "POST"
@@ -104,6 +124,6 @@ def test_plan_sqli_post_form_has_body():
     assert form_plans[0].content_type == "application/x-www-form-urlencoded"
 
 
-def test_plan_sqli_requests_requires_host():
-    with pytest.raises(HttpProtocolError, match="at least one host"):
-        plan_sqli_requests([])
+def test_plan_sqli_requests_requires_endpoint():
+    with pytest.raises(HttpProtocolError, match="at least one endpoint"):
+        plan_sqli_requests(endpoints=[])

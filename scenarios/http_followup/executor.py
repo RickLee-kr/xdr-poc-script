@@ -9,10 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from dsp.engine.host_selection import (
-    HttpFollowupEndpoint,
     SKIP_REASON_HTTP_TARGETS_NOT_FOUND,
     format_selected_target_labels,
-    probe_and_select_http_followup_endpoints,
     resolve_http_endpoint_selection,
 )
 from dsp.engine.scenario_engine import RunContext, ScenarioSkipError, TargetSet
@@ -47,10 +45,15 @@ def select_followup_endpoints(
     config: dict,
     *,
     max_hosts: int = MAX_HOSTS_DEFAULT,
-    client: HttpClient | None = None,
+    dry_run: bool = False,
+    timeout: float = 10.0,
 ):
     return resolve_http_endpoint_selection(
-        targets, config, max_hosts=max_hosts, client=client
+        targets,
+        config,
+        max_hosts=max_hosts,
+        dry_run=dry_run,
+        timeout=timeout,
     )
 
 
@@ -61,14 +64,12 @@ def select_followup_endpoint_targets(
     max_hosts: int = MAX_HOSTS_DEFAULT,
 ) -> list[str]:
     """Return host:port labels for selected HTTP endpoints."""
-    if config.get("hosts"):
-        return [str(h) for h in config["hosts"]][:max_hosts]
     selection = resolve_http_endpoint_selection(
-        targets, config, max_hosts=max_hosts, client=None
+        targets, config, max_hosts=max_hosts, dry_run=False, timeout=10.0
     )
-    if not selection.endpoints:
+    if not selection.selected:
         return []
-    return [f"{ep.host}:{ep.port}" for ep in selection.endpoints]
+    return [f"{ep.host}:{ep.port}" for ep in selection.selected]
 
 
 def select_followup_hosts(
@@ -222,9 +223,13 @@ def run(
     client = HttpClient(mode=mode, timeout=float(params.get("timeout", 10.0)))
 
     selection = select_followup_endpoints(
-        targets, params, max_hosts=max_hosts, client=client
+        targets,
+        params,
+        max_hosts=max_hosts,
+        dry_run=ctx.dry_run,
+        timeout=float(params.get("timeout", 10.0)),
     )
-    if selection.skip_reason or not selection.endpoints:
+    if selection.skip_reason or not selection.selected:
         reason = selection.skip_reason or SKIP_REASON_HTTP_TARGETS_NOT_FOUND
         _emit_skipped(
             ctx,
@@ -238,7 +243,7 @@ def run(
         )
         raise ScenarioSkipError(reason)
 
-    endpoints = selection.endpoints
+    endpoints = selection.selected
     endpoint_tuples = [(ep.host, ep.port) for ep in endpoints]
     hosts = [ep.host for ep in endpoints]
 
@@ -447,6 +452,20 @@ def run(
     malicious_rare_count = abnormal_user_agents
     response_code_distribution = _response_code_distribution(status_counter)
     redirect_only_warning = _redirect_only_warning(response_code_distribution, response_count)
+
+    if sent_count == 0:
+        _emit_skipped(
+            ctx,
+            hosts=hosts,
+            reason=SKIP_REASON_HTTP_TARGETS_NOT_FOUND,
+            scenario_id=scenario_id,
+            source=source,
+            https_targets_skipped=selection.https_targets_skipped,
+            probe_summaries=selection.probe_summaries,
+            rejected_targets=selection.rejected_targets,
+        )
+        raise ScenarioSkipError(SKIP_REASON_HTTP_TARGETS_NOT_FOUND)
+
     request_log_path = _write_request_log(ctx, request_log)
     wire_log_path = _write_wire_evidence_log(ctx, wire_log) if write_wire_evidence else None
     elapsed = round(time.monotonic() - t0, 3)

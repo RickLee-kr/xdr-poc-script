@@ -10,6 +10,7 @@ import urllib.request
 from typing import Any
 
 from dsp.protocols.base import HttpProtocolError
+from dsp.protocols.http.curl_transport import curl_send_request
 from dsp.protocols.http.urls import PlannedHttpRequest
 from dsp.protocols.types import HttpRequest, HttpResponseResult
 
@@ -150,7 +151,7 @@ class HttpClient:
         if self.mode == "live":
             if mock_outcome is not None:
                 raise HttpProtocolError("mock_outcome is not supported in live mode")
-            return send_request(
+            return curl_send_request(
                 planned.url,
                 method=planned.method,
                 timeout=self.timeout,

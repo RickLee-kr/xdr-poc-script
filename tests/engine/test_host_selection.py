@@ -7,7 +7,6 @@ from dsp.engine.host_selection import (
     select_http_followup_endpoints,
 )
 from dsp.engine.scenario_engine import TargetSet
-from dsp.protocols.http.client import HttpClient
 
 
 def test_http_followup_prefers_plain_http_endpoints():
@@ -23,7 +22,7 @@ def test_http_followup_prefers_plain_http_endpoints():
         },
         discovery_enabled=True,
     )
-    endpoints, skip = select_http_followup_endpoints(targets, {}, max_hosts=2)
+    endpoints, skip = select_http_followup_endpoints(targets, {}, max_hosts=2, dry_run=True)
     assert skip is None
     assert len(endpoints) == 1
     assert endpoints[0].scheme == "http"
@@ -66,9 +65,8 @@ def test_http_followup_probe_prefers_error_responses():
         },
         discovery_enabled=True,
     )
-    client = HttpClient(mode="mock")
     selection = probe_and_select_http_followup_endpoints(
-        targets, {}, max_hosts=1, client=client
+        targets, {}, max_hosts=1, dry_run=True
     )
     assert selection.skip_reason is None
     assert selection.endpoints

@@ -33,7 +33,7 @@ def test_fixed_paths_count():
 
 def test_plan_followup_request_caps():
     plans = plan_followup_requests(
-        ["10.10.10.20", "10.10.10.21"],
+        endpoints=[("10.10.10.20", 8080), ("10.10.10.21", 9000)],
         max_hosts=2,
         max_per_host=10,
         max_total=20,
@@ -44,7 +44,7 @@ def test_plan_followup_request_caps():
 
 
 def test_plan_followup_respects_max_total():
-    plans = plan_followup_requests(["10.10.10.20"], max_total=5)
+    plans = plan_followup_requests(endpoints=[("10.10.10.20", 8080)], max_total=5)
     assert len(plans) == 5
 
 
@@ -60,21 +60,25 @@ def test_plan_followup_prefers_http_ports():
     assert HTTP_PORT_PRIORITY[0] == 80
 
 
-def test_plan_followup_requires_host():
-    with pytest.raises(HttpProtocolError, match="at least one host"):
-        plan_followup_requests([])
+def test_plan_followup_requires_endpoint():
+    with pytest.raises(HttpProtocolError, match="at least one endpoint"):
+        plan_followup_requests(endpoints=[])
 
 
 def test_planned_request_url_property():
-    plans = plan_followup_requests(["lab.local"], max_total=1)
+    plans = plan_followup_requests(endpoints=[("lab.local", 8080)], max_total=1)
     from dsp.protocols.http.urls import ATTACK_SCAN_PATHS
 
     assert plans[0].path in ATTACK_SCAN_PATHS
     assert plans[0].url.startswith("http://")
-    assert plans[0].port == 80
+    assert plans[0].port == 8080
 
 
 def test_plan_followup_cycles_paths_for_volume():
-    plans = plan_followup_requests(["10.10.10.20"], max_per_host=50, max_total=50)
+    plans = plan_followup_requests(
+        endpoints=[("10.10.10.20", 8080)],
+        max_per_host=50,
+        max_total=50,
+    )
     assert len(plans) == 50
     assert plans[0].path != plans[-1].path or len({p.path for p in plans}) > 1

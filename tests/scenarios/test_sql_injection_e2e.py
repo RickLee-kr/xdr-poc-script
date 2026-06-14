@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -11,28 +10,11 @@ from dsp.runner import RunManager
 
 SQLI_TEST_PARAMS = {
     "sql_injection": {
-        "hosts": ["10.10.10.20"],
+        "endpoints": [["10.10.10.20", 8080]],
         "max_total": 5,
         "max_per_host": 5,
     }
 }
-
-
-@pytest.fixture
-def mock_http_urlopen():
-    mock_resp = MagicMock()
-    mock_resp.__enter__.return_value = mock_resp
-    mock_resp.__exit__.return_value = False
-    mock_resp.status = 200
-    mock_resp.getcode.return_value = 200
-    mock_resp.reason = "OK"
-    mock_resp.read.return_value = b"ok"
-
-    with patch("urllib.request.build_opener") as build_opener:
-        opener = MagicMock()
-        opener.open.return_value = mock_resp
-        build_opener.return_value = opener
-        yield
 
 
 def test_sql_injection_dry_run_e2e(tmp_runs_dir):
@@ -63,7 +45,7 @@ def test_sql_injection_dry_run_e2e(tmp_runs_dir):
     assert "/login" in report or "UNION" in report or "OR" in report
 
 
-def test_sql_injection_live_e2e(tmp_runs_dir, mock_http_urlopen):
+def test_sql_injection_live_e2e(tmp_runs_dir, mock_curl_http):
     manager = RunManager(runs_dir=tmp_runs_dir)
     run, run_dir, exit_code = manager.run(
         scenario_ids=["sql_injection"],

@@ -37,7 +37,7 @@ def _probe_stats_for(host: str, port: int) -> HttpEndpointProbeStats:
 
 
 def _run_probe_selection(monkeypatch, *, max_hosts: int = 2):
-    def fake_probe(host, port, scheme, *, client, index=0):
+    def fake_probe(host, port, scheme, *, dry_run=False, timeout=10.0, index=0, command_runner=None):
         return _probe_stats_for(host, port)
 
     monkeypatch.setattr(
@@ -67,7 +67,8 @@ def _run_probe_selection(monkeypatch, *, max_hosts: int = 2):
         targets,
         {},
         max_hosts=max_hosts,
-        client=HttpClient(mode="live"),
+        dry_run=False,
+        timeout=10.0,
     )
 
 
@@ -97,7 +98,7 @@ def test_probe_quality_selects_8080_and_9000_over_port_80(monkeypatch):
 def test_probe_quality_prefers_response_endpoint_over_same_host_no_response(monkeypatch):
     """Regression: 118:9000 must win over 118:8080 when only 9000 returns 400."""
 
-    def fake_probe(host, port, scheme, *, client, index=0):
+    def fake_probe(host, port, scheme, *, dry_run=False, timeout=10.0, index=0, command_runner=None):
         stats = HttpEndpointProbeStats(host=host, port=port, scheme="http")
         if (host, port) == ("221.139.249.110", 8080):
             stats.status_counts = {400: 2}
@@ -130,7 +131,8 @@ def test_probe_quality_prefers_response_endpoint_over_same_host_no_response(monk
         targets,
         {},
         max_hosts=2,
-        client=HttpClient(mode="live"),
+        dry_run=False,
+        timeout=10.0,
     )
 
     selected = {(ep.host, ep.port) for ep in selection.endpoints}
@@ -156,7 +158,9 @@ def test_no_https_target_selected_when_http_available():
         },
         discovery_enabled=True,
     )
-    selection = probe_and_select_http_followup_endpoints(targets, {}, max_hosts=2, client=None)
+    selection = probe_and_select_http_followup_endpoints(
+        targets, {}, max_hosts=2, dry_run=True
+    )
     assert selection.skip_reason is None
     assert selection.endpoints
     assert all(ep.scheme == "http" for ep in selection.endpoints)
@@ -171,7 +175,9 @@ def test_scenario_skipped_when_only_https_exists():
         service_endpoints={"https_targets": [("10.10.10.21", 443)]},
         discovery_enabled=True,
     )
-    selection = probe_and_select_http_followup_endpoints(targets, {}, max_hosts=2, client=None)
+    selection = probe_and_select_http_followup_endpoints(
+        targets, {}, max_hosts=2, dry_run=True
+    )
     assert selection.endpoints == []
     assert selection.skip_reason == SKIP_REASON_HTTP_TARGETS_NOT_FOUND
     assert selection.https_targets_skipped == ["10.10.10.21:443"]
@@ -192,7 +198,6 @@ def test_no_https_request_generated_in_planned_followup():
 
 def test_no_https_request_generated_in_planned_sqli():
     plans = plan_sqli_requests(
-        ["10.10.10.20", "10.10.10.21"],
         endpoints=[("10.10.10.20", 80), ("10.10.10.21", 8080)],
         max_hosts=2,
         max_per_host=5,
@@ -209,8 +214,18 @@ def test_https_ports_not_in_detection_priority():
     assert HTTPS_PORT_PRIORITY == (443, 8443)
 
 
-def test_target_selection_host_selectors_exist():
+def test_target_selection_host_selectors_exist(monkeypatch):
     from dsp.runner.target_selection import resolve_scenario_targets
+
+    def fake_probe(host, port, scheme, *, dry_run=False, timeout=10.0, index=0, command_runner=None):
+        stats = HttpEndpointProbeStats(host=host, port=port, scheme="http")
+        if port == 8080:
+            stats.status_counts = {400: 2}
+        else:
+            stats.timeouts = 3
+        return stats
+
+    monkeypatch.setattr("dsp.protocols.http.target_probe.probe_http_endpoint", fake_probe)
 
     targets = TargetSet(
         target_net="10.10.10.0/24",
@@ -222,8 +237,8 @@ def test_target_selection_host_selectors_exist():
     sqli_targets = resolve_scenario_targets("sql_injection", targets, {"max_hosts": 2})
     assert http_targets
     assert sqli_targets
-    assert http_targets[0].startswith("10.10.10.20:")
-    assert sqli_targets[0].startswith("10.10.10.20:")
+    assert http_targets[0] == "10.10.10.20:8080"
+    assert sqli_targets[0] == "10.10.10.20:8080"
 
 
 def _only_https_targets() -> TargetSet:
@@ -301,7 +316,7 @@ def test_cached_endpoint_selection_preserves_port_into_executor(monkeypatch):
     )
     from dsp.engine import RunConfig
 
-    def fake_probe(host, port, scheme, *, client, index=0):
+    def fake_probe(host, port, scheme, *, dry_run=False, timeout=10.0, index=0, command_runner=None):
         return _probe_stats_for(host, port)
 
     monkeypatch.setattr(
@@ -354,7 +369,7 @@ def test_cached_endpoint_selection_preserves_port_into_executor(monkeypatch):
 
 
 def test_empty_endpoint_selection_emits_skip_not_zero_send_completed(monkeypatch):
-    def fake_probe(host, port, scheme, *, client, index=0):
+    def fake_probe(host, port, scheme, *, dry_run=False, timeout=10.0, index=0, command_runner=None):
         stats = HttpEndpointProbeStats(host=host, port=port, scheme="http")
         stats.timeouts = 5
         return stats

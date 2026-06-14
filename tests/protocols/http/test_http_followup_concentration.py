@@ -91,7 +91,7 @@ def test_http_followup_writes_per_target_summary_fields(tmp_runs_dir):
         dry_run=True,
         scenario_params={
             "http_followup": {
-                "hosts": ["10.10.10.20", "10.10.10.21"],
+                "endpoints": [["10.10.10.20", 8080], ["10.10.10.21", 9000]],
                 "max_hosts": 2,
                 "max_per_host": 150,
                 "max_total": 300,

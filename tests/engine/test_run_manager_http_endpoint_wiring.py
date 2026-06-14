@@ -54,7 +54,7 @@ def _lab_targets() -> TargetSet:
 
 
 def test_live_path_empty_selection_skips_without_completed(monkeypatch, tmp_path: Path):
-    def fake_probe(host, port, scheme, *, client, index=0):
+    def fake_probe(host, port, scheme, *, dry_run=False, timeout=10.0, index=0, command_runner=None):
         stats = HttpEndpointProbeStats(host=host, port=port, scheme="http")
         stats.timeouts = 5
         return stats
@@ -123,7 +123,7 @@ def test_live_path_empty_selection_skips_without_completed(monkeypatch, tmp_path
 
 
 def test_live_path_selected_endpoints_send_requests(monkeypatch, tmp_path: Path):
-    def fake_probe(host, port, scheme, *, client, index=0):
+    def fake_probe(host, port, scheme, *, dry_run=False, timeout=10.0, index=0, command_runner=None):
         return _probe_stats_for(host, port)
 
     monkeypatch.setattr(
@@ -180,7 +180,7 @@ def test_live_path_selected_endpoints_send_requests(monkeypatch, tmp_path: Path)
 
 
 def test_orchestrator_skip_does_not_emit_scenario_completed(monkeypatch):
-    def fake_probe(host, port, scheme, *, client, index=0):
+    def fake_probe(host, port, scheme, *, dry_run=False, timeout=10.0, index=0, command_runner=None):
         stats = HttpEndpointProbeStats(host=host, port=port, scheme="http")
         stats.timeouts = 5
         return stats

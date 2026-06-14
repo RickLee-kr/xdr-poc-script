@@ -12,7 +12,6 @@ from dsp.engine.host_selection import (
     HttpFollowupSelection,
     SKIP_REASON_HTTP_TARGETS_NOT_FOUND,
     format_selected_target_labels,
-    probe_and_select_http_followup_endpoints,
     resolve_http_endpoint_selection,
 )
 from dsp.engine.scenario_engine import RunContext, ScenarioSkipError, TargetSet
@@ -30,7 +29,6 @@ from dsp.protocols.http.sqli_payloads import (
     plan_sqli_requests,
 )
 from dsp.protocols.http.urls import (
-    HTTP_PORT_PRIORITY,
     MAX_HOSTS_DEFAULT,
     MAX_REQUESTS_PER_HOST_DEFAULT,
     MAX_REQUESTS_TOTAL_DEFAULT,
@@ -43,30 +41,16 @@ def select_sqli_endpoints(
     config: dict,
     *,
     max_hosts: int,
-    client: HttpClient,
+    dry_run: bool = False,
+    timeout: float = 10.0,
 ) -> HttpFollowupSelection:
     """Select HTTP-only endpoints that respond, using probe scoring when available."""
-    if config.get("hosts"):
-        from dsp.engine.host_selection import HttpFollowupEndpoint
-        from dsp.protocols.http.urls import select_port_for_host
-
-        hosts = [str(h) for h in config["hosts"]][:max_hosts]
-        endpoints = [
-            HttpFollowupEndpoint(
-                host=h,
-                port=select_port_for_host(i, HTTP_PORT_PRIORITY),
-                scheme="http",
-                selection_reason="explicit_hosts",
-            )
-            for i, h in enumerate(hosts)
-        ]
-        return HttpFollowupSelection(
-            endpoints=endpoints,
-            selected_http_target_reason="explicit_hosts",
-        )
-
     return resolve_http_endpoint_selection(
-        targets, config, max_hosts=max_hosts, client=client
+        targets,
+        config,
+        max_hosts=max_hosts,
+        dry_run=dry_run,
+        timeout=timeout,
     )
 
 
@@ -77,14 +61,12 @@ def select_sqli_endpoint_targets(
     max_hosts: int = MAX_HOSTS_DEFAULT,
 ) -> list[str]:
     """Return host:port labels for selected SQLi HTTP endpoints."""
-    if config.get("hosts"):
-        return [str(h) for h in config["hosts"]][:max_hosts]
     selection = resolve_http_endpoint_selection(
-        targets, config, max_hosts=max_hosts, client=None
+        targets, config, max_hosts=max_hosts, dry_run=False, timeout=10.0
     )
-    if not selection.endpoints:
+    if not selection.selected:
         return []
-    return [f"{ep.host}:{ep.port}" for ep in selection.endpoints]
+    return [f"{ep.host}:{ep.port}" for ep in selection.selected]
 
 
 def select_sqli_hosts(
@@ -199,9 +181,13 @@ def run(
     client = HttpClient(mode=mode, timeout=float(params.get("timeout", 10.0)))
 
     selection = select_sqli_endpoints(
-        targets, params, max_hosts=max_hosts, client=client
+        targets,
+        params,
+        max_hosts=max_hosts,
+        dry_run=ctx.dry_run,
+        timeout=float(params.get("timeout", 10.0)),
     )
-    if selection.skip_reason or not selection.endpoints:
+    if selection.skip_reason or not selection.selected:
         reason = selection.skip_reason or SKIP_REASON_HTTP_TARGETS_NOT_FOUND
         _emit_sqli_skipped(
             ctx,
@@ -213,11 +199,10 @@ def run(
         )
         raise ScenarioSkipError(reason)
 
-    endpoints = [(ep.host, ep.port) for ep in selection.endpoints]
-    hosts = [ep.host for ep in selection.endpoints]
-    selected_targets = format_selected_target_labels(selection.endpoints)
+    endpoints = [(ep.host, ep.port) for ep in selection.selected]
+    hosts = [ep.host for ep in selection.selected]
+    selected_targets = format_selected_target_labels(selection.selected)
     plans = plan_sqli_requests(
-        hosts,
         endpoints=endpoints,
         max_hosts=max_hosts,
         max_per_host=max_per_host,
@@ -252,7 +237,7 @@ def run(
                         "scheme": ep.scheme,
                         "selection_reason": ep.selection_reason,
                     }
-                    for ep in selection.endpoints
+                    for ep in selection.selected
                 ],
                 "planned_requests": len(plans),
                 "max_total": max_total,
@@ -362,6 +347,17 @@ def run(
         )
         if result.outcome == "response":
             response_count += 1
+
+    if sent_count == 0:
+        _emit_sqli_skipped(
+            ctx,
+            reason=SKIP_REASON_HTTP_TARGETS_NOT_FOUND,
+            source=source,
+            https_targets_skipped=selection.https_targets_skipped,
+            probe_summaries=selection.probe_summaries,
+            rejected_targets=selection.rejected_targets,
+        )
+        raise ScenarioSkipError(SKIP_REASON_HTTP_TARGETS_NOT_FOUND)
 
     request_log_path = _write_sqli_request_log(ctx, request_log)
     wire_log_path = _write_sqli_wire_evidence_log(ctx, wire_log) if write_wire_evidence else None
