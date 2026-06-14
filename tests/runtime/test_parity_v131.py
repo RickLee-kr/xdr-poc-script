@@ -221,7 +221,11 @@ def test_host_selection_uses_discovery_not_cidr_dot_one_two():
 def test_http_attack_paths_included_in_planned_paths():
     from dsp.protocols.http.urls import plan_followup_requests
 
-    plans = plan_followup_requests(["221.139.249.110"], max_per_host=20, max_total=20)
+    plans = plan_followup_requests(
+        endpoints=[("221.139.249.110", 80)],
+        max_per_host=20,
+        max_total=20,
+    )
     paths = {p.path for p in plans}
     assert any(path in ATTACK_SCAN_PATHS for path in paths)
 

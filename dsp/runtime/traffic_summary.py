@@ -8,13 +8,34 @@ from dsp.engine.scenario_engine import TargetSet
 from dsp.event_store import Event, EventStore
 
 
-def _event_dict(event: Event) -> dict[str, Any]:
+def _normalize_event(event: Event | dict[str, Any]) -> dict[str, Any]:
+    """Normalize Event objects, dicts, or to_dict()-capable records for summary."""
+    if isinstance(event, dict):
+        return {
+            "scenario_id": event.get("scenario_id", ""),
+            "event": event.get("event", ""),
+            "evidence": event.get("evidence") or {},
+            "target": event.get("target", ""),
+        }
+    to_dict = getattr(event, "to_dict", None)
+    if callable(to_dict):
+        data = to_dict()
+        return {
+            "scenario_id": data.get("scenario_id", ""),
+            "event": data.get("event", ""),
+            "evidence": data.get("evidence") or {},
+            "target": data.get("target", ""),
+        }
     return {
         "scenario_id": event.scenario_id,
         "event": event.event,
         "evidence": event.evidence or {},
         "target": event.target,
     }
+
+
+def _event_dict(event: Event) -> dict[str, Any]:
+    return _normalize_event(event)
 
 
 def _count_events(events: list[dict[str, Any]], scenario_id: str, event_name: str) -> int:
@@ -37,7 +58,7 @@ def build_traffic_summary(
     traffic_profile: str,
 ) -> dict[str, Any]:
     """Build planned vs actual traffic summary for a run."""
-    events = [_event_dict(e) for e in store.list_events(run_id)]
+    events = [_normalize_event(e) for e in store.list_events(run_id)]
 
     summary: dict[str, Any] = {
         "traffic_profile": traffic_profile,

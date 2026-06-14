@@ -223,6 +223,20 @@ def test_cli_high_large_target_allowed_with_opts(tmp_path: Path) -> None:
     assert run_fn.call_args.kwargs["max_hosts"] == 5
 
 
+def test_cli_profile_run_real_runmanager(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DSP_RUNS_DIR", str(tmp_path))
+    exit_code = main(
+        [
+            "run",
+            "--profile",
+            "normal",
+            "--dry-run",
+            "--quiet",
+        ]
+    )
+    assert exit_code == 0
+
+
 def test_operational_console_emits_scenario_labels() -> None:
     buf = io.StringIO()
     console = OperationalConsole(

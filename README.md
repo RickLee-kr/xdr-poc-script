@@ -15,8 +15,9 @@
 
 | 구분 | 경로 | Phase 0 조작 |
 |------|------|--------------|
-| **DSP (본 프로젝트)** | `detection-scenario-platform/` | 생성·수정 허용 (문서만) |
-| 레거시 Bash PoC | `stellar_poc*.sh`, `stellar_*_client.py` | **읽기만** |
+| **DSP (본 프로젝트)** | `xdr-poc-script/` (`git@github.com:RickLee-kr/xdr-poc-script.git`) | 생성·수정 허용 |
+| **Deprecated** | `detection-scenario-platform` (`git@github.com:RickLee-kr/detection-scenario-platform.git`) | **사용 금지** — 읽기 전용 mirror |
+| 레거시 Bash PoC | `stellar_poc*.sh`, `stellar_*_client.py` | **읽기만** (본 repo에는 없음) |
 | XDR Lab Deployment Automation | `appliance/`, `bootstrap/`, `installer/`, `scripts/`, `config/`, `docs/specs/`, … | **읽기만, 수정 금지** |
 
 자세한 규칙: [WORKSPACE_BOUNDARY.md](./WORKSPACE_BOUNDARY.md)
