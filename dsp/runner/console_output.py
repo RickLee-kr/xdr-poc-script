@@ -192,6 +192,9 @@ class OperationalConsole:
             "targets",
             "ports",
             "abnormal_ua_ratio",
+            "selection_reason",
+            "full_sweep_requested",
+            "profile",
         ):
             if key in meta and meta[key] is not None:
                 self._write(f"{key}={meta[key]}")

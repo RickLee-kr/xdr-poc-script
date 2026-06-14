@@ -455,7 +455,12 @@ class RunManager:
                             "scenario_id": sid,
                             "index": index,
                             "total": total_scenarios,
-                            "metadata": scenario_start_metadata(sid, targets, params),
+                            "metadata": scenario_start_metadata(
+                                sid,
+                                targets,
+                                params,
+                                profile=operational_profile,
+                            ),
                             "run_dir": str(run_dir),
                         },
                     )

@@ -134,6 +134,10 @@ def _apply_host_limit(
     max_hosts_override: int | None = None,
 ) -> dict[str, Any]:
     merged = dict(params)
+    if merged.get("full_sweep"):
+        explicit = int(merged.get("max_hosts", host_count))
+        merged["max_hosts"] = max(1, min(explicit, host_count))
+        return merged
     limit = _host_limit_for_profile(
         profile,
         host_count,
@@ -170,9 +174,6 @@ def build_operational_scenario_params(
             host_count,
             max_hosts_override=max_hosts,
         )
-        if scenario_id == "port_sweep":
-            merged["max_hosts"] = min(254, host_count)
-            merged["max_ports"] = 10
         if scenario_id == "http_followup":
             desired = int(base.get("max_hosts", 3))
             merged["max_hosts"] = min(desired, host_count) if host_count > 0 else desired

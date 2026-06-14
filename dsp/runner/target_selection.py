@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from dsp.engine.scenario_engine import TargetSet
+from dsp.runtime.scenario_plan import build_port_sweep_plan_view
 
 _SCENARIOS_ROOT = Path(__file__).resolve().parents[2] / "scenarios"
 
@@ -97,16 +98,22 @@ def scenario_start_metadata(
     scenario_id: str,
     targets: TargetSet,
     params: dict[str, Any],
+    *,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Build metadata lines for scenario STARTED progress output."""
     hosts = resolve_scenario_targets(scenario_id, targets, params)
     meta: dict[str, Any] = {"targets": len(hosts)}
     if scenario_id == "port_sweep":
-        max_hosts = int(params.get("max_hosts", 2))
-        max_ports = int(params.get("max_ports", 13))
-        meta["ports"] = max_ports
-        meta["planned_probes"] = min(len(hosts), max_hosts) * max_ports
+        plan = build_port_sweep_plan_view(targets, params)
+        meta["targets"] = len(plan.selected_hosts)
+        meta["ports"] = len(plan.selected_ports)
+        meta["planned_probes"] = plan.planned_probes
         meta["concurrency"] = int(params.get("concurrency", 32))
+        meta["selection_reason"] = plan.selection_reason
+        meta["full_sweep_requested"] = plan.full_sweep_requested
+        if profile:
+            meta["profile"] = profile
     elif scenario_id == "http_followup":
         from dsp.engine.host_selection import (
             SKIP_REASON_HTTP_TARGETS_NOT_FOUND,

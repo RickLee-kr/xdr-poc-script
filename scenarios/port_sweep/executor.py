@@ -6,7 +6,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dsp.engine.scenario_engine import RunContext, TargetSet
-from dsp.engine.target_engine import expand_target_net_hosts
 from dsp.protocols.recon import (
     DEFAULT_PORTS,
     MAX_HOSTS_DEFAULT,
@@ -21,6 +20,7 @@ from dsp.protocols.recon import (
 )
 from dsp.protocols.types import PortProbeResult
 from dsp.runner.activity_reporter import ActivityReporter
+from dsp.runtime.scenario_plan import select_port_sweep_hosts as _select_port_sweep_hosts
 
 # stellar_poc.sh / fast-safe FALLBACK_SCAN_PARALLELISM
 DEFAULT_CONCURRENCY = 32
@@ -32,10 +32,9 @@ def select_port_sweep_hosts(
     *,
     max_hosts: int = MAX_HOSTS_DEFAULT,
 ) -> list[str]:
-    """Select hosts for horizontal sweep — full /24 expansion (bash service discovery)."""
-    if config.get("hosts"):
-        return [str(h) for h in config["hosts"]][:max_hosts]
-    return expand_target_net_hosts(targets.target_net, max_hosts=max_hosts)[:max_hosts]
+    """Select hosts for horizontal sweep — provider-independent planning."""
+    hosts, _reason = _select_port_sweep_hosts(targets, config, max_hosts=max_hosts)
+    return hosts
 
 
 def _resolve_ports(config: dict, max_ports: int) -> tuple[int, ...]:

@@ -222,10 +222,12 @@ def test_scenario_start_metadata() -> None:
     meta = scenario_start_metadata(
         "port_sweep",
         targets,
-        {"max_hosts": 2, "max_ports": 13},
+        {"max_hosts": 2, "max_ports": 10},
     )
     assert meta["targets"] == 2
-    assert meta["ports"] == 13
+    assert meta["ports"] == 10
+    assert meta["planned_probes"] == 20
+    assert meta["selection_reason"] == "discovered_hosts"
 
 
 def test_format_elapsed() -> None:

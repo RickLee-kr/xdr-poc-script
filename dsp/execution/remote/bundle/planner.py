@@ -8,11 +8,13 @@ from typing import Any
 from dsp import EVENT_SCHEMA_VERSION
 from dsp.engine.host_selection import resolve_http_endpoint_selection, select_hosts_for_capability
 from dsp.engine.scenario_engine import TargetSet
-from dsp.engine.target_engine import expand_target_net_hosts
 from dsp.execution.remote.bundle.models import BUNDLE_SCENARIOS, RemoteScenarioSkip
 from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.execution.remote.paths import resolve_remote_bundle_path
 from dsp.plugins.models import PluginRecord
+from dsp.runtime.scenario_plan import (
+    build_port_sweep_plan_view,
+)
 from dsp.protocols.dns.tunnel import (
     CHUNK_SIZE_DEFAULT,
     PAYLOAD_MB_DEFAULT,
@@ -25,7 +27,6 @@ from dsp.protocols.dns.tunnel import (
 from dsp.protocols.dns.volume_profiles import apply_volume_profile
 from dsp.protocols.http.sqli_payloads import plan_sqli_requests
 from dsp.protocols.http.urls import MAX_HOSTS_DEFAULT, plan_followup_requests
-from dsp.protocols.recon import DEFAULT_PORTS, MAX_HOSTS_DEFAULT as PORT_SWEEP_MAX_HOSTS
 from dsp.protocols.recon import MAX_PORTS_DEFAULT, plan_port_sweep
 from dsp.protocols.ssh.attempts import SSH_PORT_DEFAULT, plan_ssh_attempts
 
@@ -116,31 +117,13 @@ def _build_plan(request: ScenarioExecutionRequest, targets: TargetSet) -> dict[s
     raise ValueError(f"unsupported scenario: {scenario_id!r}")
 
 
-def _select_port_sweep_hosts(targets: TargetSet, config: dict[str, Any], *, max_hosts: int) -> list[str]:
-    if config.get("hosts"):
-        return [str(h) for h in config["hosts"]][:max_hosts]
-    return expand_target_net_hosts(targets.target_net, max_hosts=max_hosts)[:max_hosts]
-
-
-def _select_tunnel_targets(targets: TargetSet, config: dict[str, Any], *, max_hosts: int) -> list[str]:
-    if config.get("targets"):
-        return [str(t) for t in config["targets"]][:max_hosts]
-    if targets.hosts:
-        return list(targets.hosts)[:max_hosts]
-    return ["10.10.10.20"][:max_hosts]
-
-
 def _plan_port_sweep(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    max_hosts = int(params.get("max_hosts", PORT_SWEEP_MAX_HOSTS))
-    max_ports = int(params.get("max_ports", MAX_PORTS_DEFAULT))
-    hosts = _select_port_sweep_hosts(targets, params, max_hosts=max_hosts)
-    ports = params.get("ports")
-    port_tuple = tuple(int(p) for p in ports)[:max_ports] if ports else DEFAULT_PORTS[:max_ports]
+    plan_view = build_port_sweep_plan_view(targets, params)
     plans = plan_port_sweep(
-        hosts,
-        max_hosts=max_hosts,
-        ports=port_tuple,
-        max_ports=max_ports,
+        plan_view.selected_hosts,
+        max_hosts=plan_view.max_hosts,
+        ports=plan_view.selected_ports,
+        max_ports=plan_view.max_ports,
         safe_mode=bool(params.get("safe_mode", True)),
     )
     return {
@@ -153,6 +136,14 @@ def _plan_port_sweep(targets: TargetSet, params: dict[str, Any], *, dry_run: boo
             for plan in plans
         ],
     }
+
+
+def _select_tunnel_targets(targets: TargetSet, config: dict[str, Any], *, max_hosts: int) -> list[str]:
+    if config.get("targets"):
+        return [str(t) for t in config["targets"]][:max_hosts]
+    if targets.hosts:
+        return list(targets.hosts)[:max_hosts]
+    return ["10.10.10.20"][:max_hosts]
 
 
 def _plan_dns_tunnel(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:

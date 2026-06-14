@@ -84,8 +84,38 @@ def test_build_operational_scenario_params_low_limits_hosts() -> None:
         ["port_sweep", "http_followup"],
         target_net="10.10.10.0/24",
     )
-    assert params["port_sweep"]["max_hosts"] == 254
+    assert params["port_sweep"]["max_hosts"] == 1
+    assert params["port_sweep"]["max_ports"] == 10
     assert params["http_followup"]["max_hosts"] == 1
+
+
+def test_build_operational_scenario_params_normal_port_sweep_respects_profile_cap() -> None:
+    params = build_operational_scenario_params(
+        "normal",
+        ["port_sweep"],
+        target_net="10.10.10.0/24",
+    )
+    assert params["port_sweep"]["max_hosts"] == 2
+
+
+def test_build_operational_scenario_params_high_port_sweep_allows_full_sweep() -> None:
+    params = build_operational_scenario_params(
+        "high",
+        ["port_sweep"],
+        target_net="10.10.10.0/24",
+    )
+    assert params["port_sweep"]["max_hosts"] == 254
+
+
+def test_apply_host_limit_honors_explicit_full_sweep_flag() -> None:
+    from dsp.runtime.operational_profiles import _apply_host_limit
+    from dsp.runtime.traffic_profiles import scenario_params_for_profile
+
+    base = scenario_params_for_profile("port_sweep", "high")
+    base["full_sweep"] = True
+    merged = _apply_host_limit(base, "low", host_count=254)
+    assert merged["max_hosts"] == 254
+    assert merged["full_sweep"] is True
 
 
 def test_build_operational_scenario_params_max_hosts_override_caps_high() -> None:
