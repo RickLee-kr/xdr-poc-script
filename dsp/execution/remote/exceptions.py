@@ -33,3 +33,20 @@ class RemoteEventCollectionError(Exception):
         self.remote_validation = remote_validation
         self.cat_validation = cat_validation
         super().__init__(message)
+
+
+class RemoteArtifactUploadError(RemoteScenarioRunnerError):
+    """Raised when a remote artifact upload cannot be verified on the webshell host."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        remote_path: str | None = None,
+        verification: object | None = None,
+        multipart_verification: object | None = None,
+    ) -> None:
+        self.remote_path = remote_path
+        self.verification = verification
+        self.multipart_verification = multipart_verification
+        super().__init__(message)

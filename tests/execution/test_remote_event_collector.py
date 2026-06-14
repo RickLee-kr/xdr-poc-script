@@ -72,6 +72,7 @@ def _mock_webshell_provider(
     download_return: RuntimeArtifact | None = None,
     download_side_effect=None,
     cat_return: bytes | None = None,
+    run_remote_command_side_effect=None,
 ) -> MagicMock:
     provider = MagicMock(spec=WebshellExecutionProvider)
     provider.provider_type = "webshell"
@@ -82,6 +83,10 @@ def _mock_webshell_provider(
     provider.fetch_remote_file_via_cat.return_value = (
         cat_return if cat_return is not None else b""
     )
+    if run_remote_command_side_effect is not None:
+        provider.run_remote_command.side_effect = run_remote_command_side_effect
+    else:
+        provider.run_remote_command.return_value = b"total 0\n"
     return provider
 
 
@@ -486,17 +491,18 @@ def test_both_invalid_writes_diagnostics_without_traceback_only(tmp_path: Path):
         RemoteEventCollector().collect(
             RemoteEventCollectionRequest(
                 remote_execution_id="exec01",
-                remote_bundle_path="/remote/events.jsonl",
+                remote_bundle_path="/tmp/dsp/exec01/events.jsonl",
                 diagnostics_dir=diagnostics_dir,
             ),
             provider,
             _open_store(),
         )
+    assert "events.jsonl missing" in str(exc_info.value)
     assert exc_info.value.diagnostics_dir == str(diagnostics_dir)
-    assert "HTML response" in str(exc_info.value)
     assert (diagnostics_dir / "downloaded_events.remote_path.raw").exists()
     assert (diagnostics_dir / "downloaded_events.cat.raw").exists()
     assert (diagnostics_dir / "collection_error.txt").exists()
+    assert (diagnostics_dir / "remote_ls_after_collection.txt").exists()
 
 
 def test_sync_run_id_mismatch_propagates(tmp_path: Path):

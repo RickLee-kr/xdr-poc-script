@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
 _DIAG_REMOTE_RAW = "downloaded_events.remote_path.raw"
 _DIAG_CAT_RAW = "downloaded_events.cat.raw"
 _DIAG_ERROR = "collection_error.txt"
+_DIAG_REMOTE_LS = "remote_ls_after_collection.txt"
+_DIAG_EXEC_OUTPUT = "execution_stdout_stderr.txt"
 
 
 class RemoteEventCollector:
@@ -83,11 +86,27 @@ class RemoteEventCollector:
             diagnostics_dir = self._write_collection_diagnostics(
                 request,
                 local_path,
+                provider,
                 remote_raw=remote_raw,
                 cat_raw=cat_raw,
                 remote_validation=remote_validation,
                 cat_validation=cat_validation,
             )
+            if self._events_jsonl_missing(
+                request.remote_bundle_path,
+                remote_validation,
+                cat_validation,
+            ):
+                raise RemoteEventCollectionError(
+                    self._format_missing_events_error(
+                        request,
+                        remote_validation,
+                        cat_validation,
+                    ),
+                    diagnostics_dir=str(diagnostics_dir),
+                    remote_validation=remote_validation,
+                    cat_validation=cat_validation,
+                )
             raise RemoteEventCollectionError(
                 self._format_collection_failure(
                     remote_validation,
@@ -153,6 +172,7 @@ class RemoteEventCollector:
         cls,
         request: RemoteEventCollectionRequest,
         local_path: Path,
+        provider: WebshellExecutionProvider,
         *,
         remote_raw: bytes,
         cat_raw: bytes | None,
@@ -166,7 +186,53 @@ class RemoteEventCollector:
             (diagnostics_dir / _DIAG_CAT_RAW).write_bytes(cat_raw)
         error_text = cls._format_collection_failure(remote_validation, cat_validation)
         (diagnostics_dir / _DIAG_ERROR).write_text(error_text, encoding="utf-8")
+
+        remote_run_dir = str(Path(request.remote_bundle_path).parent)
+        ls_output = provider.run_remote_command(
+            f"ls -la {shlex.quote(remote_run_dir)} 2>&1"
+        )
+        (diagnostics_dir / _DIAG_REMOTE_LS).write_text(
+            ls_output.decode("utf-8", errors="replace"),
+            encoding="utf-8",
+        )
         return diagnostics_dir
+
+    @staticmethod
+    def _events_jsonl_missing(
+        remote_bundle_path: str,
+        remote_validation: JsonlContentValidation,
+        cat_validation: JsonlContentValidation | None,
+    ) -> bool:
+        if not remote_bundle_path.endswith("events.jsonl"):
+            return False
+        if cat_validation is None:
+            return False
+        missing_reasons = {
+            "cat: file not found",
+            "empty response",
+            "file not found",
+        }
+        if cat_validation.reason in missing_reasons:
+            return True
+        if remote_validation.reason in {"empty response", "HTML response"}:
+            return cat_validation.reason in missing_reasons
+        return False
+
+    @staticmethod
+    def _format_missing_events_error(
+        request: RemoteEventCollectionRequest,
+        remote_validation: JsonlContentValidation,
+        cat_validation: JsonlContentValidation | None,
+    ) -> str:
+        lines = [
+            "events.jsonl missing",
+            f"remote_bundle_path: {request.remote_bundle_path}",
+            f"remote_path validation: {remote_validation.reason}",
+        ]
+        if cat_validation is not None:
+            lines.append(f"cat fallback validation: {cat_validation.reason}")
+        lines.append("see remote_ls_after_collection.txt and execution_stdout_stderr.txt")
+        return "\n".join(lines)
 
     @staticmethod
     def _format_collection_failure(

@@ -167,7 +167,13 @@ class WebshellExecutionProvider(ExecutionProvider):
             dry_run=context.dry_run,
         )
         runner = BundleScenarioRunner()
-        result = runner.run(request, self, targets=targets, record=record)
+        result = runner.run(
+            request,
+            self,
+            targets=targets,
+            record=record,
+            diagnostics_dir=snapshot_dir,
+        )
         context.execution_metadata["remote_scenario_result"] = result.to_dict()
         context.execution_metadata["remote_execution_id"] = result.remote_execution_id
         context.execution_metadata["remote_execution_mode"] = REMOTE_EXECUTION_MODE_BUNDLE
@@ -202,6 +208,16 @@ class WebshellExecutionProvider(ExecutionProvider):
         """Read a remote file through the selected webshell family ``cat`` transport."""
         provider = self._require_family_provider()
         return provider.fetch_remote_file_via_cat(remote_path)
+
+    def run_remote_command(
+        self,
+        command: str,
+        *,
+        timeout_seconds: float = 300.0,
+    ) -> bytes:
+        """Run a remote shell command and return captured command output bytes."""
+        provider = self._require_family_provider()
+        return provider.run_remote_command(command, timeout_seconds=timeout_seconds)
 
     def cleanup(self, context: ExecutionContext) -> None:
         """Release webshell runtime session state."""

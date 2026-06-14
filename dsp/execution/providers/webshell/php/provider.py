@@ -118,10 +118,22 @@ class PhpWebshellProvider(GenericWebshellProvider):
 
     def fetch_remote_file_via_cat(self, remote_path: str) -> bytes:
         """Read a remote file through the PHP ``cat`` command transport."""
-        from dsp.execution.webshell.cat_transport import read_remote_file_via_cat
+        from dsp.execution.webshell.command_transport import read_remote_file_via_cat
 
         runtime = self._require_php_runtime()
         return read_remote_file_via_cat(runtime, remote_path)
+
+    def run_remote_command(
+        self,
+        command: str,
+        *,
+        timeout_seconds: float = 300.0,
+    ) -> bytes:
+        """Run a remote shell command and return captured command output bytes."""
+        from dsp.execution.webshell.command_transport import run_remote_command
+
+        runtime = self._require_php_runtime()
+        return run_remote_command(runtime, command, timeout_seconds=timeout_seconds)
 
     def cleanup(self) -> None:
         """Release runtime session state."""
