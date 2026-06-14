@@ -13,9 +13,11 @@ from dsp.execution.remote.bundle.models import BUNDLE_SCENARIOS
 from dsp.execution.remote.bundle.packager import pack_scenario_bundle
 from dsp.execution.remote.bundle.planner import build_manifest
 from dsp.execution.remote.bundle.upload import (
+    RemoteCompletionVerification,
     VerifiedUploadResult,
     upload_remote_file_verified,
     verify_remote_bundle_exists,
+    verify_remote_execution_artifacts,
 )
 from dsp.execution.remote.exceptions import (
     RemoteArtifactUploadError,
@@ -34,6 +36,9 @@ _DIAG_MANIFEST = "upload_manifest_result.txt"
 _DIAG_SCRIPT = "upload_script_result.txt"
 _DIAG_REMOTE_LS = "remote_ls_after_upload.txt"
 _DIAG_EXEC_OUTPUT = "execution_stdout_stderr.txt"
+_DIAG_REMOTE_LS_AFTER_EXEC = "remote_ls_after_execution.txt"
+_DIAG_REMOTE_EVENTS_WC = "remote_events_wc_after_execution.txt"
+_DIAG_REMOTE_SUMMARY = "remote_summary_after_execution.txt"
 
 
 class BundleScenarioRunner:
@@ -111,7 +116,10 @@ class BundleScenarioRunner:
         self._validate_remote_execution(
             exec_output,
             remote_bundle_path=bundle_path,
+            remote_run_dir=remote_run_dir,
+            run_id=str(request.run_id),
             provider=provider,
+            diag_dir=diag_dir,
         )
 
         command_result = CommandResult(
@@ -193,28 +201,41 @@ class BundleScenarioRunner:
                 return payload
         return None
 
+    @staticmethod
+    def _stdout_marker_reason(
+        exec_output: bytes,
+        parsed: dict[str, object] | None,
+    ) -> str:
+        text = normalize_webshell_command_output(exec_output).lower()
+        if parsed is not None and int(parsed.get("exit_code", 1)) != 0:
+            return "stdout_exit_code_non_zero"
+        if "command timeout" in text:
+            return "command_timeout"
+        if not text.strip():
+            return "stdout_empty"
+        return "stdout_marker_missing"
+
     @classmethod
     def _validate_remote_execution(
         cls,
         exec_output: bytes,
         *,
         remote_bundle_path: str,
+        remote_run_dir: str,
+        run_id: str,
         provider: WebshellExecutionProvider,
+        diag_dir: Path | None = None,
     ) -> None:
         execution_text = normalize_webshell_command_output(exec_output)
         parsed = cls._parse_execution_result(exec_output)
-        if parsed is None or int(parsed.get("exit_code", 1)) != 0:
-            raise RemoteBundleExecutionError(
-                "run_scenario.py failed or returned no success marker; "
-                "see execution_stdout_stderr.txt",
-                remote_path=remote_bundle_path,
-                execution_output=execution_text,
-            )
+        marker_reason = cls._stdout_marker_reason(exec_output, parsed)
 
-        bundle_verification = verify_remote_bundle_exists(provider, remote_bundle_path)
-        if not bundle_verification.ok:
+        if parsed is not None and int(parsed.get("exit_code", 1)) == 0:
+            bundle_verification = verify_remote_bundle_exists(provider, remote_bundle_path)
+            if bundle_verification.ok:
+                return
             raise RemoteBundleExecutionError(
-                "events.jsonl missing or empty after run_scenario.py; "
+                "events.jsonl missing or empty after run_scenario.py success marker; "
                 f"{bundle_verification.reason or 'verification failed'}; "
                 "see execution_stdout_stderr.txt, upload_script_result.txt, "
                 "and remote_ls_after_upload.txt",
@@ -222,3 +243,60 @@ class BundleScenarioRunner:
                 execution_output=execution_text,
                 verification=bundle_verification,
             )
+
+        summary_path = f"{remote_run_dir.rstrip('/')}/traffic_summary.json"
+        artifact_verification = verify_remote_execution_artifacts(
+            provider,
+            remote_run_dir=remote_run_dir,
+            events_path=remote_bundle_path,
+            summary_path=summary_path,
+            run_id=run_id,
+        )
+        if artifact_verification.ok:
+            return
+
+        cls._raise_execution_failure(
+            execution_text=execution_text,
+            marker_reason=marker_reason,
+            remote_bundle_path=remote_bundle_path,
+            artifact_verification=artifact_verification,
+            diag_dir=diag_dir,
+        )
+
+    @classmethod
+    def _raise_execution_failure(
+        cls,
+        *,
+        execution_text: str,
+        marker_reason: str,
+        remote_bundle_path: str,
+        artifact_verification: RemoteCompletionVerification,
+        diag_dir: Path | None,
+    ) -> None:
+        if diag_dir is not None:
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            (diag_dir / _DIAG_REMOTE_LS_AFTER_EXEC).write_text(
+                artifact_verification.ls_output,
+                encoding="utf-8",
+            )
+            (diag_dir / _DIAG_REMOTE_EVENTS_WC).write_text(
+                artifact_verification.events_wc_output,
+                encoding="utf-8",
+            )
+            (diag_dir / _DIAG_REMOTE_SUMMARY).write_text(
+                artifact_verification.summary_output,
+                encoding="utf-8",
+            )
+
+        detail_parts = [f"stdout: {marker_reason}"]
+        if artifact_verification.reason:
+            detail_parts.append(f"artifacts: {artifact_verification.reason}")
+        raise RemoteBundleExecutionError(
+            "remote bundle execution could not be verified; "
+            + "; ".join(detail_parts)
+            + "; see execution_stdout_stderr.txt, remote_ls_after_execution.txt, "
+            "remote_events_wc_after_execution.txt, and remote_summary_after_execution.txt",
+            remote_path=remote_bundle_path,
+            execution_output=execution_text,
+            verification=artifact_verification,
+        )

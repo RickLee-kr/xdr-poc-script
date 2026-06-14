@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 import shlex
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ _MISSING_FILE_MARKERS = (
     "not found",
 )
 _WC_BYTES_RE = re.compile(rb"(\d+)")
+_WC_LINES_RE = re.compile(rb"(\d+)")
 
 
 @dataclass(frozen=True)
@@ -332,6 +334,214 @@ def verify_remote_bundle_exists(
     )
 
 
+@dataclass(frozen=True)
+class RemoteCompletionVerification:
+    """Outcome of verifying remote bundle completion artifacts after execution."""
+
+    ok: bool
+    remote_run_dir: str
+    events_path: str
+    summary_path: str
+    events_line_count: int | None
+    summary_event_count: int | None
+    summary_run_id: str | None
+    ls_output: str
+    events_wc_output: str
+    summary_output: str
+    reason: str | None = None
+
+    def format_report(self) -> str:
+        lines = [
+            f"remote_run_dir: {self.remote_run_dir}",
+            f"events_path: {self.events_path}",
+            f"summary_path: {self.summary_path}",
+            f"events_line_count: {self.events_line_count}",
+            f"summary_event_count: {self.summary_event_count}",
+            f"summary_run_id: {self.summary_run_id}",
+            f"ok: {self.ok}",
+        ]
+        if self.reason:
+            lines.append(f"reason: {self.reason}")
+        lines.extend(
+            [
+                "",
+                "ls -la:",
+                self.ls_output,
+                "",
+                "wc -l events.jsonl:",
+                self.events_wc_output,
+                "",
+                "traffic_summary.json:",
+                self.summary_output,
+            ]
+        )
+        return "\n".join(lines)
+
+
+def verify_remote_execution_artifacts(
+    provider: WebshellExecutionProvider,
+    *,
+    remote_run_dir: str,
+    events_path: str,
+    summary_path: str,
+    run_id: str,
+) -> RemoteCompletionVerification:
+    """Verify remote run artifacts prove scenario completion without stdout marker."""
+    ls_output = _decode_output(
+        provider.run_remote_command(f"ls -la {shlex.quote(remote_run_dir)} 2>&1")
+    )
+    if _looks_missing(ls_output):
+        return RemoteCompletionVerification(
+            ok=False,
+            remote_run_dir=remote_run_dir,
+            events_path=events_path,
+            summary_path=summary_path,
+            events_line_count=None,
+            summary_event_count=None,
+            summary_run_id=None,
+            ls_output=ls_output,
+            events_wc_output="",
+            summary_output="",
+            reason="remote bundle directory missing",
+        )
+
+    events_verification = verify_remote_bundle_exists(provider, events_path)
+    events_wc_output = events_verification.wc_output
+    events_line_count: int | None = None
+    if events_verification.ok:
+        events_wc_output = _decode_output(
+            provider.run_remote_command(f"wc -l < {shlex.quote(events_path)} 2>&1")
+        )
+        events_line_count = _parse_line_count(events_wc_output)
+    if not events_verification.ok:
+        return RemoteCompletionVerification(
+            ok=False,
+            remote_run_dir=remote_run_dir,
+            events_path=events_path,
+            summary_path=summary_path,
+            events_line_count=events_line_count,
+            summary_event_count=None,
+            summary_run_id=None,
+            ls_output=ls_output,
+            events_wc_output=events_wc_output,
+            summary_output="",
+            reason=events_verification.reason or "events.jsonl missing or empty",
+        )
+    if events_line_count is None or events_line_count <= 0:
+        return RemoteCompletionVerification(
+            ok=False,
+            remote_run_dir=remote_run_dir,
+            events_path=events_path,
+            summary_path=summary_path,
+            events_line_count=events_line_count,
+            summary_event_count=None,
+            summary_run_id=None,
+            ls_output=ls_output,
+            events_wc_output=events_wc_output,
+            summary_output="",
+            reason="events.jsonl has no lines",
+        )
+
+    summary_output = _decode_output(
+        provider.run_remote_command(f"cat {shlex.quote(summary_path)} 2>&1")
+    )
+    if _looks_missing(summary_output):
+        return RemoteCompletionVerification(
+            ok=False,
+            remote_run_dir=remote_run_dir,
+            events_path=events_path,
+            summary_path=summary_path,
+            events_line_count=events_line_count,
+            summary_event_count=None,
+            summary_run_id=None,
+            ls_output=ls_output,
+            events_wc_output=events_wc_output,
+            summary_output=summary_output,
+            reason="traffic_summary.json missing",
+        )
+
+    try:
+        summary_payload = json.loads(summary_output)
+    except json.JSONDecodeError:
+        return RemoteCompletionVerification(
+            ok=False,
+            remote_run_dir=remote_run_dir,
+            events_path=events_path,
+            summary_path=summary_path,
+            events_line_count=events_line_count,
+            summary_event_count=None,
+            summary_run_id=None,
+            ls_output=ls_output,
+            events_wc_output=events_wc_output,
+            summary_output=summary_output,
+            reason="traffic_summary.json is not valid JSON",
+        )
+    if not isinstance(summary_payload, dict):
+        return RemoteCompletionVerification(
+            ok=False,
+            remote_run_dir=remote_run_dir,
+            events_path=events_path,
+            summary_path=summary_path,
+            events_line_count=events_line_count,
+            summary_event_count=None,
+            summary_run_id=None,
+            ls_output=ls_output,
+            events_wc_output=events_wc_output,
+            summary_output=summary_output,
+            reason="traffic_summary.json is not a JSON object",
+        )
+
+    summary_run_id = str(summary_payload.get("run_id") or "")
+    summary_event_count_raw = summary_payload.get("event_count")
+    summary_event_count = (
+        int(summary_event_count_raw)
+        if summary_event_count_raw is not None
+        else None
+    )
+    if summary_run_id != run_id:
+        return RemoteCompletionVerification(
+            ok=False,
+            remote_run_dir=remote_run_dir,
+            events_path=events_path,
+            summary_path=summary_path,
+            events_line_count=events_line_count,
+            summary_event_count=summary_event_count,
+            summary_run_id=summary_run_id or None,
+            ls_output=ls_output,
+            events_wc_output=events_wc_output,
+            summary_output=summary_output,
+            reason=f"traffic_summary.json run_id mismatch: expected {run_id!r}, got {summary_run_id!r}",
+        )
+    if summary_event_count is None or summary_event_count <= 0:
+        return RemoteCompletionVerification(
+            ok=False,
+            remote_run_dir=remote_run_dir,
+            events_path=events_path,
+            summary_path=summary_path,
+            events_line_count=events_line_count,
+            summary_event_count=summary_event_count,
+            summary_run_id=summary_run_id or None,
+            ls_output=ls_output,
+            events_wc_output=events_wc_output,
+            summary_output=summary_output,
+            reason="traffic_summary.json event_count is zero or missing",
+        )
+
+    return RemoteCompletionVerification(
+        ok=True,
+        remote_run_dir=remote_run_dir,
+        events_path=events_path,
+        summary_path=summary_path,
+        events_line_count=events_line_count,
+        summary_event_count=summary_event_count,
+        summary_run_id=summary_run_id or None,
+        ls_output=ls_output,
+        events_wc_output=events_wc_output,
+        summary_output=summary_output,
+        reason=None,
+    )
+
+
 def _decode_output(raw: bytes) -> str:
     return normalize_webshell_command_output(raw)
 
@@ -345,6 +555,13 @@ def _looks_missing(output: str) -> bool:
 
 def _parse_byte_count(output: str) -> int | None:
     match = _WC_BYTES_RE.search(output.encode("utf-8", errors="replace"))
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _parse_line_count(output: str) -> int | None:
+    match = _WC_LINES_RE.search(output.encode("utf-8", errors="replace"))
     if match is None:
         return None
     return int(match.group(1))

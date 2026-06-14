@@ -29,6 +29,9 @@ class WebshellTestServer:
     wrap_download_in_html: bool = False
     invalid_download_wrapper: bool = False
     fail_script_execution: bool = False
+    script_stdout_mode: str = "normal"
+    suppress_events_bundle: bool = False
+    corrupt_summary_run_id: str | None = None
     _files: dict[str, bytes] = field(default_factory=dict)
     _command_calls: list[str] = field(default_factory=list)
     _download_calls: list[str] = field(default_factory=list)
@@ -152,6 +155,23 @@ class WebshellTestServer:
                     f"wc: {remote_path}: No such file\n".encode()
                 )
             return self._format_command_output(f"{len(payload)}\n".encode())
+        if "wc -l" in command_line:
+            if "wc -l <" in command_line:
+                path_part = command_line.split("<", 1)[1]
+                remote_path = _strip_shell_quotes(path_part.replace("2>&1", "").strip())
+            else:
+                remote_path = _strip_shell_quotes(
+                    command_line.replace("wc -l", "", 1).replace("2>&1", "").strip()
+                )
+            payload = self._read_remote_file(remote_path)
+            if payload is None:
+                return self._format_command_output(
+                    f"wc: {remote_path}: No such file\n".encode()
+                )
+            line_count = len(payload.splitlines())
+            if payload and not payload.endswith(b"\n"):
+                line_count = max(line_count, 1)
+            return self._format_command_output(f"{line_count}\n".encode())
         if command_line.startswith("sha256sum "):
             remote_path = _strip_shell_quotes(
                 command_line[len("sha256sum ") :].replace("2>&1", "").strip()
@@ -166,7 +186,9 @@ class WebshellTestServer:
                 f"{digest}  {remote_path}\n".encode()
             )
         if command_line.startswith("cat "):
-            remote_path = _strip_shell_quotes(command_line[len("cat ") :].strip())
+            remote_path = _strip_shell_quotes(
+                command_line[len("cat ") :].replace("2>&1", "").strip()
+            )
             payload = self._read_remote_file(remote_path)
             if payload is None:
                 return self._format_command_output(
@@ -276,14 +298,41 @@ class WebshellTestServer:
         combined = stdout + stderr
 
         manifest_path = local_script.parent / "manifest.json"
+        summary_path = local_script.parent / "traffic_summary.json"
         if completed.returncode == 0 and manifest_path.is_file():
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             paths = manifest.get("paths") or {}
             bundle_path = str(paths.get("bundle") or "")
             local_bundle = local_script.parent / "events.jsonl"
-            if local_bundle.is_file() and bundle_path:
+            if self.suppress_events_bundle:
+                if local_bundle.is_file():
+                    local_bundle.unlink()
+                if bundle_path and bundle_path in self._files:
+                    del self._files[bundle_path]
+            elif local_bundle.is_file() and bundle_path:
                 bundle_bytes = local_bundle.read_bytes()
                 self._files[bundle_path] = bundle_bytes
+            if summary_path.is_file():
+                summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+                if self.corrupt_summary_run_id is not None:
+                    summary_payload["run_id"] = self.corrupt_summary_run_id
+                    summary_path.write_text(
+                        json.dumps(summary_payload, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                summary_remote = str(paths.get("traffic_summary") or "")
+                if summary_remote:
+                    self._write_remote_file(
+                        summary_remote,
+                        summary_path.read_bytes(),
+                    )
+
+        if self.script_stdout_mode == "command_timeout":
+            return self._format_command_output(b"command timeout")
+        if self.script_stdout_mode == "empty":
+            return self._format_command_output(b"")
+        if self.script_stdout_mode == "truncated":
+            return self._format_command_output(b"partial output\n")
         return combined.encode()
 
     def _read_remote_file(self, remote_path: str) -> bytes | None:

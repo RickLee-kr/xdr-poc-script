@@ -90,6 +90,25 @@ def webshell_fixture(tmp_path: Path):
         server.stop()
 
 
+def _run_port_sweep_manager(
+    *,
+    server: WebshellTestServer,
+    remote_work_dir: str,
+    runs_dir: Path,
+) -> tuple[object, Path, int]:
+    manager = RunManager(runs_dir=runs_dir)
+    return manager.run(
+        scenario_ids=["port_sweep"],
+        target_net="127.0.0.0/30",
+        dry_run=False,
+        scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
+        execution_provider="webshell",
+        webshell_family="jsp",
+        webshell_url=server.webshell_url,
+        remote_work_dir=remote_work_dir,
+    )
+
+
 def test_real_webshell_bundle_mode_cli_success(webshell_fixture) -> None:
     server, remote_work_dir, runs_dir = webshell_fixture
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -246,7 +265,7 @@ def test_run_scenario_failure_surfaces_execution_output(
     server.start()
     manager = RunManager(runs_dir=tmp_path / "runs")
     try:
-        with pytest.raises(RemoteBundleExecutionError, match="run_scenario.py failed"):
+        with pytest.raises(RemoteBundleExecutionError, match="remote bundle execution could not be verified"):
             manager.run(
                 scenario_ids=["port_sweep"],
                 target_net="127.0.0.0/30",
@@ -343,5 +362,127 @@ def test_html_wrapped_command_output_still_uploads_and_collects(
         )
         assert exit_code == 0
         assert (run_dir / "events.jsonl").is_file()
+    finally:
+        server.stop()
+
+
+def test_command_timeout_with_valid_remote_artifacts_succeeds(tmp_path: Path) -> None:
+    server = WebshellTestServer(
+        storage_dir=tmp_path / "storage",
+        script_stdout_mode="command_timeout",
+    )
+    server.start()
+    try:
+        _, run_dir, exit_code = _run_port_sweep_manager(
+            server=server,
+            remote_work_dir=str(tmp_path / "remote-work"),
+            runs_dir=tmp_path / "runs",
+        )
+        assert exit_code == 0
+        assert (run_dir / "events.jsonl").is_file()
+        exec_output = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
+        assert "command timeout" in exec_output
+    finally:
+        server.stop()
+
+
+def test_empty_stdout_with_valid_remote_artifacts_succeeds(tmp_path: Path) -> None:
+    server = WebshellTestServer(
+        storage_dir=tmp_path / "storage",
+        script_stdout_mode="empty",
+    )
+    server.start()
+    try:
+        _, run_dir, exit_code = _run_port_sweep_manager(
+            server=server,
+            remote_work_dir=str(tmp_path / "remote-work"),
+            runs_dir=tmp_path / "runs",
+        )
+        assert exit_code == 0
+        assert (run_dir / "events.jsonl").is_file()
+        exec_output = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
+        assert '"exit_code": 0' not in exec_output
+    finally:
+        server.stop()
+
+
+def test_truncated_stdout_with_valid_remote_artifacts_succeeds(tmp_path: Path) -> None:
+    server = WebshellTestServer(
+        storage_dir=tmp_path / "storage",
+        script_stdout_mode="truncated",
+    )
+    server.start()
+    try:
+        _, run_dir, exit_code = _run_port_sweep_manager(
+            server=server,
+            remote_work_dir=str(tmp_path / "remote-work"),
+            runs_dir=tmp_path / "runs",
+        )
+        assert exit_code == 0
+        assert (run_dir / "events.jsonl").is_file()
+        exec_output = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
+        assert "partial output" in exec_output
+        assert '"exit_code": 0' not in exec_output
+    finally:
+        server.stop()
+
+
+def test_missing_stdout_marker_and_missing_events_raises(tmp_path: Path) -> None:
+    server = WebshellTestServer(
+        storage_dir=tmp_path / "storage",
+        script_stdout_mode="command_timeout",
+        suppress_events_bundle=True,
+    )
+    server.start()
+    manager = RunManager(runs_dir=tmp_path / "runs")
+    try:
+        with pytest.raises(
+            RemoteBundleExecutionError,
+            match="remote bundle execution could not be verified",
+        ):
+            manager.run(
+                scenario_ids=["port_sweep"],
+                target_net="127.0.0.0/30",
+                dry_run=False,
+                scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
+                execution_provider="webshell",
+                webshell_family="jsp",
+                webshell_url=server.webshell_url,
+                remote_work_dir=str(tmp_path / "remote-work"),
+            )
+        run_dir = _latest_run_dir(tmp_path / "runs")
+        assert (run_dir / "remote_ls_after_execution.txt").is_file()
+        assert (run_dir / "remote_events_wc_after_execution.txt").is_file()
+        error_text = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
+        assert "command timeout" in error_text
+    finally:
+        server.stop()
+
+
+def test_missing_stdout_marker_and_invalid_summary_raises(tmp_path: Path) -> None:
+    server = WebshellTestServer(
+        storage_dir=tmp_path / "storage",
+        script_stdout_mode="empty",
+        corrupt_summary_run_id="wrong_run_id",
+    )
+    server.start()
+    manager = RunManager(runs_dir=tmp_path / "runs")
+    try:
+        with pytest.raises(
+            RemoteBundleExecutionError,
+            match="traffic_summary.json run_id mismatch",
+        ):
+            manager.run(
+                scenario_ids=["port_sweep"],
+                target_net="127.0.0.0/30",
+                dry_run=False,
+                scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
+                execution_provider="webshell",
+                webshell_family="jsp",
+                webshell_url=server.webshell_url,
+                remote_work_dir=str(tmp_path / "remote-work"),
+            )
+        run_dir = _latest_run_dir(tmp_path / "runs")
+        assert (run_dir / "remote_summary_after_execution.txt").is_file()
     finally:
         server.stop()
