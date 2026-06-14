@@ -20,7 +20,10 @@ from dsp.execution.providers.runtime.transport import (
 )
 from dsp.execution.providers.webshell.jsp.jsp_command_encoder import JspCommandEncoder
 from dsp.execution.webshell.cat_transport import read_remote_file_via_cat
-from dsp.execution.webshell.event_sync.bundle_content import validate_jsonl_content
+from dsp.execution.webshell.event_sync.bundle_content import (
+    unwrap_jsonl_bundle_content,
+    validate_jsonl_content,
+)
 from dsp.execution.webshell.transport.models import TransportRequest, TransportResponse
 
 
@@ -143,6 +146,8 @@ class JspWebshellRuntime(TransportBackedRuntime):
         body = response.body
         if self._should_fallback_to_cat_download(body):
             body = read_remote_file_via_cat(self, artifact.remote_path)
+        elif validate_jsonl_content(body).valid:
+            body = unwrap_jsonl_bundle_content(body)
         if artifact.local_path:
             local_path = artifact.local_path
             dest = Path(local_path)

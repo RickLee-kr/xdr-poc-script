@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 
 _EXIT_CODE_MARKER = re.compile(rb"\n__EXIT_CODE:\d+\s*$")
+_PRE_BLOCK_RE = re.compile(rb"<pre[^>]*>(.*?)</pre>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(rb"<[^>]+>")
 _CONTENT_PREVIEW_BYTES = 200
 
 _HTML_PREFIXES = (b"<!doctype", b"<html", b"<head", b"<body")
@@ -39,6 +41,28 @@ def strip_webshell_exit_marker(body: bytes) -> bytes:
     return _EXIT_CODE_MARKER.sub(b"", body.rstrip())
 
 
+def normalize_webshell_command_output(body: bytes) -> str:
+    """Normalize HTML-wrapped webshell command output for shell parsing."""
+    cleaned = strip_webshell_exit_marker(body)
+    match = _PRE_BLOCK_RE.search(cleaned)
+    if match is not None:
+        cleaned = match.group(1)
+    else:
+        cleaned = _TAG_RE.sub(b"", cleaned)
+    return cleaned.decode("utf-8", errors="replace").strip()
+
+
+def unwrap_jsonl_bundle_content(content: bytes) -> bytes:
+    """Return JSONL bytes with HTML ``<pre>`` wrappers removed when present."""
+    stripped = content.strip()
+    if not _PRE_BLOCK_RE.search(stripped):
+        return content
+    normalized = normalize_webshell_command_output(content)
+    if normalized.lstrip().startswith("{"):
+        return normalized.encode("utf-8")
+    return content
+
+
 def content_preview(content: bytes, *, limit: int = _CONTENT_PREVIEW_BYTES) -> str:
     """Return a safe, truncated preview of invalid bundle bytes."""
     sample = content[:limit]
@@ -59,6 +83,12 @@ def validate_jsonl_content(content: bytes) -> JsonlContentValidation:
     non-empty line must start with ``{``.
     """
     stripped = content.strip()
+    if _PRE_BLOCK_RE.search(stripped):
+        normalized_text = normalize_webshell_command_output(content)
+        if normalized_text.lstrip().startswith("{"):
+            content = normalized_text.encode("utf-8")
+            stripped = content.strip()
+
     if not stripped:
         return JsonlContentValidation(
             valid=False,

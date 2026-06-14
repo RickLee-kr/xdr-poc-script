@@ -50,3 +50,20 @@ class RemoteArtifactUploadError(RemoteScenarioRunnerError):
         self.verification = verification
         self.multipart_verification = multipart_verification
         super().__init__(message)
+
+
+class RemoteBundleExecutionError(RemoteScenarioRunnerError):
+    """Raised when a remote bundle runner script fails or leaves no events.jsonl."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        remote_path: str | None = None,
+        execution_output: str | None = None,
+        verification: object | None = None,
+    ) -> None:
+        self.remote_path = remote_path
+        self.execution_output = execution_output
+        self.verification = verification
+        super().__init__(message)

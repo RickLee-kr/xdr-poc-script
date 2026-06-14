@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,13 +15,16 @@ from dsp.execution.remote.bundle.planner import build_manifest
 from dsp.execution.remote.bundle.upload import (
     VerifiedUploadResult,
     upload_remote_file_verified,
+    verify_remote_bundle_exists,
 )
 from dsp.execution.remote.exceptions import (
     RemoteArtifactUploadError,
+    RemoteBundleExecutionError,
     UnsupportedRemoteProviderError,
 )
 from dsp.execution.remote.models import RemoteScenarioExecutionResult, ScenarioExecutionRequest
 from dsp.execution.remote.runner import RemoteScenarioRunner
+from dsp.execution.webshell.event_sync.bundle_content import normalize_webshell_command_output
 from dsp.plugins.models import PluginRecord
 
 if TYPE_CHECKING:
@@ -99,6 +103,17 @@ class BundleScenarioRunner:
             diag_dir.mkdir(parents=True, exist_ok=True)
             (diag_dir / _DIAG_EXEC_OUTPUT).write_bytes(exec_output)
 
+        bundle_path = str(
+            request.execution_metadata.get("remote_bundle_path")
+            or (manifest.get("paths") or {}).get("bundle")
+            or f"{remote_run_dir}/events.jsonl"
+        )
+        self._validate_remote_execution(
+            exec_output,
+            remote_bundle_path=bundle_path,
+            provider=provider,
+        )
+
         command_result = CommandResult(
             command_id=command.command_id,
             status=CommandStatus.COMPLETED,
@@ -162,3 +177,48 @@ class BundleScenarioRunner:
         if not isinstance(provider, WebshellExecutionProvider):
             provider_type = getattr(provider, "provider_type", type(provider).__name__)
             raise UnsupportedRemoteProviderError(str(provider_type))
+
+    @staticmethod
+    def _parse_execution_result(exec_output: bytes) -> dict[str, object] | None:
+        text = normalize_webshell_command_output(exec_output)
+        for line in reversed(text.splitlines()):
+            candidate = line.strip()
+            if not candidate.startswith("{"):
+                continue
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+        return None
+
+    @classmethod
+    def _validate_remote_execution(
+        cls,
+        exec_output: bytes,
+        *,
+        remote_bundle_path: str,
+        provider: WebshellExecutionProvider,
+    ) -> None:
+        execution_text = normalize_webshell_command_output(exec_output)
+        parsed = cls._parse_execution_result(exec_output)
+        if parsed is None or int(parsed.get("exit_code", 1)) != 0:
+            raise RemoteBundleExecutionError(
+                "run_scenario.py failed or returned no success marker; "
+                "see execution_stdout_stderr.txt",
+                remote_path=remote_bundle_path,
+                execution_output=execution_text,
+            )
+
+        bundle_verification = verify_remote_bundle_exists(provider, remote_bundle_path)
+        if not bundle_verification.ok:
+            raise RemoteBundleExecutionError(
+                "events.jsonl missing or empty after run_scenario.py; "
+                f"{bundle_verification.reason or 'verification failed'}; "
+                "see execution_stdout_stderr.txt, upload_script_result.txt, "
+                "and remote_ls_after_upload.txt",
+                remote_path=remote_bundle_path,
+                execution_output=execution_text,
+                verification=bundle_verification,
+            )

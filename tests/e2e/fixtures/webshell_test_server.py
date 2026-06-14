@@ -15,8 +15,6 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from tests.e2e.fixtures.bundle_helpers import remote_bundle_path_for_run
-
 
 @dataclass
 class WebshellTestServer:
@@ -27,6 +25,10 @@ class WebshellTestServer:
     storage_dir: Path | None = None
     ignore_multipart_upload: bool = False
     ignore_command_upload: bool = False
+    wrap_command_output_in_html: bool = False
+    wrap_download_in_html: bool = False
+    invalid_download_wrapper: bool = False
+    fail_script_execution: bool = False
     _files: dict[str, bytes] = field(default_factory=dict)
     _command_calls: list[str] = field(default_factory=list)
     _download_calls: list[str] = field(default_factory=list)
@@ -65,7 +67,11 @@ class WebshellTestServer:
                 if "remote_path" in params:
                     remote_path = params["remote_path"][0]
                     server._download_calls.append(remote_path)
-                    payload = server._files.get(remote_path, b"")
+                    payload = server._read_remote_file(remote_path) or b""
+                    if server.invalid_download_wrapper:
+                        payload = b"<html><body>jsp shell ready</body></html>"
+                    elif server.wrap_download_in_html:
+                        payload = server._wrap_html(payload)
                     self._respond(200, payload)
                     return
                 if "cmd" in params:
@@ -111,49 +117,68 @@ class WebshellTestServer:
             self._thread.join(timeout=5)
             self._thread = None
 
+    def _wrap_html(self, payload: bytes) -> bytes:
+        text = payload.decode("utf-8", errors="replace")
+        return f"<html><body><pre>{text}</pre></body></html>".encode()
+
+    def _format_command_output(self, payload: bytes) -> bytes:
+        if not payload:
+            payload = b""
+        if self.wrap_command_output_in_html:
+            return self._wrap_html(payload)
+        return payload
+
     def _handle_command(self, command_line: str) -> bytes:
         self._command_calls.append(command_line)
         if command_line.startswith("mkdir -p "):
             remote_dir = command_line[len("mkdir -p ") :].strip()
             storage_root = self.storage_dir or Path("/tmp/dsp-test-server")
             (storage_root / remote_dir.lstrip("/")).mkdir(parents=True, exist_ok=True)
-            return b""
+            return self._format_command_output(b"")
         if command_line.startswith(": >"):
             remote_path = command_line[3:].strip()
             self._write_remote_file(remote_path, b"")
-            return b""
+            return self._format_command_output(b"")
         if "base64 -d" in command_line and "echo '" in command_line:
-            return self._handle_base64_write(command_line)
+            return self._format_command_output(self._handle_base64_write(command_line))
         if command_line.startswith("ls "):
-            return self._handle_ls(command_line)
+            return self._format_command_output(self._handle_ls(command_line))
         if "wc -c <" in command_line:
             path_part = command_line.split("<", 1)[1]
             remote_path = _strip_shell_quotes(path_part.replace("2>&1", "").strip())
             payload = self._read_remote_file(remote_path)
             if payload is None:
-                return f"wc: {remote_path}: No such file\n".encode()
-            return f"{len(payload)}\n".encode()
+                return self._format_command_output(
+                    f"wc: {remote_path}: No such file\n".encode()
+                )
+            return self._format_command_output(f"{len(payload)}\n".encode())
         if command_line.startswith("sha256sum "):
             remote_path = _strip_shell_quotes(
                 command_line[len("sha256sum ") :].replace("2>&1", "").strip()
             )
             payload = self._read_remote_file(remote_path)
             if payload is None:
-                return f"sha256sum: {remote_path}: No such file or directory\n".encode()
+                return self._format_command_output(
+                    f"sha256sum: {remote_path}: No such file or directory\n".encode()
+                )
             digest = hashlib.sha256(payload).hexdigest()
-            return f"{digest}  {remote_path}\n".encode()
+            return self._format_command_output(
+                f"{digest}  {remote_path}\n".encode()
+            )
         if command_line.startswith("cat "):
             remote_path = _strip_shell_quotes(command_line[len("cat ") :].strip())
             payload = self._read_remote_file(remote_path)
             if payload is None:
-                return f"cat: {remote_path}: No such file or directory\n".encode()
-            return payload
+                return self._format_command_output(
+                    f"cat: {remote_path}: No such file or directory\n".encode()
+                )
+            return self._format_command_output(payload)
         if command_line.startswith("python3 "):
             script_path = _strip_shell_quotes(
                 command_line[len("python3 ") :].split(" 2>&1")[0].strip()
             )
-            return self._execute_bundle_script(script_path)
-        return b""
+            return self._format_command_output(self._execute_bundle_script(script_path))
+        return self._format_command_output(b"")
 
     def _handle_ls(self, command_line: str) -> bytes:
         stripped = command_line.strip().replace(" 2>&1", "")
@@ -173,9 +198,14 @@ class WebshellTestServer:
                     return b"total 0\n"
                 lines = ["total 0"]
                 for name in entries:
-                    lines.append(f"-rw-r--r-- 1 root root {len(self._read_remote_file(name) or b'')} {name}")
+                    lines.append(
+                        f"-rw-r--r-- 1 root root "
+                        f"{len(self._read_remote_file(name) or b'')} {name}"
+                    )
                 return ("\n".join(lines) + "\n").encode()
-            return f"ls: cannot access '{remote_path}': No such file or directory\n".encode()
+            return (
+                f"ls: cannot access '{remote_path}': No such file or directory\n".encode()
+            )
         return f"-rw-r--r-- 1 root root {len(payload)} {remote_path}\n".encode()
 
     def _list_remote_dir(self, remote_dir: str) -> list[str]:
@@ -188,6 +218,10 @@ class WebshellTestServer:
 
     def _remote_dir_exists(self, remote_dir: str) -> bool:
         prefix = remote_dir.rstrip("/") + "/"
+        storage_root = self.storage_dir or Path("/tmp/dsp-test-server")
+        local_dir = self._resolve_local_path(storage_root, remote_dir)
+        if local_dir.is_dir():
+            return True
         return any(path.startswith(prefix) for path in self._files)
 
     def _handle_base64_write(self, command_line: str) -> bytes:
@@ -211,6 +245,13 @@ class WebshellTestServer:
         return b""
 
     def _execute_bundle_script(self, remote_script_path: str) -> bytes:
+        if self.fail_script_execution:
+            return (
+                "Traceback (most recent call last):\n"
+                "  File \"run_scenario.py\", line 1, in <module>\n"
+                "RuntimeError: simulated remote bundle failure\n"
+            ).encode()
+
         storage_root = self.storage_dir or Path("/tmp/dsp-test-server")
         local_script = self._resolve_local_path(storage_root, remote_script_path)
         if not local_script.is_file():
@@ -241,10 +282,8 @@ class WebshellTestServer:
             bundle_path = str(paths.get("bundle") or "")
             local_bundle = local_script.parent / "events.jsonl"
             if local_bundle.is_file() and bundle_path:
-                self._files[bundle_path] = local_bundle.read_bytes()
-                self._files[remote_bundle_path_for_run(str(manifest["run_id"]))] = (
-                    local_bundle.read_bytes()
-                )
+                bundle_bytes = local_bundle.read_bytes()
+                self._files[bundle_path] = bundle_bytes
         return combined.encode()
 
     def _read_remote_file(self, remote_path: str) -> bytes | None:
@@ -277,6 +316,19 @@ class WebshellTestServer:
             if self.ignore_multipart_upload:
                 return
             self._write_remote_file(remote_path, file_bytes)
+
+    def remote_tree(self, remote_root: str) -> list[str]:
+        """Return remote paths known to the fixture under ``remote_root``."""
+        prefix = remote_root.rstrip("/") + "/"
+        paths = {path for path in self._files if path.startswith(prefix)}
+        storage_root = self.storage_dir or Path("/tmp/dsp-test-server")
+        local_root = self._resolve_local_path(storage_root, remote_root)
+        if local_root.is_dir():
+            for path in local_root.rglob("*"):
+                if path.is_file():
+                    rel = path.relative_to(storage_root).as_posix()
+                    paths.add(f"/{rel}")
+        return sorted(paths)
 
 
 def _extract_boundary(content_type: str) -> str:

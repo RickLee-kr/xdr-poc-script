@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from dsp.event_store import EventStore
 from dsp.execution.webshell.event_sync.bundle_content import (
     JsonlContentValidation,
+    unwrap_jsonl_bundle_content,
     validate_jsonl_content,
 )
 from dsp.execution.remote.collection_models import (
@@ -73,14 +74,15 @@ class RemoteEventCollector:
         bundle_bytes: bytes | None = None
 
         if remote_validation.valid:
-            bundle_bytes = remote_raw
+            bundle_bytes = unwrap_jsonl_bundle_content(remote_raw)
+            local_path.write_bytes(bundle_bytes)
         else:
             cat_raw = provider.fetch_remote_file_via_cat(request.remote_bundle_path)
             cat_validation = validate_jsonl_content(cat_raw)
             if cat_validation.valid:
-                bundle_bytes = cat_raw
+                bundle_bytes = unwrap_jsonl_bundle_content(cat_raw)
                 collection_source = "cat"
-                local_path.write_bytes(cat_raw)
+                local_path.write_bytes(bundle_bytes)
 
         if bundle_bytes is None:
             diagnostics_dir = self._write_collection_diagnostics(

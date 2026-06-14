@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dsp.execution.remote.exceptions import RemoteArtifactUploadError
+from dsp.execution.webshell.event_sync.bundle_content import normalize_webshell_command_output
 
 if TYPE_CHECKING:
     from dsp.execution.webshell_provider import WebshellExecutionProvider
@@ -192,7 +193,20 @@ def verify_remote_file(
         )
     )
     actual_sha256 = _parse_sha256(sha256_output)
-    if actual_sha256 is not None and actual_sha256 != expected_sha256:
+    if actual_sha256 is None:
+        return RemoteFileVerification(
+            ok=False,
+            remote_path=remote_path,
+            expected_size=expected_size,
+            actual_size=actual_size,
+            expected_sha256=expected_sha256,
+            actual_sha256=None,
+            ls_output=ls_output,
+            wc_output=wc_output,
+            sha256_output=sha256_output,
+            reason="could not parse sha256sum output",
+        )
+    if actual_sha256 != expected_sha256:
         return RemoteFileVerification(
             ok=False,
             remote_path=remote_path,
@@ -251,8 +265,75 @@ def _heredoc_base64_command(payload_b64: str, *, redirect: str) -> str:
     return f"echo '{payload_b64}' | base64 -d {redirect}"
 
 
+def verify_remote_bundle_exists(
+    provider: WebshellExecutionProvider,
+    remote_path: str,
+) -> RemoteFileVerification:
+    """Verify a remote JSONL bundle path exists and is non-empty."""
+    ls_output = _decode_output(
+        provider.run_remote_command(f"ls -l {shlex.quote(remote_path)} 2>&1")
+    )
+    if _looks_missing(ls_output):
+        return RemoteFileVerification(
+            ok=False,
+            remote_path=remote_path,
+            expected_size=1,
+            actual_size=None,
+            expected_sha256="",
+            actual_sha256=None,
+            ls_output=ls_output,
+            wc_output="",
+            sha256_output=None,
+            reason="file not found",
+        )
+
+    wc_output = _decode_output(
+        provider.run_remote_command(f"wc -c < {shlex.quote(remote_path)} 2>&1")
+    )
+    actual_size = _parse_byte_count(wc_output)
+    if actual_size is None:
+        return RemoteFileVerification(
+            ok=False,
+            remote_path=remote_path,
+            expected_size=1,
+            actual_size=None,
+            expected_sha256="",
+            actual_sha256=None,
+            ls_output=ls_output,
+            wc_output=wc_output,
+            sha256_output=None,
+            reason="could not parse remote byte count",
+        )
+    if actual_size <= 0:
+        return RemoteFileVerification(
+            ok=False,
+            remote_path=remote_path,
+            expected_size=1,
+            actual_size=actual_size,
+            expected_sha256="",
+            actual_sha256=None,
+            ls_output=ls_output,
+            wc_output=wc_output,
+            sha256_output=None,
+            reason="remote file is empty",
+        )
+
+    return RemoteFileVerification(
+        ok=True,
+        remote_path=remote_path,
+        expected_size=actual_size,
+        actual_size=actual_size,
+        expected_sha256="",
+        actual_sha256=None,
+        ls_output=ls_output,
+        wc_output=wc_output,
+        sha256_output=None,
+        reason=None,
+    )
+
+
 def _decode_output(raw: bytes) -> str:
-    return raw.decode("utf-8", errors="replace").strip()
+    return normalize_webshell_command_output(raw)
 
 
 def _looks_missing(output: str) -> bool:

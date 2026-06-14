@@ -7,6 +7,7 @@ from dsp.execution.remote.collection_models import (
 )
 from dsp.execution.remote.exceptions import (
     RemoteArtifactUploadError,
+    RemoteBundleExecutionError,
     RemoteEventCollectionError,
     RemoteScenarioRunnerError,
     UnsupportedRemoteProviderError,
@@ -25,6 +26,7 @@ __all__ = [
     "REMOTE_SCENARIO_COMMAND",
     "BundleScenarioRunner",
     "RemoteArtifactUploadError",
+    "RemoteBundleExecutionError",
     "RemoteEventCollectionError",
     "RemoteEventCollectionRequest",
     "RemoteEventCollectionResult",
