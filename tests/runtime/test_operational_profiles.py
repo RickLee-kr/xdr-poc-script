@@ -26,17 +26,29 @@ def test_parse_operational_profile_accepts_legacy_aliases() -> None:
 
 def test_low_profile_scenario_coverage() -> None:
     assert scenarios_for_profile("low") == [
-        "port_sweep",
-        "dns_tunnel",
         "http_followup",
+        "dns_tunnel",
+        "port_sweep",
     ]
+
+
+def test_normal_profile_discovery_first_order() -> None:
+    scenarios = scenarios_for_profile("normal")
+    assert scenarios.index("http_followup") < scenarios.index("sql_injection")
+    assert scenarios.index("sql_injection") < scenarios.index("ssh_failure")
+    assert scenarios.index("ssh_failure") < scenarios.index("ldap_enumeration")
+    assert scenarios.index("ldap_enumeration") < scenarios.index("smb_login_failure")
+    assert scenarios.index("smb_login_failure") < scenarios.index("kerberos_failure")
+    assert scenarios.index("kerberos_failure") < scenarios.index("dns_tunnel")
+    assert scenarios.index("dns_tunnel") < scenarios.index("dga")
+    assert scenarios.index("dga") < scenarios.index("port_sweep")
 
 
 def test_normal_profile_includes_auth_and_protocol_scenarios() -> None:
     scenarios = scenarios_for_profile("normal")
     assert "ldap_enumeration" in scenarios
     assert "kerberos_failure" in scenarios
-    assert scenarios.index("port_sweep") < scenarios.index("dns_tunnel")
+    assert scenarios.index("port_sweep") > scenarios.index("http_followup")
 
 
 def test_high_profile_matches_normal_coverage() -> None:
@@ -48,7 +60,7 @@ def test_resolve_runnable_scenarios_filters_inactive() -> None:
         "normal",
         ["dns_tunnel", "missing_scenario", "http_followup"],
     )
-    assert resolved == ["dns_tunnel", "http_followup"]
+    assert resolved == ["http_followup", "dns_tunnel"]
 
 
 def test_discover_host_count_expands_cidr() -> None:

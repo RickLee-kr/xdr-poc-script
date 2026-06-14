@@ -4,10 +4,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from dsp.engine.scenario_engine import TargetSet
 from dsp.engine.target_engine import expand_target_net_hosts
+from dsp.protocols.http.urls import HTTP_DETECTION_PORTS
 from dsp.protocols.recon import DEFAULT_PORTS, MAX_PORTS_DEFAULT, plan_port_sweep
+
+INITIAL_COMPROMISE_ENDPOINT_KEY = "initial_compromise_endpoint"
+INITIAL_COMPROMISE_SELECTION_REASON = "initial_compromise_host"
+
+
+@dataclass(frozen=True)
+class InitialCompromiseEndpoint:
+    """Webshell host endpoint derived from ``webshell_url`` (Phase A target)."""
+
+    host: str
+    port: int
+    scheme: str
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {"host": self.host, "port": self.port, "scheme": self.scheme}
 
 
 @dataclass(frozen=True)
@@ -21,6 +38,38 @@ class PortSweepPlanView:
     full_sweep_requested: bool
     max_hosts: int
     max_ports: int
+
+
+def parse_initial_compromise_endpoint(webshell_url: str) -> InitialCompromiseEndpoint:
+    """Derive Phase A compromise target host:port from a webshell URL."""
+    parsed = urlparse(webshell_url.strip())
+    if not parsed.hostname:
+        raise ValueError(f"invalid webshell_url: {webshell_url!r}")
+    host = parsed.hostname
+    if parsed.port is not None:
+        port = parsed.port
+    elif parsed.scheme == "https":
+        port = 443
+    else:
+        port = 80
+    scheme = parsed.scheme or "http"
+    if port in HTTP_DETECTION_PORTS:
+        scheme = "http"
+    return InitialCompromiseEndpoint(host=host, port=port, scheme=scheme)
+
+
+def apply_webshell_initial_compromise_plan(
+    scenario_params: dict[str, dict[str, Any]],
+    scenario_ids: list[str],
+    webshell_url: str,
+) -> InitialCompromiseEndpoint:
+    """Inject Phase A HTTP/SQLi targets for webshell execution mode."""
+    endpoint = parse_initial_compromise_endpoint(webshell_url)
+    payload = endpoint.to_dict()
+    for sid in ("http_followup", "sql_injection"):
+        if sid in scenario_ids:
+            scenario_params.setdefault(sid, {})[INITIAL_COMPROMISE_ENDPOINT_KEY] = payload
+    return endpoint
 
 
 def select_port_sweep_hosts(

@@ -24,6 +24,7 @@ from dsp.engine.host_selection import (
     http_target_probe_payload,
     print_http_endpoint_probe_diagnostics,
 )
+from dsp.runtime.scenario_plan import apply_webshell_initial_compromise_plan
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
@@ -375,6 +376,13 @@ class RunManager:
             discovery=not dry_run,
             dry_run=dry_run,
         )
+
+        if execution_provider == "webshell" and webshell_url:
+            apply_webshell_initial_compromise_plan(
+                config.scenario_params,
+                scenario_ids,
+                webshell_url,
+            )
 
         cache_http_endpoint_selection(
             config.scenario_params,

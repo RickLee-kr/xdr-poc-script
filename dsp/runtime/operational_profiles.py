@@ -18,31 +18,24 @@ _PROFILE_ALIASES: dict[str, str] = {
     "burst": "high",
 }
 
-# Fixed execution order per profile (discovery-oriented scenarios first).
+# Discovery-first execution order (Charter § Scenario Execution Model):
+# service discovery → service-specific follow-up → internal recon (port_sweep).
+DISCOVERY_FIRST_SCENARIO_ORDER: tuple[str, ...] = (
+    "http_followup",
+    "sql_injection",
+    "ssh_failure",
+    "ldap_enumeration",
+    "smb_login_failure",
+    "kerberos_failure",
+    "dns_tunnel",
+    "dga",
+    "port_sweep",
+)
+
 _PROFILE_SCENARIOS: dict[str, tuple[str, ...]] = {
-    "low": ("port_sweep", "dns_tunnel", "http_followup"),
-    "normal": (
-        "port_sweep",
-        "dns_tunnel",
-        "dga",
-        "http_followup",
-        "sql_injection",
-        "ldap_enumeration",
-        "smb_login_failure",
-        "ssh_failure",
-        "kerberos_failure",
-    ),
-    "high": (
-        "port_sweep",
-        "dns_tunnel",
-        "dga",
-        "http_followup",
-        "sql_injection",
-        "ldap_enumeration",
-        "smb_login_failure",
-        "ssh_failure",
-        "kerberos_failure",
-    ),
+    "low": ("http_followup", "dns_tunnel", "port_sweep"),
+    "normal": DISCOVERY_FIRST_SCENARIO_ORDER,
+    "high": DISCOVERY_FIRST_SCENARIO_ORDER,
 }
 
 _PROFILE_MAX_HOSTS: dict[str, int | None] = {

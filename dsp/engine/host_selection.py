@@ -11,10 +11,15 @@ from dsp.protocols.http.target_probe import (
     is_selectable_http_endpoint,
     pick_best_endpoint_per_host,
     probe_all_http_candidates,
+    probe_http_endpoint,
     probe_quality_sort_key,
     selection_reason_for,
 )
 from dsp.protocols.http.urls import HTTP_DETECTION_PORTS, HTTP_PORT_PRIORITY
+from dsp.runtime.scenario_plan import (
+    INITIAL_COMPROMISE_ENDPOINT_KEY,
+    INITIAL_COMPROMISE_SELECTION_REASON,
+)
 
 # HTTP-only detection mode — no HTTPS fallback for URL scan / SQLi
 HTTP_PLAIN_PORTS = HTTP_PORT_PRIORITY
@@ -250,6 +255,46 @@ def selection_from_cache(data: dict[str, object]) -> HttpFollowupSelection:
     )
 
 
+def _initial_compromise_endpoint(config: dict) -> dict[str, object] | None:
+    raw = config.get(INITIAL_COMPROMISE_ENDPOINT_KEY)
+    if not isinstance(raw, dict):
+        return None
+    if "host" not in raw or "port" not in raw:
+        return None
+    return raw
+
+
+def selection_from_initial_compromise(
+    endpoint: dict[str, object],
+    *,
+    dry_run: bool = False,
+    timeout: float = 10.0,
+) -> HttpFollowupSelection:
+    """Fixed Phase A target — webshell host from ``webshell_url`` (no discovery override)."""
+    host = str(endpoint["host"])
+    port = int(endpoint["port"])
+    scheme = str(endpoint.get("scheme") or "http")
+    probed = probe_http_endpoint(
+        host,
+        port,
+        scheme,
+        dry_run=dry_run,
+        timeout=timeout,
+    )
+    selected = replace(
+        probed,
+        selected=True,
+        selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+        rejection_reason="",
+    )
+    annotated = annotate_probe_selection([probed], [selected])
+    return HttpFollowupSelection(
+        probed=annotated,
+        selected=[selected],
+        selected_http_target_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+    )
+
+
 def resolve_http_endpoint_selection(
     targets: TargetSet,
     config: dict,
@@ -262,6 +307,9 @@ def resolve_http_endpoint_selection(
     cached = config.get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
     if cached:
         return selection_from_cache(cached)  # type: ignore[arg-type]
+    ic = _initial_compromise_endpoint(config)
+    if ic is not None:
+        return selection_from_initial_compromise(ic, dry_run=dry_run, timeout=timeout)
     return probe_and_select_http_followup_endpoints(
         targets,
         config,
@@ -289,13 +337,21 @@ def cache_http_endpoint_selection(
         for sid in http_scenarios
     )
     timeout = float(ref_params.get("timeout", 10.0))
-    selection = probe_and_select_http_followup_endpoints(
-        targets,
-        ref_params,
-        max_hosts=max_hosts,
-        dry_run=dry_run,
-        timeout=timeout,
-    )
+    ic = _initial_compromise_endpoint(ref_params)
+    if ic is not None:
+        selection = selection_from_initial_compromise(
+            ic,
+            dry_run=dry_run,
+            timeout=timeout,
+        )
+    else:
+        selection = probe_and_select_http_followup_endpoints(
+            targets,
+            ref_params,
+            max_hosts=max_hosts,
+            dry_run=dry_run,
+            timeout=timeout,
+        )
     cache = selection_to_cache(selection)
     for sid in http_scenarios:
         scenario_params.setdefault(sid, {})[HTTP_ENDPOINT_SELECTION_CACHE_KEY] = cache
