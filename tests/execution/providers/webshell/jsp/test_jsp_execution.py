@@ -158,6 +158,27 @@ def test_download_file_invocation():
     )
 
 
+def test_download_file_falls_back_to_cat_when_transport_returns_html(tmp_path: Path):
+    bundle_line = (
+        b'{"_bundle_metadata":true,"run_id":"r1","scenario_id":"port_sweep",'
+        b'"scenario_version":"1.0.0","generated_at":"2026-01-01T00:00:00Z",'
+        b'"event_count":0,"schema_version":"1.0"}\n'
+    )
+    backend = RecordingHttpBackend(
+        responses=[
+            _ok(b"<html><body>jsp shell</body></html>"),
+            _ok(bundle_line + b"\n__EXIT_CODE:0"),
+        ]
+    )
+    provider = _connected_provider(backend)
+    artifact = provider.download_file("/tmp/dsp/r1/events.jsonl")
+    assert artifact.transfer_status == "downloaded"
+    assert artifact.size_bytes == len(bundle_line)
+    assert len(backend.calls) == 2
+    assert "remote_path=" in str(backend.calls[0]["url"])
+    assert "cmd=cat+%2Ftmp%2Fdsp%2Fr1%2Fevents.jsonl" in str(backend.calls[1]["url"])
+
+
 def test_cleanup_invocation():
     backend = RecordingHttpBackend(responses=[_ok()])
     provider = _connected_provider(backend)

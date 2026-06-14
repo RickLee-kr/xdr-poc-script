@@ -182,8 +182,15 @@ class JspWebshellRuntime(TransportBackedRuntime):
 
     @staticmethod
     def _should_fallback_to_cat_download(body: bytes, remote_path: str) -> bool:
-        del remote_path
-        return body.strip() in _CAT_DOWNLOAD_FALLBACK_MARKERS
+        stripped = body.strip()
+        if not stripped:
+            return True
+        if stripped in _CAT_DOWNLOAD_FALLBACK_MARKERS:
+            return True
+        # Typical JSP shells only implement ``cmd`` — ``remote_path`` GET returns HTML/text.
+        if remote_path.endswith(".jsonl") and not stripped.startswith(b"{"):
+            return True
+        return False
 
     @staticmethod
     def _jsp_execution_metadata(
