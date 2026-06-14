@@ -318,3 +318,38 @@ def test_cli_activity_console_integration(tmp_path: Path, capsys) -> None:
     assert "probes_sent=5" in captured
     assert "Port Sweep Completed" in captured
     assert "Traffic Summary" in captured
+
+
+def test_http_probe_diagnostics_uses_refactored_selection_model() -> None:
+    buf = io.StringIO()
+    console = OperationalConsole(stream=buf)
+    console.handle_progress(
+        "http_probe_diagnostics",
+        {
+            "discovery_http_hosts": ["221.139.249.110"],
+            "target_probe": [
+                {
+                    "host": "221.139.249.110",
+                    "port": 8080,
+                    "scheme": "http",
+                    "probe_400": 2,
+                    "probe_403": 0,
+                    "probe_404": 0,
+                    "probe_success": 0,
+                    "probe_timeout": 0,
+                    "probe_error": 0,
+                    "redirect_only": 0,
+                    "detection_score": 2000,
+                    "selected": True,
+                    "rejection_reason": "",
+                    "selection_reason": "error_responses_available",
+                    "http_versions": {"1.1": 2},
+                }
+            ],
+        },
+    )
+    output = buf.getvalue()
+    assert "HTTP endpoint probe diagnostics:" in output
+    assert "221.139.249.110:8080" in output
+    assert "selected" in output
+    assert "error_responses_available" in output

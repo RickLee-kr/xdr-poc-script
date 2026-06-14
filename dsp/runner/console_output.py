@@ -133,6 +133,7 @@ class OperationalConsole:
 
     def _emit_http_probe_diagnostics(self, data: dict[str, Any]) -> None:
         from dsp.engine.host_selection import HttpFollowupSelection, format_http_probe_diagnostic_lines
+        from dsp.protocols.http.target_probe import HTTPEndpointProbeResult
 
         probe_rows = data.get("target_probe") or []
         if not probe_rows:
@@ -140,11 +141,12 @@ class OperationalConsole:
             self._write("  (no endpoints probed)")
             self._write("")
             return
+        probed = [HTTPEndpointProbeResult.from_dict(dict(row)) for row in probe_rows]
+        selected = [item for item in probed if item.selected]
         selection = HttpFollowupSelection(
-            endpoints=[],
+            probed=probed,
+            selected=selected,
             skip_reason=data.get("skip_reason"),
-            probe_summaries=list(probe_rows),
-            rejected_targets=list(data.get("rejected_targets") or []),
         )
         for line in format_http_probe_diagnostic_lines(
             selection,
