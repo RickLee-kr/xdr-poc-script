@@ -23,8 +23,9 @@ from dsp.execution.providers.webshell.provider_factory import create_webshell_pr
 from dsp.execution.webshell_config import WebshellExecutionConfig
 from dsp.execution.webshell.transport.base import WebshellTransport
 from dsp.execution.webshell.transport.real_http_transport import RealHttpTransport
+from dsp.execution.remote.bundle.models import REMOTE_EXECUTION_MODE_BUNDLE
+from dsp.execution.remote.bundle.runner import BundleScenarioRunner
 from dsp.execution.remote.models import ScenarioExecutionRequest
-from dsp.execution.remote.runner import RemoteScenarioRunner
 from dsp.plugins.models import PluginRecord
 
 
@@ -142,6 +143,7 @@ class WebshellExecutionProvider(ExecutionProvider):
                 "webshell_family": self.webshell_family,
                 "webshell_url": self._config.webshell_url,
                 "transport_type": self._config.transport_type,
+                "remote_execution_mode": REMOTE_EXECUTION_MODE_BUNDLE,
             }
         )
 
@@ -164,10 +166,11 @@ class WebshellExecutionProvider(ExecutionProvider):
             target_net=context.target_net,
             dry_run=context.dry_run,
         )
-        runner = RemoteScenarioRunner()
-        result = runner.run(request, self)
+        runner = BundleScenarioRunner()
+        result = runner.run(request, self, targets=targets, record=record)
         context.execution_metadata["remote_scenario_result"] = result.to_dict()
         context.execution_metadata["remote_execution_id"] = result.remote_execution_id
+        context.execution_metadata["remote_execution_mode"] = REMOTE_EXECUTION_MODE_BUNDLE
         return None
 
     def execute_command(

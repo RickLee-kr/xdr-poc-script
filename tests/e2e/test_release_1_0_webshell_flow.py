@@ -30,7 +30,7 @@ from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
 pytestmark = pytest.mark.e2e
 
 RUN_ID = "release_1_0_webshell_run"
-SCENARIO_ID = "dummy"
+SCENARIO_ID = "port_sweep"
 
 
 def _connected_webshell_provider(server: WebshellTestServer) -> WebshellExecutionProvider:
@@ -81,12 +81,16 @@ def test_webshell_execution_reaches_event_store_via_bundle_sync(
         dry_run=True,
         provider_type="webshell",
         scenario_id=SCENARIO_ID,
+        execution_metadata={"remote_work_dir": "/tmp/dsp"},
     )
     run_ctx = RunContext(
         run_id=RUN_ID,
         target_net="10.10.10.0/24",
         event_store=webshell_event_store,
-        config=RunConfig(dry_run=True),
+        config=RunConfig(
+            dry_run=True,
+            scenario_params={SCENARIO_ID: {"max_hosts": 2, "max_ports": 2}},
+        ),
         dry_run=True,
     )
     targets = resolve_targets("10.10.10.0/24")
@@ -101,6 +105,10 @@ def test_webshell_execution_reaches_event_store_via_bundle_sync(
     remote_execution_id = exec_ctx.execution_metadata["remote_execution_id"]
     assert remote_execution_id == remote_result["remote_execution_id"]
     assert webshell_test_server.command_calls, "remote command path was not invoked"
+    assert not any(
+        call.startswith("dsp-remote-scenario ") for call in webshell_test_server.command_calls
+    )
+    assert any("run_scenario.py" in call for call in webshell_test_server.upload_calls)
 
     remote_bundle_path = remote_bundle_path_for_run(RUN_ID)
     collection_result = RemoteEventCollector().collect(
@@ -118,8 +126,8 @@ def test_webshell_execution_reaches_event_store_via_bundle_sync(
     assert collection_result.remote_bundle_path == remote_bundle_path
     event_count = assert_event_store_has_events(webshell_event_store, RUN_ID, minimum=3)
     assert webshell_event_store.count(
-        EventQuery(run_id=RUN_ID, scenario_id=SCENARIO_ID, event="synthetic_action")
-    ) >= 3
+        EventQuery(run_id=RUN_ID, scenario_id=SCENARIO_ID, event="port_sweep_started")
+    ) >= 1
 
     export_result = export_evidence(webshell_event_store, RUN_ID, e2e_output_dir)
     assert_evidence_exports_exist(e2e_output_dir, RUN_ID)

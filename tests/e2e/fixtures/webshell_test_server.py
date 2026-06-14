@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import threading
 import urllib.parse
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-
-from dsp.execution.remote.payload import REMOTE_SCENARIO_COMMAND, decode_scenario_payload
-from dsp.runner.remote_scenario_cli import main as remote_scenario_main
 
 from tests.e2e.fixtures.bundle_helpers import remote_bundle_path_for_run
 
@@ -110,31 +110,59 @@ class WebshellTestServer:
 
     def _handle_command(self, command_line: str) -> None:
         self._command_calls.append(command_line)
-        if not command_line.startswith(f"{REMOTE_SCENARIO_COMMAND} "):
+        if command_line.startswith("mkdir -p "):
+            remote_dir = command_line[len("mkdir -p ") :].strip()
+            storage_root = self.storage_dir or Path("/tmp/dsp-test-server")
+            (storage_root / remote_dir.lstrip("/")).mkdir(parents=True, exist_ok=True)
             return
-        payload_raw = command_line[len(REMOTE_SCENARIO_COMMAND) + 1 :]
-        payload = decode_scenario_payload(payload_raw)
-        self._execute_remote_scenario(payload)
+        if command_line.startswith("python3 "):
+            script_path = command_line[len("python3 ") :].strip()
+            self._execute_bundle_script(script_path)
+            return
 
-    def _execute_remote_scenario(self, payload: dict[str, Any]) -> None:
-        run_id = str(payload["run_id"])
+    def _execute_bundle_script(self, remote_script_path: str) -> None:
         storage_root = self.storage_dir or Path("/tmp/dsp-test-server")
-        local_dir = storage_root / run_id
-        local_dir.mkdir(parents=True, exist_ok=True)
-        local_bundle = local_dir / "events.jsonl"
-        virtual_path = remote_bundle_path_for_run(run_id)
+        local_script = self._resolve_local_path(storage_root, remote_script_path)
+        if not local_script.is_file():
+            script_bytes = self._files.get(remote_script_path)
+            if script_bytes is None:
+                raise RuntimeError(f"bundle script not found: {remote_script_path}")
+            local_script.parent.mkdir(parents=True, exist_ok=True)
+            local_script.write_bytes(script_bytes)
 
-        metadata = dict(payload.get("execution_metadata") or {})
-        metadata["remote_bundle_path"] = str(local_bundle)
-        payload["execution_metadata"] = metadata
+        env = os.environ.copy()
+        env["DSP_BUNDLE_DIR"] = str(local_script.parent)
+        completed = subprocess.run(
+            [sys.executable, str(local_script)],
+            cwd=str(local_script.parent),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"bundle script failed ({completed.returncode}): {completed.stderr or completed.stdout}"
+            )
 
-        encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-        exit_code = remote_scenario_main([encoded])
-        if exit_code != 0:
-            raise RuntimeError(f"dsp-remote-scenario failed with exit code {exit_code}")
+        manifest_path = local_script.parent / "manifest.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            paths = manifest.get("paths") or {}
+            bundle_path = str(paths.get("bundle") or "")
+            local_bundle = local_script.parent / "events.jsonl"
+            if local_bundle.is_file() and bundle_path:
+                self._files[bundle_path] = local_bundle.read_bytes()
+                self._files[remote_bundle_path_for_run(str(manifest["run_id"]))] = (
+                    local_bundle.read_bytes()
+                )
 
-        if local_bundle.is_file():
-            self._files[virtual_path] = local_bundle.read_bytes()
+    @staticmethod
+    def _resolve_local_path(storage_root: Path, remote_path: str) -> Path:
+        normalized = remote_path.lstrip("/")
+        if normalized.startswith("tmp/"):
+            return storage_root / normalized
+        return storage_root / normalized
 
     def _handle_upload(self, body: bytes, content_type: str) -> None:
         boundary = _extract_boundary(content_type)
@@ -143,6 +171,10 @@ class WebshellTestServer:
         if remote_path:
             self._upload_calls.append(remote_path)
             self._files[remote_path] = file_bytes
+            storage_root = self.storage_dir or Path("/tmp/dsp-test-server")
+            local_path = self._resolve_local_path(storage_root, remote_path)
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            local_path.write_bytes(file_bytes)
 
 
 def _extract_boundary(content_type: str) -> str:

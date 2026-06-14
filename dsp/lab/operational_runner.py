@@ -14,19 +14,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+from dsp.engine import RunConfig, RunContext, resolve_targets
 from dsp.event_store import EventQuery, EventStore
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.providers.runtime.command.command_models import CommandRequest
 from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
-from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.execution.remote.paths import resolve_remote_bundle_path
-from dsp.execution.remote.paths import resolve_remote_bundle_path
-from dsp.execution.remote.runner import RemoteScenarioRunner
 from dsp.manual_verification import (
     ManualVerificationPackageGenerator,
     ManualVerificationRequest,
 )
+from dsp.plugins import PluginLoader
 from dsp.runner.run_manager import RunManager
 from dsp.runtime.traffic_profiles import (
     build_scenario_params,
@@ -40,7 +39,7 @@ DEFAULT_HARMLESS_COMMANDS = ("whoami", "hostname", "pwd")
 ALLOWED_HARMLESS_COMMANDS = frozenset(DEFAULT_HARMLESS_COMMANDS)
 DEFAULT_TARGET_NET = "10.10.10.0/24"
 DEFAULT_SCENARIO = "dummy"
-DEFAULT_TRAFFIC_PROFILE = "normal"
+DEFAULT_TRAFFIC_PROFILE = "balanced"
 DEFAULT_REMOTE_WORK_DIR = "/tmp/dsp"
 
 
@@ -197,6 +196,7 @@ def run_webshell_lab(
     verify_tls: bool,
     harmless_commands: Sequence[str],
     remote_bundle_path: str | None = None,
+    dry_run: bool = False,
 ) -> LabRunResult:
     """Execute a scenario remotely via webshell and collect remote events."""
     profile = profile_for_scenario(scenario_id, traffic_profile)
@@ -221,7 +221,7 @@ def run_webshell_lab(
     exec_ctx = ExecutionContext(
         run_id=run_id,
         target_net=target_net,
-        dry_run=False,
+        dry_run=dry_run,
         provider_type="webshell",
         scenario_id=scenario_id,
     )
@@ -239,24 +239,28 @@ def run_webshell_lab(
                 }
             )
 
-        scenario_request = ScenarioExecutionRequest(
-            scenario_id=scenario_id,
-            scenario_params=dict(scenario_params),
-            execution_metadata={
-                "remote_work_dir": remote_work_dir,
-                "remote_bundle_path": bundle_path,
-                "traffic_profile": profile.name,
-            },
+        loader = PluginLoader()
+        record = loader.discover_and_load().get(scenario_id)
+        if record is None:
+            raise ValueError(f"scenario not found: {scenario_id}")
+        targets = resolve_targets(target_net, discovery=False, dry_run=dry_run)
+        run_ctx = RunContext(
             run_id=run_id,
             target_net=target_net,
-            dry_run=False,
+            event_store=store,
+            config=RunConfig(scenario_params=scenario_params, dry_run=dry_run),
+            dry_run=dry_run,
         )
-        remote_result = RemoteScenarioRunner().run(scenario_request, provider)
+        exec_ctx.execution_metadata["remote_work_dir"] = remote_work_dir
+        exec_ctx.execution_metadata["remote_bundle_path"] = bundle_path
+        provider.execute(exec_ctx, record, run_ctx, targets)
         command_results.append(
             {
-                "command": "dsp-remote-scenario",
-                "status": remote_result.command_metadata.get("command_status"),
-                "remote_execution_id": remote_result.remote_execution_id,
+                "command": "webshell-bundle",
+                "status": exec_ctx.execution_metadata.get("remote_scenario_result", {})
+                .get("command_metadata", {})
+                .get("command_status"),
+                "remote_execution_id": exec_ctx.execution_metadata.get("remote_execution_id"),
             }
         )
 
@@ -364,7 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--traffic-profile",
         default=DEFAULT_TRAFFIC_PROFILE,
         help=(
-            "Operational traffic profile: low, normal, or high "
+            "Operational traffic profile: low, balanced, or burst "
             f"(default: {DEFAULT_TRAFFIC_PROFILE})."
         ),
     )
@@ -468,6 +472,7 @@ def run_from_args(args: argparse.Namespace) -> LabRunResult:
         verify_tls=args.verify_tls,
         harmless_commands=harmless_commands,
         remote_bundle_path=remote_bundle_override,
+        dry_run=dry_run,
     )
 
 

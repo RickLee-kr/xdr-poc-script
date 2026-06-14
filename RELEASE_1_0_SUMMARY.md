@@ -63,7 +63,7 @@ WebshellExecutionProvider.prepare()
     ↓
 WebshellExecutionProvider.execute()
     ↓
-RemoteScenarioRunner.run() → dsp-remote-scenario command delivery
+RemoteScenarioRunner.run() → BundleScenarioRunner uploads self-contained script + python3 execution
     ↓
 Remote host / lab webshell executes scenario
     ↓

@@ -1,4 +1,4 @@
-"""End-to-end remote execution via WebshellTestServer and real dsp-remote-scenario."""
+"""End-to-end remote execution via WebshellTestServer and self-contained bundle scripts."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from tests.e2e.fixtures.bundle_helpers import remote_bundle_path_for_run
 from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
 
 RUN_ID = "remote_e2e_run"
-SCENARIO_ID = "dummy"
+SCENARIO_ID = "port_sweep"
 
 
 @pytest.fixture
@@ -85,7 +85,10 @@ def test_remote_end_to_end_runner_collector_event_store(
         run_id=RUN_ID,
         target_net="10.10.10.0/24",
         event_store=store,
-        config=RunConfig(dry_run=True),
+        config=RunConfig(
+            dry_run=True,
+            scenario_params={SCENARIO_ID: {"max_hosts": 2, "max_ports": 2}},
+        ),
         dry_run=True,
     )
     targets = resolve_targets("10.10.10.0/24")
@@ -112,14 +115,14 @@ def test_remote_end_to_end_runner_collector_event_store(
         EventQuery(
             run_id=RUN_ID,
             scenario_id=SCENARIO_ID,
-            event="synthetic_action",
+            event="port_sweep_started",
         )
-    ) >= 3
+    ) >= 1
     assert store.count(
         EventQuery(
             run_id=RUN_ID,
             scenario_id=SCENARIO_ID,
-            event="scenario_completed",
+            event="port_probe_sent",
         )
     ) >= 1
 

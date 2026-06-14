@@ -24,6 +24,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["dsp"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"dsp/execution/remote/bundle/assets/run_scenario.py" = "dsp/execution/remote/bundle/assets/run_scenario.py"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

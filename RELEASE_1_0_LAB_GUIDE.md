@@ -39,7 +39,7 @@ mkdir -p "$DSP_RUNS_DIR"
 |------|--------------|
 | **Local dry-run** | DSP host only — no network targets required |
 | **Local live** | Reachable targets within `--target-net` CIDR |
-| **Webshell remote** | Lab webshell endpoint (JSP / PHP / ASPX) reachable from DSP host; remote side capable of running `dsp-remote-scenario` and writing `events.jsonl` |
+| **Webshell remote** | Lab webshell endpoint (JSP / PHP / ASPX) reachable from DSP host; remote host needs only shell access, writable `/tmp`, and scenario tools (`python3`, `curl`, `ssh`/`nc` as required). **No DSP install on the webshell host.** |
 
 Record for each session: operator name, date, DSP version (`dsp --version`), run ID, scenario ID, execution mode.
 
@@ -258,8 +258,15 @@ python lab_webshell_run.py
 The lab webshell host must:
 
 1. Accept command delivery via the webshell transport contract (execute / upload / download)
-2. Execute `dsp-remote-scenario` with the payload sent by `RemoteScenarioRunner`
-3. Write a valid EventSyncBridge JSONL bundle to `/tmp/dsp/<run_id>/events.jsonl`
+2. Provide a writable work directory (default `/tmp/dsp/<run_id>/`)
+3. Expose only standard tools required by the selected scenario (`python3`, `curl`, `ssh` or `nc`)
+
+DSP uploads a self-contained bundle (`manifest.json` + `run_scenario.py`) and executes it with `python3`. The script writes:
+
+- `/tmp/dsp/<run_id>/events.jsonl`
+- `/tmp/dsp/<run_id>/traffic_summary.json`
+
+**Do not install DSP, `dsp-remote-scenario`, git, or a Python venv on the webshell host.**
 
 Bundle format:
 

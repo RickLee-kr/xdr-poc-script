@@ -109,13 +109,13 @@ def test_local_mode_passes_traffic_profile(tmp_path: Path) -> None:
         "--scenario",
         "dummy",
         "--traffic-profile",
-        "normal",
+        "balanced",
         "--dry-run",
         "--output-dir",
         str(output_dir),
         check=True,
     )
-    assert "traffic_profile=normal" in result.stdout
+    assert "traffic_profile=balanced" in result.stdout
     assert "scenario=dummy" in result.stdout
 
 
@@ -131,9 +131,9 @@ def test_webshell_mode_creates_expected_files(tmp_path: Path) -> None:
             "--mode",
             "webshell",
             "--scenario",
-            "dummy",
+            "port_sweep",
             "--traffic-profile",
-            "normal",
+            "low",
             "--webshell-family",
             "jsp",
             "--webshell-url",
@@ -144,13 +144,14 @@ def test_webshell_mode_creates_expected_files(tmp_path: Path) -> None:
             str(output_dir),
             "--run-id",
             RUN_ID,
+            "--dry-run",
             check=True,
         )
     finally:
         server.stop()
 
     assert result.returncode == 0
-    assert "traffic_profile=normal" in result.stdout
+    assert "traffic_profile=low" in result.stdout
     assert "events_imported" in result.stdout or "event_count=" in result.stdout
     assert "manual_next_steps:" in result.stdout
 
@@ -167,7 +168,9 @@ def test_webshell_mode_creates_expected_files(tmp_path: Path) -> None:
         assert path.stat().st_size > 0
 
     assert server.command_calls[:3] == ["whoami", "hostname", "pwd"]
-    assert any(call.startswith("dsp-remote-scenario ") for call in server.command_calls)
+    assert any("run_scenario.py" in call for call in server.upload_calls)
+    assert any(call.startswith("python3 ") for call in server.command_calls)
+    assert not any(call.startswith("dsp-remote-scenario ") for call in server.command_calls)
     assert remote_bundle_path_for_run(RUN_ID) in server.download_calls
 
 

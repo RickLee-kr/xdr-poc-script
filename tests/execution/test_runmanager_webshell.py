@@ -33,9 +33,10 @@ def test_run_manager_webshell_path_produces_full_artifacts(
 ) -> None:
     manager = RunManager(runs_dir=tmp_runs_dir)
     run, run_dir, exit_code = manager.run(
-        scenario_ids=["dummy"],
+        scenario_ids=["port_sweep"],
         target_net="10.10.10.0/24",
         dry_run=True,
+        scenario_params={"port_sweep": {"max_hosts": 2, "max_ports": 2}},
         execution_provider="webshell",
         webshell_family="jsp",
         webshell_url=webshell_server.webshell_url,
@@ -45,6 +46,7 @@ def test_run_manager_webshell_path_produces_full_artifacts(
     assert run.status.value == "completed"
     assert exit_code == 0
     assert webshell_server.command_calls, "remote scenario command was not delivered"
+    assert any("run_scenario.py" in call for call in webshell_server.upload_calls)
 
     remote_bundle_path = remote_bundle_path_for_run(run.run_id)
     assert remote_bundle_path in webshell_server.download_calls
@@ -63,11 +65,11 @@ def test_run_manager_webshell_path_produces_full_artifacts(
         synthetic_count = store.count(
             EventQuery(
                 run_id=run.run_id,
-                scenario_id="dummy",
-                event="synthetic_action",
+                scenario_id="port_sweep",
+                event="port_probe_sent",
             )
         )
-        assert synthetic_count >= 3
+        assert synthetic_count >= 1
     finally:
         store.close()
 
