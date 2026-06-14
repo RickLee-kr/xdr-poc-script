@@ -24,6 +24,13 @@ from dsp.runtime.operational_profiles import build_operational_scenario_params
 
 
 def test_selected_targets_output() -> None:
+    from dsp.engine.host_selection import (
+        HTTP_ENDPOINT_SELECTION_CACHE_KEY,
+        HttpFollowupSelection,
+        selection_to_cache,
+    )
+    from dsp.protocols.http.target_probe import HTTPEndpointProbeResult
+
     targets = TargetSet(
         target_net="221.139.249.0/24",
         hosts=["221.139.249.101", "221.139.249.110", "221.139.249.113"],
@@ -33,12 +40,26 @@ def test_selected_targets_output() -> None:
             "https_targets": ["221.139.249.113"],
             "dns_hosts": ["221.139.249.1"],
         },
+        service_endpoints={
+            "http_targets": [("221.139.249.110", 80)],
+        },
     )
     scenario_ids = ["port_sweep", "dns_tunnel", "http_followup", "ldap_enumeration"]
     params = build_operational_scenario_params(
         "normal",
         scenario_ids,
         target_net="221.139.249.0/24",
+    )
+    selected = HTTPEndpointProbeResult(
+        host="221.139.249.110",
+        port=80,
+        scheme="http",
+        status_counts={404: 1},
+        selected=True,
+        selection_reason="error_responses_available",
+    )
+    params.setdefault("http_followup", {})[HTTP_ENDPOINT_SELECTION_CACHE_KEY] = selection_to_cache(
+        HttpFollowupSelection(probed=[selected], selected=[selected])
     )
     groups = resolve_selected_targets_by_protocol(scenario_ids, targets, params)
     buf = io.StringIO()

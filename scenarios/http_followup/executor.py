@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from dsp.engine.host_selection import (
     SKIP_REASON_HTTP_TARGETS_NOT_FOUND,
@@ -38,6 +40,19 @@ from dsp.protocols.http.user_agents import (
     is_abnormal_user_agent,
     is_payload_only_user_agent,
 )
+from dsp.protocols.types import HttpRequest, HttpResponseResult
+
+DEFAULT_CONCURRENCY = 32
+
+
+class _RequestOutcome(NamedTuple):
+    seq: int
+    plan: PlannedHttpRequest
+    request: HttpRequest
+    result: HttpResponseResult
+    ua: str
+    ua_kind: str
+    timestamp: str
 
 
 def select_followup_endpoints(
@@ -154,6 +169,48 @@ def _response_code_distribution(counter: Counter[int]) -> dict[str, int]:
     return {str(code): count for code, count in sorted(counter.items())}
 
 
+def _evidence_dump_record(outcome: _RequestOutcome) -> dict[str, Any]:
+    """Per-request evidence for http_followup_requests.jsonl (all sent requests)."""
+    plan = outcome.plan
+    return {
+        "timestamp": outcome.timestamp,
+        "target": plan.host,
+        "port": plan.port,
+        "method": plan.method,
+        "path": plan.path,
+        "query": plan.query,
+        "user_agent": outcome.ua,
+        "response_code": outcome.result.status_code,
+    }
+
+
+def _execute_request(
+    *,
+    seq: int,
+    plan: PlannedHttpRequest,
+    client: HttpClient,
+    mode: str,
+) -> _RequestOutcome:
+    request = client.make_request(plan)
+    ua = (plan.headers or {}).get("User-Agent", "")
+    ua_kind = classify_user_agent(ua) if ua else "unknown"
+    sent_at = datetime.now(timezone.utc).isoformat()
+    if mode == "mock":
+        mock_code = 404 if seq % 3 else 403
+        result = client.request(request, mock_outcome="response", mock_status_code=mock_code)
+    else:
+        result = client.request(request)
+    return _RequestOutcome(
+        seq=seq,
+        plan=plan,
+        request=request,
+        result=result,
+        ua=ua,
+        ua_kind=ua_kind,
+        timestamp=sent_at,
+    )
+
+
 def _redirect_only_warning(dist: dict[str, int], total: int) -> bool:
     if total <= 0:
         return False
@@ -218,6 +275,7 @@ def run(
     abnormal_ua_ratio = float(params.get("abnormal_ua_ratio", 0.10))
     include_attack_paths = bool(params.get("include_attack_paths", True))
     write_wire_evidence = bool(params.get("write_wire_evidence", False))
+    concurrency = max(1, int(params.get("concurrency", DEFAULT_CONCURRENCY)))
     source = "dry_run" if ctx.dry_run else "local"
     mode = "mock" if ctx.dry_run else "live"
     client = HttpClient(mode=mode, timeout=float(params.get("timeout", 10.0)))
@@ -284,6 +342,7 @@ def run(
     response_count = 0
     timeout_count = 0
     status_counter: Counter[int] = Counter()
+    outcomes: list[_RequestOutcome] = []
     request_log: list[dict[str, Any]] = []
     wire_log: list[dict[str, Any]] = []
     t0 = time.monotonic()
@@ -329,107 +388,134 @@ def run(
                 "expected_url_scan_distribution": dict(requests_per_target),
                 "abnormal_user_agents_planned": ua_plan_stats["abnormal_user_agents_planned"],
                 "normal_user_agents_planned": ua_plan_stats["normal_user_agents_planned"],
+                "concurrency": concurrency,
             },
         )
     )
 
-    for seq, plan in enumerate(plans, start=1):
-        if ctx.cancelled:
-            break
-
-        request = client.make_request(plan)
-        ua = (plan.headers or {}).get("User-Agent", "")
-        ua_kind = classify_user_agent(ua) if ua else "unknown"
-        ua_classes[ua_kind] = ua_classes.get(ua_kind, 0) + 1
-        if len(ua_samples) < 8:
-            ua_samples.append(ua[:120])
-
-        if len(sample_urls) < 10:
-            sample_urls.append(request.url)
-
-        created_evidence = {
-            "seq": seq,
-            "host": plan.host,
-            "port": plan.port,
-            "scheme": plan.scheme,
-            "path": plan.path,
-            "query": plan.query,
-            "method": plan.method,
-            "user_agent_class": ua_kind,
-            "user_agent": ua[:120],
+    worker_count = min(concurrency, len(plans)) if plans else 1
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        future_map = {
+            pool.submit(_execute_request, seq=seq, plan=plan, client=client, mode=mode): seq
+            for seq, plan in enumerate(plans, start=1)
         }
-        ctx.event_store.append(
-            build_http_request_created_event(
-                run_id=ctx.run_id,
-                scenario_id=scenario_id,
-                target=plan.host,
-                url=request.url,
-                source=source,
-                evidence=created_evidence,
-            )
-        )
+        for future in as_completed(future_map):
+            if ctx.cancelled:
+                break
+            try:
+                outcome = future.result()
+            except Exception:
+                seq = future_map[future]
+                plan = plans[seq - 1]
+                outcome = _RequestOutcome(
+                    seq=seq,
+                    plan=plan,
+                    request=client.make_request(plan),
+                    result=HttpResponseResult(
+                        url=plan.url,
+                        method=plan.method,
+                        outcome="error",
+                        request_id="error",
+                        dry_run=mode == "mock",
+                        evidence={"host": plan.host, "port": plan.port},
+                    ),
+                    ua=(plan.headers or {}).get("User-Agent", ""),
+                    ua_kind="unknown",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
 
-        ctx.event_store.append(
-            build_http_request_sent_event(
-                run_id=ctx.run_id,
-                scenario_id=scenario_id,
-                target=plan.host,
-                url=request.url,
-                source=source,
-                evidence={**created_evidence, "url": request.url},
-            )
-        )
-        sent_count += 1
+            outcomes.append(outcome)
+            plan = outcome.plan
+            request = outcome.request
+            result = outcome.result
+            ua = outcome.ua
+            ua_kind = outcome.ua_kind
+            seq = outcome.seq
+            ua_classes[ua_kind] = ua_classes.get(ua_kind, 0) + 1
+            if len(ua_samples) < 8:
+                ua_samples.append(ua[:120])
 
-        if mode == "mock":
-            mock_code = 404 if seq % 3 else 403
-            result = client.request(request, mock_outcome="response", mock_status_code=mock_code)
-        else:
-            result = client.request(request)
+            if len(sample_urls) < 10:
+                sample_urls.append(request.url)
 
-        response_code: int | None = result.status_code
-        if result.outcome == "response" and response_code is not None:
-            status_counter[int(response_code)] += 1
-            response_count += 1
-        elif result.outcome == "timeout":
-            timeout_count += 1
-
-        request_log.append(
-            {
+            created_evidence = {
                 "seq": seq,
-                "method": plan.method,
-                "path": plan.path,
-                "query": plan.query,
-                "user_agent": ua,
-                "response_code": response_code,
                 "host": plan.host,
                 "port": plan.port,
                 "scheme": plan.scheme,
-                "url": request.url,
-                "outcome": result.outcome,
+                "path": plan.path,
+                "query": plan.query,
+                "method": plan.method,
+                "user_agent_class": ua_kind,
+                "user_agent": ua[:120],
             }
-        )
-        if write_wire_evidence:
-            from dsp.protocols.http.wire_evidence import build_wire_record_from_request
-
-            wire_log.append(
-                build_wire_record_from_request(
-                    request,
-                    response_code=response_code,
-                    target=_target_key(plan.host, plan.port),
+            ctx.event_store.append(
+                build_http_request_created_event(
+                    run_id=ctx.run_id,
+                    scenario_id=scenario_id,
+                    target=plan.host,
+                    url=request.url,
+                    source=source,
+                    evidence=created_evidence,
                 )
             )
 
-        ctx.event_store.append(
-            append_outcome_event(
-                run_id=ctx.run_id,
-                scenario_id=scenario_id,
-                request=request,
-                result=result,
-                source=source,
+            ctx.event_store.append(
+                build_http_request_sent_event(
+                    run_id=ctx.run_id,
+                    scenario_id=scenario_id,
+                    target=plan.host,
+                    url=request.url,
+                    source=source,
+                    evidence={**created_evidence, "url": request.url},
+                )
             )
-        )
+            sent_count += 1
 
+            response_code: int | None = result.status_code
+            if result.outcome == "response" and response_code is not None:
+                status_counter[int(response_code)] += 1
+                response_count += 1
+            elif result.outcome == "timeout":
+                timeout_count += 1
+
+            request_log.append(
+                {
+                    "seq": seq,
+                    "method": plan.method,
+                    "path": plan.path,
+                    "query": plan.query,
+                    "user_agent": ua,
+                    "response_code": response_code,
+                    "host": plan.host,
+                    "port": plan.port,
+                    "scheme": plan.scheme,
+                    "url": request.url,
+                    "outcome": result.outcome,
+                }
+            )
+            if write_wire_evidence:
+                from dsp.protocols.http.wire_evidence import build_wire_record_from_request
+
+                wire_log.append(
+                    build_wire_record_from_request(
+                        request,
+                        response_code=response_code,
+                        target=_target_key(plan.host, plan.port),
+                    )
+                )
+
+            ctx.event_store.append(
+                append_outcome_event(
+                    run_id=ctx.run_id,
+                    scenario_id=scenario_id,
+                    request=request,
+                    result=result,
+                    source=source,
+                )
+            )
+
+    outcomes.sort(key=lambda item: item.seq)
     abnormal_user_agents = sum(1 for record in request_log if is_abnormal_user_agent(record["user_agent"]))
     normal_user_agents = sent_count - abnormal_user_agents
     payload_only_ua = sum(
@@ -466,9 +552,11 @@ def run(
         )
         raise ScenarioSkipError(SKIP_REASON_HTTP_TARGETS_NOT_FOUND)
 
-    request_log_path = _write_request_log(ctx, request_log)
+    request_evidence = [_evidence_dump_record(outcome) for outcome in outcomes]
+    request_log_path = _write_request_log(ctx, request_evidence)
     wire_log_path = _write_wire_evidence_log(ctx, wire_log) if write_wire_evidence else None
     elapsed = round(time.monotonic() - t0, 3)
+    requests_per_second = round(sent_count / elapsed, 2) if elapsed > 0 else 0.0
     ctx.event_store.append(
         build_http_followup_completed_event(
             run_id=ctx.run_id,
@@ -488,6 +576,9 @@ def run(
                 "responses_received": response_count,
                 "timeouts": timeout_count,
                 "duration_sec": elapsed,
+                "concurrency": concurrency,
+                "requests_per_second": requests_per_second,
+                "request_evidence": request_evidence,
                 "sample_urls": sample_urls,
                 "user_agent_classes": ua_classes,
                 "user_agent_samples": ua_samples,
