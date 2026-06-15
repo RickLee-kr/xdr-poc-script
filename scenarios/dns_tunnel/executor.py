@@ -16,6 +16,7 @@ from dsp.protocols.dns.tunnel import (
     chunk_to_b32_label,
     iter_payload_chunks,
     plan_chunk_count,
+    select_tunnel_targets,
 )
 from dsp.protocols.dns.tunnel_events import (
     build_tunnel_chunk_created_event,
@@ -24,20 +25,6 @@ from dsp.protocols.dns.tunnel_events import (
     build_tunnel_started_event,
 )
 from dsp.protocols.dns.volume_profiles import apply_volume_profile
-
-
-def select_tunnel_targets(
-    targets: TargetSet,
-    config: dict,
-    *,
-    max_hosts: int = 2,
-) -> list[str]:
-    """Select up to max_hosts alive targets without resolver discovery."""
-    if config.get("targets"):
-        return [str(t) for t in config["targets"]][:max_hosts]
-    if targets.hosts:
-        return list(targets.hosts)[:max_hosts]
-    return ["10.10.10.20"]
 
 
 def run(
@@ -127,7 +114,7 @@ def run(
             if mode == "mock":
                 result = client.query(target, fqdn, mock_outcome="response")
             else:
-                result = client.query(target, fqdn)
+                result = client.send_fire_and_forget(target, fqdn)
 
             query_evidence = {
                 "session_id": session_id,
@@ -139,6 +126,8 @@ def run(
                 "outcome": result.outcome,
                 "label_length": len(b32_label),
             }
+            if result.evidence.get("bytes_sent") is not None:
+                query_evidence["bytes_sent"] = result.evidence["bytes_sent"]
             ctx.event_store.append(
                 build_tunnel_query_sent_event(
                     run_id=ctx.run_id,

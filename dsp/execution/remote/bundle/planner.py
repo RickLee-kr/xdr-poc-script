@@ -23,6 +23,7 @@ from dsp.protocols.dns.tunnel import (
     chunk_to_b32_label,
     iter_payload_chunks,
     plan_chunk_count,
+    select_tunnel_targets,
 )
 from dsp.protocols.dns.volume_profiles import apply_volume_profile
 from dsp.protocols.http.sqli_payloads import plan_sqli_requests
@@ -138,14 +139,6 @@ def _plan_port_sweep(targets: TargetSet, params: dict[str, Any], *, dry_run: boo
     }
 
 
-def _select_tunnel_targets(targets: TargetSet, config: dict[str, Any], *, max_hosts: int) -> list[str]:
-    if config.get("targets"):
-        return [str(t) for t in config["targets"]][:max_hosts]
-    if targets.hosts:
-        return list(targets.hosts)[:max_hosts]
-    return ["10.10.10.20"][:max_hosts]
-
-
 def _plan_dns_tunnel(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     tuned = apply_volume_profile(params, dry_run=dry_run)
     payload_mb = float(tuned.get("payload_mb", PAYLOAD_MB_DEFAULT))
@@ -153,7 +146,7 @@ def _plan_dns_tunnel(targets: TargetSet, params: dict[str, Any], *, dry_run: boo
     domain = str(tuned.get("domain", TUNNEL_DOMAIN_DEFAULT))
     max_hosts = int(tuned.get("max_hosts", 2))
     max_chunks = tuned.get("max_chunks")
-    hosts = _select_tunnel_targets(targets, tuned, max_hosts=max_hosts)
+    hosts = select_tunnel_targets(targets, tuned, max_hosts=max_hosts)
     total = plan_chunk_count(payload_mb, chunk_size)
     if max_chunks is not None:
         total = min(total, int(max_chunks))

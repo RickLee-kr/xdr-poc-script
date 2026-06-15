@@ -5,9 +5,12 @@ from __future__ import annotations
 import base64
 import os
 import re
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
 from dsp.protocols.base import DnsProtocolError
+
+if TYPE_CHECKING:
+    from dsp.engine.scenario_engine import TargetSet
 
 CHUNK_SIZE_DEFAULT = 30
 PAYLOAD_MB_DEFAULT = 2.0
@@ -66,3 +69,28 @@ def build_tunnel_fqdn(seq: int, payload_b32: str, domain: str) -> str:
 def is_valid_tunnel_fqdn(fqdn: str) -> bool:
     """Return True when FQDN matches idx-000001-{payload}.{domain}."""
     return bool(IDX_FQDN_PATTERN.match(fqdn))
+
+
+def select_tunnel_targets(
+    targets: TargetSet,
+    config: dict,
+    *,
+    max_hosts: int = 2,
+) -> list[str]:
+    """
+    Select live discovery hosts for DNS tunnel traffic.
+
+    Uses alive hosts from discovery — not dns_hosts / port-53 service buckets.
+    """
+    if config.get("targets"):
+        return [str(t) for t in config["targets"]][:max_hosts]
+
+    if targets.discovery_enabled:
+        alive = targets.discovery_meta.get("alive_hosts")
+        if isinstance(alive, list) and alive:
+            return [str(h) for h in alive][:max_hosts]
+
+    if targets.hosts:
+        return [str(h) for h in targets.hosts][:max_hosts]
+
+    return ["10.10.10.20"]

