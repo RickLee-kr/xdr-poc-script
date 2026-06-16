@@ -29,3 +29,25 @@ Before every commit, verify:
 3. **Scope** — changes are limited to the intended repository and branch; no accidental edits in deprecated or appliance paths.
 
 When in doubt, stop and confirm repository and remote before committing.
+
+---
+
+## Local Cleanup (Operator)
+
+The following paths are **not** part of either canonical repo and should be
+removed only after explicit operator approval:
+
+| Path | Issue |
+|------|-------|
+| `/home/aella/detection-scenario-platform-work` | Stale non-git copy from migration |
+| `/home/aella/xdr-poc-script/xdr-poc-script/` | Untracked nested duplicate directory |
+
+After cleanup, only `/home/aella/xdr-poc-script` should hold the writable DSP
+checkout.
+
+---
+
+## Cursor / IDE
+
+Open **`/home/aella/xdr-poc-script`** as the workspace when doing DSP work.
+Use **`/home/aella/xdr-lab-appliance`** only for lab deployment automation.
