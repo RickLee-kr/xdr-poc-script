@@ -24,35 +24,15 @@ has_whiptail() {
   command -v whiptail >/dev/null 2>&1
 }
 
-# Whiptail/newt inherits the terminal palette by default; on magenta (or other
-# vivid) backgrounds the inputbox entry field can match root and become unreadable.
-# Always apply DSP high-contrast colors unless DSP_MENU_KEEP_NEWT_COLORS=1.
-# (Skipping when NEWT_COLORS is pre-set in the shell was leaving magenta/unreadable inputs.)
+# Whiptail/newt on Ubuntu defaults to /etc/newt/palette.ubuntu (magenta). Partial
+# NEWT_COLORS leaves label/entry/roottext magenta — pink unreadable text on white.
+# Override every palette slot we rely on unless DSP_MENU_KEEP_NEWT_COLORS=1.
 setup_whiptail_theme() {
   if [[ "${DSP_MENU_KEEP_NEWT_COLORS:-}" == "1" ]]; then
     return 0
   fi
-  export NEWT_COLORS='
-root=white,blue
-window=white,blue
-border=white,blue
-title=white,blue
-textbox=black,white
-button=black,white
-actbutton=yellow,blue
-checkbox=black,white
-actcheckbox=yellow,blue
-entry=black,white
-compactbutton=black,white
-actselcheckbox=black,white
-disentry=red,white
-listbox=black,white
-actlistbox=yellow,blue
-actsellistbox=yellow,blue
-radiolabel=black,white
-actselradiolabel=yellow,blue
-scrollbar=white,blue
-'
+  unset NEWT_COLORS_FILE
+  export NEWT_COLORS='root=,blue:border=white,blue:window=,white:title=white,blue:shadow=,black:textbox=black,white:label=black,white:roottext=black,white:helpline=black,white:button=black,white:actbutton=black,white:compactbutton=black,white:checkbox=black,white:actcheckbox=white,blue:entry=black,white:disentry=red,white:disabledentry=red,white:listbox=black,white:actlistbox=white,blue:sellistbox=white,blue:actsellistbox=white,blue:radiolabel=black,white:actselradiolabel=white,blue:scrollbar=,blue:emptyscale=,blue:fullscale=,blue'
 }
 
 show_webshell_setup_help() {
@@ -367,32 +347,42 @@ do_run() {
     return
   fi
 
-  local log
+  local log rc
   log="$(mktemp)"
-  {
-    printf 'Profile: %s\n' "$PROFILE"
-    printf 'Target net: %s\n' "$TARGET_NET"
-    printf 'Execution mode: %s\n\n' "$EXECUTION_MODE"
 
-    cd "$DSP_REPO_DIR"
-    if [[ "$EXECUTION_MODE" == "webshell" ]]; then
-      dsp run \
-        --profile "$PROFILE" \
-        --execution-provider webshell \
-        --webshell-family "$WEBSHELL_FAMILY" \
-        --webshell-url "$WEBSHELL_URL" \
-        --remote-work-dir "$REMOTE_WORK_DIR" \
-        --target-net "$TARGET_NET"
-    else
-      dsp run --profile "$PROFILE" --target-net "$TARGET_NET"
-    fi
-  } >"$log" 2>&1
-  local rc=$?
+  # Stream progress to the terminal (not only a post-run textbox). Redirecting
+  # all output to a temp file made long runs look frozen with no feedback.
+  printf '\n=== DSP scenario run ===\n' | tee "$log"
+  printf 'Profile: %s\n' "$PROFILE" | tee -a "$log"
+  printf 'Target net: %s\n' "$TARGET_NET" | tee -a "$log"
+  printf 'Execution mode: %s\n' "$EXECUTION_MODE" | tee -a "$log"
+  printf 'Live verbose output below — discovery and each scenario action are shown.\n\n' | tee -a "$log"
+
+  cd "$DSP_REPO_DIR" || {
+    err "Cannot cd to ${DSP_REPO_DIR}"
+    rm -f "$log"
+    return
+  }
+
+  export PYTHONUNBUFFERED=1
+  local dsp_args=(--verbose --profile "$PROFILE" --target-net "$TARGET_NET")
+  if [[ "$EXECUTION_MODE" == "webshell" ]]; then
+    dsp run \
+      "${dsp_args[@]}" \
+      --execution-provider webshell \
+      --webshell-family "$WEBSHELL_FAMILY" \
+      --webshell-url "$WEBSHELL_URL" \
+      --remote-work-dir "$REMOTE_WORK_DIR" 2>&1 | tee -a "$log"
+  else
+    dsp run "${dsp_args[@]}" 2>&1 | tee -a "$log"
+  fi
+  rc=${PIPESTATUS[0]}
+
+  printf '\n=== Run finished (exit %s) ===\n' "$rc" | tee -a "$log"
 
   if has_whiptail; then
     whiptail --title "Run scenario (exit ${rc})" --scrolltext --textbox "$log" 22 78 2>/dev/null || true
   else
-    cat "$log"
     read -r -p "Press Enter to continue..."
   fi
   rm -f "$log"

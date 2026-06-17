@@ -166,6 +166,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Suppress operational progress output (advanced/debug).",
     )
     run_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Emit detailed per-action progress (every probe, request, and query).",
+    )
+    run_parser.add_argument(
         "--allow-large-target",
         action="store_true",
         help="Allow --target-net larger than /24 (requires --max-hosts).",
@@ -239,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             operational_profile=operational_profile,
             on_progress=on_progress,
             max_hosts=args.max_hosts,
+            verbose=args.verbose,
         )
 
         if not args.quiet:

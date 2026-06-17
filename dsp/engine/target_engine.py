@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Callable
 
 from dsp.engine.scenario_engine import TargetSet
 
@@ -35,6 +36,7 @@ def resolve_targets(
     max_hosts: int | None = None,
     discovery: bool = False,
     dry_run: bool = False,
+    on_discovery_progress: Callable[[dict[str, int]], None] | None = None,
 ) -> TargetSet:
     """Build TargetSet from target_net; optional bash-aligned TCP service discovery."""
     caps = {cap: True for cap in (required_capabilities or [])}
@@ -61,7 +63,11 @@ def resolve_targets(
     if discovery and not dry_run:
         from dsp.discovery.legacy_bash import discover_services
 
-        result = discover_services(net, max_hosts=DISCOVERY_MAX_HOSTS)
+        result = discover_services(
+            net,
+            max_hosts=DISCOVERY_MAX_HOSTS,
+            on_progress=on_discovery_progress,
+        )
         service_hosts = result.service_hosts
         service_endpoints = result.service_endpoints
         discovery_enabled = True

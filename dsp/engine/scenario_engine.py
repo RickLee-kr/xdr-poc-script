@@ -23,6 +23,7 @@ class SafetyViolationError(Exception):
 class RunConfig:
     target_net: str = "10.10.10.0/24"
     dry_run: bool = False
+    verbose: bool = False
     scenario_params: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 

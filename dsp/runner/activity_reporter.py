@@ -40,8 +40,13 @@ class ActivityReporter:
         """Record one unit of work; emit detail every N items and progress every N or 5s."""
         self._count += 1
         now = time.monotonic()
-        show_detail = self._count == 1 or self._count % PROGRESS_EVERY_N == 0
-        show_progress = show_detail or (now - self._last_progress_at) >= PROGRESS_EVERY_SEC
+        verbose = bool(getattr(self._ctx.config, "verbose", False))
+        show_detail = verbose or self._count == 1 or self._count % PROGRESS_EVERY_N == 0
+        show_progress = (
+            verbose
+            or show_detail
+            or (now - self._last_progress_at) >= PROGRESS_EVERY_SEC
+        )
 
         if show_detail:
             emit_activity(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import socket
+import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
@@ -92,6 +94,7 @@ def discover_services(
     max_hosts: int = DISCOVERY_MAX_HOSTS,
     timeout: float = DEFAULT_PROBE_TIMEOUT_SEC,
     workers: int = DEFAULT_PROBE_WORKERS,
+    on_progress: Callable[[dict[str, int]], None] | None = None,
 ) -> DiscoveryResult:
     """
     Probe target_net hosts on key ports (bash fast-safe service discovery).
@@ -135,6 +138,10 @@ def discover_services(
         )
 
     worker_count = max(1, min(workers, len(jobs)))
+    total_jobs = len(jobs)
+    completed_jobs = 0
+    progress_every = max(1, total_jobs // 20)
+    last_progress_at = time.monotonic()
     with ThreadPoolExecutor(max_workers=worker_count) as pool:
         future_map = {
             pool.submit(probe_tcp_port, host, port, timeout=timeout): (host, port, cap)
@@ -142,6 +149,7 @@ def discover_services(
         }
         for future in as_completed(future_map):
             host, port, cap = future_map[future]
+            completed_jobs += 1
             try:
                 if future.result():
                     open_count += 1
@@ -154,6 +162,22 @@ def discover_services(
                         ep_bucket.append((host, port))
             except OSError:
                 continue
+            if on_progress is not None:
+                now = time.monotonic()
+                if (
+                    completed_jobs == total_jobs
+                    or completed_jobs % progress_every == 0
+                    or (now - last_progress_at) >= 5.0
+                ):
+                    on_progress(
+                        {
+                            "completed": completed_jobs,
+                            "total": total_jobs,
+                            "open_endpoints": open_count,
+                            "alive_hosts": len(alive),
+                        }
+                    )
+                    last_progress_at = now
 
     for cap in service_hosts:
         service_hosts[cap].sort(key=lambda h: tuple(int(p) for p in h.split(".")))

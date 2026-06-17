@@ -233,6 +233,7 @@ class RunManager:
         on_progress: Callable[[str, dict[str, Any]], None] | None = None,
         max_hosts: int | None = None,
         traffic_profile: str | None = None,
+        verbose: bool = False,
     ) -> tuple[Run, Path, int]:
         if execution_provider not in SUPPORTED_EXECUTION_PROVIDERS:
             run = Run(
@@ -339,6 +340,7 @@ class RunManager:
         config = RunConfig(
             target_net=target_net,
             dry_run=dry_run,
+            verbose=verbose,
             scenario_params=scenario_params or {},
         )
         run = Run(
@@ -370,11 +372,33 @@ class RunManager:
             activity_emitter=emitter.emit_activity if emitter is not None else None,
             artifact_dir=run_dir,
         )
+
+        from dsp.engine.target_engine import DISCOVERY_MAX_HOSTS, expand_target_net_hosts
+
+        discovery_progress = None
+        if emitter is not None and verbose and not dry_run:
+            def discovery_progress(payload: dict[str, int]) -> None:
+                emitter.emit("discovery_progress", payload)
+
+        if emitter is not None and not dry_run:
+            candidate_hosts = len(
+                expand_target_net_hosts(target_net, max_hosts=max_hosts or DISCOVERY_MAX_HOSTS)
+            )
+            emitter.emit(
+                "discovery_started",
+                {
+                    "target_net": target_net,
+                    "candidate_hosts": candidate_hosts,
+                    "planned_probes": candidate_hosts * 10,
+                },
+            )
+
         targets = resolve_targets(
             target_net,
             max_hosts=max_hosts or 254,
             discovery=not dry_run,
             dry_run=dry_run,
+            on_discovery_progress=discovery_progress,
         )
 
         if execution_provider == "webshell" and webshell_url:
@@ -412,13 +436,15 @@ class RunManager:
                 emitter.emit("http_probe_diagnostics", probe_payload)
 
         if emitter is not None:
-            emitter.emit("discovery_started", {})
+            if dry_run:
+                emitter.emit("discovery_started", {"target_net": target_net})
             emitter.emit(
                 "discovery_completed",
                 {
                     "hosts_found": len(targets.hosts),
                     "probed_hosts": targets.discovery_meta.get("probed_hosts", 0),
                     "alive_hosts": targets.discovery_meta.get("alive_hosts", []),
+                    "open_endpoints": targets.discovery_meta.get("open_endpoints", 0),
                     "service_hosts": targets.discovery_meta.get("service_hosts", {}),
                 },
             )

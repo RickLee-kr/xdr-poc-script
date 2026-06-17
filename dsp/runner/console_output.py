@@ -48,17 +48,44 @@ class OperationalConsole:
         if phase == "run_started":
             self._emit_run_started(data)
         elif phase == "discovery_started":
+            target_net = data.get("target_net") or self.target_net
             self._write("Discovery Started")
+            if target_net:
+                self._write(f"target_net={target_net}")
+            if data.get("candidate_hosts"):
+                self._write(f"candidate_hosts={data['candidate_hosts']}")
+            if data.get("planned_probes"):
+                self._write(f"planned_probes={data['planned_probes']}")
+            self._write("")
+        elif phase == "discovery_progress":
+            completed = data.get("completed", 0)
+            total = data.get("total", 0)
+            open_endpoints = data.get("open_endpoints", 0)
+            alive_hosts = data.get("alive_hosts", 0)
+            pct = round((completed / total) * 100, 1) if total else 0.0
+            self._write(
+                f"Discovery progress: probes={completed}/{total} ({pct}%), "
+                f"open={open_endpoints}, alive={alive_hosts}"
+            )
         elif phase == "discovery_completed":
             hosts = data.get("hosts_found", 0)
             probed = data.get("probed_hosts", 0)
             alive = data.get("alive_hosts") or []
+            open_endpoints = data.get("open_endpoints", 0)
+            service_hosts: dict[str, list[str]] = data.get("service_hosts") or {}
             self._write("Discovery Completed")
             if probed:
                 self._write(f"Probed Hosts: {probed}")
+            if open_endpoints:
+                self._write(f"Open Endpoints: {open_endpoints}")
             self._write(f"Hosts Found: {hosts}")
             if alive:
                 self._write(f"Alive: {', '.join(str(h) for h in alive[:8])}{'...' if len(alive) > 8 else ''}")
+            for cap, cap_hosts in sorted(service_hosts.items()):
+                if cap_hosts:
+                    preview = ", ".join(cap_hosts[:4])
+                    suffix = "..." if len(cap_hosts) > 4 else ""
+                    self._write(f"  {cap}: {len(cap_hosts)} ({preview}{suffix})")
             self._write("")
         elif phase == "targets_selected":
             self._emit_selected_targets(data)
