@@ -383,6 +383,10 @@ class RunManager:
                 scenario_ids,
                 webshell_url,
             )
+            if webshell_family and "host_behavior_check" in scenario_ids:
+                config.scenario_params.setdefault("host_behavior_check", {})[
+                    "webshell_family"
+                ] = webshell_family
 
         cache_http_endpoint_selection(
             config.scenario_params,

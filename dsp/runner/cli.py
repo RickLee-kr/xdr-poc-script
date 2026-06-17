@@ -10,8 +10,10 @@ from dsp.plugins import PluginLoader
 from dsp.runner.console_output import OperationalConsole
 from dsp.runner.run_manager import RunManager
 from dsp.runtime.operational_profiles import (
+    HOST_BEHAVIOR_CHECK_SCENARIO_ID,
     build_explicit_scenario_params_with_profile,
     build_operational_scenario_params,
+    insert_host_behavior_check,
     parse_operational_profile,
     resolve_runnable_scenarios,
 )
@@ -45,10 +47,18 @@ def _resolve_run_plan(
     profile_arg: str | None,
     target_net: str,
     max_hosts: int | None = None,
+    enable_host_behavior_check: bool = False,
 ) -> tuple[list[str], dict[str, dict] | None, str | None]:
     """Return scenario_ids, scenario_params, and operational_profile for a run."""
+    include_optional = (
+        frozenset({HOST_BEHAVIOR_CHECK_SCENARIO_ID})
+        if enable_host_behavior_check
+        else frozenset()
+    )
     if scenarios_arg:
         scenario_ids = [s.strip() for s in scenarios_arg.split(",") if s.strip()]
+        if enable_host_behavior_check:
+            scenario_ids = insert_host_behavior_check(scenario_ids)
         operational_profile = None
         scenario_params = None
         if profile_arg:
@@ -65,6 +75,7 @@ def _resolve_run_plan(
     scenario_ids = resolve_runnable_scenarios(
         operational_profile,
         manager.registry.active_ids(),
+        include_optional=include_optional,
     )
     if not scenario_ids:
         raise ValueError(
@@ -160,6 +171,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Allow --target-net larger than /24 (requires --max-hosts).",
     )
     run_parser.add_argument(
+        "--enable-host-behavior-check",
+        action="store_true",
+        help=(
+            "Enable optional Phase 2 host behavior check on the webshell host "
+            "(after SQL injection, before internal recon)."
+        ),
+    )
+    run_parser.add_argument(
         "--max-hosts",
         type=int,
         default=None,
@@ -191,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
                 profile_arg=args.profile,
                 target_net=args.target_net,
                 max_hosts=args.max_hosts,
+                enable_host_behavior_check=args.enable_host_behavior_check,
             )
         except ValueError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)

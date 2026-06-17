@@ -105,6 +105,8 @@ def _required_commands(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
         required.append("curl")
     if scenario_id == "ssh_failure":
         any_of = ["ssh", "nc"]
+    if scenario_id == "host_behavior_check":
+        any_of = ["sh", "bash"]
     return required, any_of
 
 
@@ -543,6 +545,115 @@ def _run_ssh_failure(log: EventLog, plan: dict[str, Any]) -> None:
     )
 
 
+def _run_shell_command(shell: str, *, timeout: float) -> None:
+    subprocess.run(
+        ["sh", "-c", shell],
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
+    if plan.get("mode") == "skip":
+        _write_skip(
+            log,
+            {"scenario_id": "host_behavior_check"},
+            str(plan.get("reason") or "skipped"),
+            [],
+        )
+        return
+
+    target = str(plan.get("target_host") or "")
+    mode = str(plan.get("mode", "live"))
+    timeout = float(plan.get("timeout", 30.0))
+    commands = list(plan.get("commands") or [])
+    eicar = dict(plan.get("eicar") or {})
+
+    log.append(
+        event="host_behavior_check_started",
+        status="info",
+        target=target,
+        artifact="host_behavior_session",
+        evidence={
+            "target_host": target,
+            "commands_planned": len(commands),
+            "mode": mode,
+            "webshell_family": plan.get("webshell_family"),
+        },
+    )
+
+    for index, item in enumerate(commands, start=1):
+        name = str(item["name"])
+        shell = str(item["shell"])
+        log.append(
+            event="host_behavior_command_dispatched",
+            status="sent",
+            target=target,
+            artifact=name,
+            evidence={"seq": index, "command": name, "shell": shell},
+        )
+        if mode == "live":
+            _run_shell_command(shell, timeout=timeout)
+
+    path = eicar.get("path")
+    content = eicar.get("content")
+    if path and content:
+        log.append(
+            event="eicar_file_created",
+            status="info",
+            target=target,
+            artifact=str(path),
+            evidence={"path": path},
+        )
+        if mode == "live":
+            quoted = shlex.quote(str(content))
+            _run_shell_command(
+                f"printf %s {quoted} > {shlex.quote(str(path))}",
+                timeout=timeout,
+            )
+        log.append(
+            event="eicar_file_accessed",
+            status="info",
+            target=target,
+            artifact=str(path),
+            evidence={"path": path},
+        )
+        if mode == "live":
+            subprocess.run(
+                ["cat", str(path)],
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        log.append(
+            event="eicar_file_deleted",
+            status="info",
+            target=target,
+            artifact=str(path),
+            evidence={"path": path},
+        )
+        if mode == "live":
+            subprocess.run(
+                ["rm", "-f", str(path)],
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+
+    log.append(
+        event="host_behavior_check_completed",
+        status="info",
+        target=target,
+        artifact="host_behavior_session",
+        evidence={
+            "target_host": target,
+            "commands_dispatched": len(commands),
+            "mode": mode,
+        },
+    )
+
+
 def _dispatch(log: EventLog, manifest: dict[str, Any]) -> None:
     plan = manifest.get("plan") or {}
     plan_type = plan.get("type")
@@ -563,6 +674,7 @@ def _dispatch(log: EventLog, manifest: dict[str, Any]) -> None:
         "http_followup": _run_http_followup,
         "sql_injection": _run_sql_injection,
         "ssh_failure": _run_ssh_failure,
+        "host_behavior_check": _run_host_behavior_check,
     }
     handler = handlers.get(plan_type)
     if handler is None:

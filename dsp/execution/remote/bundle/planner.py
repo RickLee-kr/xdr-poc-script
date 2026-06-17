@@ -30,6 +30,7 @@ from dsp.protocols.http.sqli_payloads import plan_sqli_requests
 from dsp.protocols.http.urls import MAX_HOSTS_DEFAULT, plan_followup_requests
 from dsp.protocols.recon import MAX_PORTS_DEFAULT, plan_port_sweep
 from dsp.protocols.ssh.attempts import SSH_PORT_DEFAULT, plan_ssh_attempts
+from dsp.protocols.host.behavior import build_host_behavior_plan
 
 
 def resolve_remote_run_dir(remote_work_dir: str, run_id: str) -> str:
@@ -115,6 +116,8 @@ def _build_plan(request: ScenarioExecutionRequest, targets: TargetSet) -> dict[s
         return _plan_sql_injection(targets, params, dry_run=request.dry_run)
     if scenario_id == "ssh_failure":
         return _plan_ssh_failure(targets, params, dry_run=request.dry_run)
+    if scenario_id == "host_behavior_check":
+        return _plan_host_behavior_check(request, params, dry_run=request.dry_run)
     raise ValueError(f"unsupported scenario: {scenario_id!r}")
 
 
@@ -281,3 +284,23 @@ def _plan_ssh_failure(targets: TargetSet, params: dict[str, Any], *, dry_run: bo
             for plan in plans
         ],
     }
+
+
+def _plan_host_behavior_check(
+    request: ScenarioExecutionRequest,
+    params: dict[str, Any],
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    family = params.get("webshell_family") or request.execution_metadata.get(
+        "webshell_family"
+    )
+    merged = dict(params)
+    if family:
+        merged["webshell_family"] = family
+    return build_host_behavior_plan(
+        merged,
+        run_id=str(request.run_id),
+        dry_run=dry_run,
+        webshell_family=str(family) if family else None,
+    )

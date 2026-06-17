@@ -13,31 +13,54 @@
 
 ## Quick Start
 
-Install or update DSP and open the operator menu with one command:
+### 1단계 — 최초 1회만 실행 (설치)
+
+아래 명령을 **한 번만** 실행하면 저장소 클론, Python 환경(`.venv`), DSP 패키지 설치가 끝나고 메뉴가 자동으로 열립니다.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/release/v1.4.0-rc/install-dsp.sh | bash
 ```
 
-This installer will:
+설치 시 자동으로 수행되는 작업:
 
-- Clone or update the repository (`release/v1.4.0-rc`)
-- Create and maintain the Python virtual environment (`.venv`)
-- Install DSP and its dependencies
-- Launch the interactive SSH-friendly DSP menu (`dsp-menu.sh`)
-- Let operators configure targets, profiles, and execution mode without memorizing long CLI flags
+- 저장소 클론 또는 업데이트 (`release/v1.4.0-rc`)
+- 가상 환경 생성·유지 (`.venv`)
+- DSP 및 의존성 설치
+- (기본) 대화형 메뉴 `dsp-menu.sh` 실행
 
-Supports **local** and **webshell** execution modes. Operator settings are stored in `~/.dsp/config.env`; run artifacts remain under `~/.dsp/runs/`.
+메뉴 없이 설치만 하려면: `DSP_NO_LAUNCH=1 bash install-dsp.sh`
 
-More detail: [docs/DSP_BOOTSTRAP_INSTALL.md](./docs/DSP_BOOTSTRAP_INSTALL.md) · [docs/DSP_MENU.md](./docs/DSP_MENU.md)
+### 2단계 — 이후에는 메뉴만 실행 (설정 · 시나리오)
+
+설치가 끝난 뒤에는 **코드가 있는 메인 디렉터리**로 이동해서 `dsp-menu.sh`만 실행하면 됩니다. 긴 CLI 옵션을 외울 필요 없습니다.
+
+```bash
+cd /path/to/xdr-poc-script    # 본인 환경의 DSP 저장소 경로
+./dsp-menu.sh
+```
+
+메뉴에서 할 수 있는 작업:
+
+| 메뉴 | 설명 |
+|------|------|
+| **Configure environment** | 대상 네트워크(CIDR), 트래픽 프로필, local / webshell 실행 모드, webshell URL 등 |
+| **Run scenario** | 설정대로 시나리오 실행 |
+| **Show latest report** | 최근 실행 결과·리포트 확인 |
+| **Update latest patch** | `release/v1.4.0-rc` 최신 코드 반영 |
+
+설정은 `~/.dsp/config.env`에 저장되고, 실행 결과(리포트·이벤트)는 `~/.dsp/runs/` 아래에 쌓입니다.
+
+**local** · **webshell** 두 가지 실행 모드를 지원합니다.
+
+자세한 설명: [docs/DSP_BOOTSTRAP_INSTALL.md](./docs/DSP_BOOTSTRAP_INSTALL.md) · [docs/DSP_MENU.md](./docs/DSP_MENU.md)
 
 ## Typical Workflow
 
-1. Run the installer (one-line command above)
-2. Open the DSP menu (`./dsp-menu.sh`, or auto-launched by the installer)
-3. Configure environment (target network, profile, local vs webshell)
-4. Run scenario
-5. Review reports (`~/.dsp/runs/<latest>/report.md`, traffic summary)
+1. **최초 1회** — 위 Quick Start의 `curl … | bash` 로 설치
+2. **이후 매번** — 저장소 루트에서 `./dsp-menu.sh`
+3. **Configure environment** — 대상 네트워크, 프로필, local / webshell 설정
+4. **Run scenario** — 시나리오 실행
+5. **Show latest report** — `~/.dsp/runs/<latest>/report.md`, traffic summary 확인
 
 ## DSP Menu
 

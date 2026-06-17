@@ -1,0 +1,71 @@
+manifest_schema_version: "1.0.0"
+id: host_behavior_check
+name: Host Behavior Check — EDR Observation Commands
+version: "1.0.0"
+description: >
+  Harmless host enumeration and EICAR file lifecycle on the webshell compromise host.
+  Runs after initial HTTP/SQLi compromise and before internal recon. Optional —
+  enable via --enable-host-behavior-check or explicit --scenarios.
+
+category: endpoint
+tags: [phase_2, edr, host_behavior, webshell, linux]
+enabled: true
+
+supported_targets:
+  requires: [linux_host]
+  optional: [alive_host]
+  max_hosts: 1
+
+supported_protocols: [tcp]
+
+validation_profile:
+  profile_version: "1.0.0"
+  metrics:
+    - name: host_behavior_command_count
+      event_filter:
+        event: host_behavior_command_dispatched
+        status: sent
+      aggregate: count
+    - name: eicar_lifecycle_count
+      event_filter:
+        event: eicar_file_created
+        status: info
+      aggregate: count
+  success:
+    host_behavior_command_count:
+      min: 1
+    eicar_lifecycle_count:
+      min: 1
+  fail_fast:
+    - SOT_EMPTY_AFTER_EXECUTE
+
+report_profile:
+  profile_version: "1.0.0"
+  protocol: host_behavior_check
+  highlight_metrics:
+    - host_behavior_command_count
+    - eicar_lifecycle_count
+  sample_events: 5
+  sample_filter:
+    event: host_behavior_command_dispatched
+
+defaults:
+  timeout: 30.0
+
+safety:
+  max_events: 100
+  max_duration_sec: 120
+  allowed_domains: []
+  allowed_ports: []
+  forbidden_actions: [privilege_escalation, malware_execute]
+  target_net_enforced: false
+
+requirements:
+  dsp_min_version: "1.0.0"
+  python_min_version: "3.11"
+
+executor:
+  module: executor
+  entrypoint: run
+  remote_capable: true
+  dry_run_supported: true

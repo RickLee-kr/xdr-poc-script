@@ -13,6 +13,7 @@ from dsp.engine.scenario_engine import TargetSet
 from dsp.execution.remote.bundle.planner import _plan_http_followup, _plan_sql_injection
 from dsp.runtime.operational_profiles import (
     DISCOVERY_FIRST_SCENARIO_ORDER,
+    HOST_BEHAVIOR_CHECK_SCENARIO_ID,
     build_operational_scenario_params,
     scenarios_for_profile,
 )
@@ -64,7 +65,12 @@ def test_local_and_webshell_share_scenario_order_for_all_profiles() -> None:
         webshell_order = scenarios_for_profile(profile)
         assert local_order == webshell_order
         if profile in ("normal", "high"):
-            assert local_order == list(DISCOVERY_FIRST_SCENARIO_ORDER)
+            expected = [
+                sid
+                for sid in DISCOVERY_FIRST_SCENARIO_ORDER
+                if sid != HOST_BEHAVIOR_CHECK_SCENARIO_ID
+            ]
+            assert local_order == expected
 
 
 @pytest.mark.parametrize("profile", ["low", "normal", "high"])
@@ -75,7 +81,12 @@ def test_profiles_preserve_discovery_first_ordering(profile: str) -> None:
         assert scenarios == ["http_followup", "dns_tunnel", "port_sweep"]
         assert scenarios.index("http_followup") < scenarios.index("port_sweep")
     else:
-        assert scenarios == list(DISCOVERY_FIRST_SCENARIO_ORDER)
+        expected = [
+            sid
+            for sid in DISCOVERY_FIRST_SCENARIO_ORDER
+            if sid != HOST_BEHAVIOR_CHECK_SCENARIO_ID
+        ]
+        assert scenarios == expected
         assert scenarios.index("http_followup") < scenarios.index("port_sweep")
         assert scenarios.index("sql_injection") < scenarios.index("dns_tunnel")
 

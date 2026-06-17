@@ -12,6 +12,7 @@ BUNDLE_SCENARIOS = frozenset(
         "http_followup",
         "sql_injection",
         "ssh_failure",
+        "host_behavior_check",
     }
 )
 
@@ -49,6 +50,11 @@ SCENARIO_REMOTE_REQUIREMENTS: dict[str, ScenarioRemoteRequirements] = {
         "ssh_failure",
         required_commands=("python3",),
         any_of_commands=("ssh", "nc"),
+    ),
+    "host_behavior_check": ScenarioRemoteRequirements(
+        "host_behavior_check",
+        required_commands=("python3",),
+        any_of_commands=("sh", "bash"),
     ),
 }
 

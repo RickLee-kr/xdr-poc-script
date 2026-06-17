@@ -13,6 +13,11 @@ from dsp.runtime.traffic_profiles import (
 
 SUPPORTED_OPERATIONAL_PROFILES = frozenset({"low", "normal", "high"})
 
+HOST_BEHAVIOR_CHECK_SCENARIO_ID = "host_behavior_check"
+
+# Optional scenarios excluded from profile runs unless explicitly enabled.
+OPTIONAL_SCENARIO_IDS: frozenset[str] = frozenset({HOST_BEHAVIOR_CHECK_SCENARIO_ID})
+
 _PROFILE_ALIASES: dict[str, str] = {
     "balanced": "normal",
     "burst": "high",
@@ -23,6 +28,7 @@ _PROFILE_ALIASES: dict[str, str] = {
 DISCOVERY_FIRST_SCENARIO_ORDER: tuple[str, ...] = (
     "http_followup",
     "sql_injection",
+    HOST_BEHAVIOR_CHECK_SCENARIO_ID,
     "ssh_failure",
     "ldap_enumeration",
     "smb_login_failure",
@@ -50,6 +56,7 @@ _SCENARIO_LABELS: dict[str, str] = {
     "dga": "DGA",
     "http_followup": "HTTP Follow-up",
     "sql_injection": "SQL Injection",
+    HOST_BEHAVIOR_CHECK_SCENARIO_ID: "Host Behavior Check",
     "ldap_enumeration": "LDAP Enumeration",
     "smb_login_failure": "SMB Login Failure",
     "ssh_failure": "SSH Failure",
@@ -70,19 +77,49 @@ def parse_operational_profile(name: str) -> str:
     return normalized
 
 
-def scenarios_for_profile(profile_name: str) -> list[str]:
+def scenarios_for_profile(
+    profile_name: str,
+    *,
+    include_optional: frozenset[str] = frozenset(),
+) -> list[str]:
     """Return ordered scenario IDs for an operational profile."""
     profile = parse_operational_profile(profile_name)
-    return list(_PROFILE_SCENARIOS[profile])
+    return [
+        sid
+        for sid in _PROFILE_SCENARIOS[profile]
+        if sid not in OPTIONAL_SCENARIO_IDS or sid in include_optional
+    ]
 
 
 def resolve_runnable_scenarios(
     profile_name: str,
     active_ids: Sequence[str],
+    *,
+    include_optional: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Filter profile scenarios to registry-active IDs, preserving order."""
     active = set(active_ids)
-    return [sid for sid in scenarios_for_profile(profile_name) if sid in active]
+    return [
+        sid
+        for sid in scenarios_for_profile(profile_name, include_optional=include_optional)
+        if sid in active
+    ]
+
+
+def insert_host_behavior_check(scenario_ids: Sequence[str]) -> list[str]:
+    """Insert host_behavior_check after sql_injection when enabling the optional step."""
+    ordered = list(scenario_ids)
+    if HOST_BEHAVIOR_CHECK_SCENARIO_ID in ordered:
+        return ordered
+    if "sql_injection" in ordered:
+        idx = ordered.index("sql_injection") + 1
+        ordered.insert(idx, HOST_BEHAVIOR_CHECK_SCENARIO_ID)
+        return ordered
+    if "http_followup" in ordered:
+        idx = ordered.index("http_followup") + 1
+        ordered.insert(idx, HOST_BEHAVIOR_CHECK_SCENARIO_ID)
+        return ordered
+    return [HOST_BEHAVIOR_CHECK_SCENARIO_ID, *ordered]
 
 
 def discover_host_count(target_net: str, *, max_hosts: int | None = None) -> int:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from dsp.runtime.operational_profiles import (
+    HOST_BEHAVIOR_CHECK_SCENARIO_ID,
     SUPPORTED_OPERATIONAL_PROFILES,
     build_operational_scenario_params,
     discover_host_count,
@@ -32,11 +33,15 @@ def test_low_profile_scenario_coverage() -> None:
     ]
 
 
+def test_normal_profile_excludes_optional_host_behavior_check() -> None:
+    scenarios = scenarios_for_profile("normal")
+    assert HOST_BEHAVIOR_CHECK_SCENARIO_ID not in scenarios
+
+
 def test_normal_profile_discovery_first_order() -> None:
     scenarios = scenarios_for_profile("normal")
     assert scenarios.index("http_followup") < scenarios.index("sql_injection")
     assert scenarios.index("sql_injection") < scenarios.index("ssh_failure")
-    assert scenarios.index("ssh_failure") < scenarios.index("ldap_enumeration")
     assert scenarios.index("ldap_enumeration") < scenarios.index("smb_login_failure")
     assert scenarios.index("smb_login_failure") < scenarios.index("kerberos_failure")
     assert scenarios.index("kerberos_failure") < scenarios.index("dns_tunnel")

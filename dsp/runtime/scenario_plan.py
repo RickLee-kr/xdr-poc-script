@@ -66,7 +66,7 @@ def apply_webshell_initial_compromise_plan(
     """Inject Phase A HTTP/SQLi targets for webshell execution mode."""
     endpoint = parse_initial_compromise_endpoint(webshell_url)
     payload = endpoint.to_dict()
-    for sid in ("http_followup", "sql_injection"):
+    for sid in ("http_followup", "sql_injection", "host_behavior_check"):
         if sid in scenario_ids:
             scenario_params.setdefault(sid, {})[INITIAL_COMPROMISE_ENDPOINT_KEY] = payload
     return endpoint

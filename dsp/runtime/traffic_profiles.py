@@ -92,6 +92,11 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
         "normal": {"max_hosts": 254, "max_ports": 10, "timeout": 0.5, "concurrency": 32},
         "high": {"max_hosts": 254, "max_ports": 10, "timeout": 0.5, "concurrency": 32},
     },
+    "host_behavior_check": {
+        "low": {"timeout": 30.0},
+        "normal": {"timeout": 30.0},
+        "high": {"timeout": 30.0},
+    },
     "kerberos_failure": {
         "low": {"max_hosts": 1, "attempts_per_host": 3, "timeout": 15.0},
         "normal": {"max_hosts": 2, "attempts_per_host": 10, "timeout": 10.0},

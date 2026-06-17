@@ -22,6 +22,7 @@ from dsp.execution.webshell.event_sync import load_jsonl_bundle
 from dsp.execution.webshell.transport import RealHttpTransport, RetryPolicy
 from dsp.execution.webshell_config import WebshellExecutionConfig
 from dsp.plugins import PluginLoader
+from dsp.runtime.scenario_plan import apply_webshell_initial_compromise_plan
 from tests.e2e.fixtures.bundle_helpers import remote_bundle_path_for_run
 from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
 
@@ -50,6 +51,7 @@ def test_bundle_scenarios_cover_mvp_set() -> None:
         "http_followup",
         "sql_injection",
         "ssh_failure",
+        "host_behavior_check",
     }
 
 
@@ -123,6 +125,96 @@ def test_webshell_host_without_dsp_remote_scenario_runs_port_sweep(
         assert any(event["event"] == "port_sweep_started" for event in bundle.events)
     finally:
         server.stop()
+
+
+def test_webshell_bundle_host_behavior_check_generates_events(tmp_path: Path) -> None:
+    server = WebshellTestServer(storage_dir=tmp_path / "server")
+    url = server.start()
+    try:
+        loader = PluginLoader()
+        record = loader.discover_and_load().get("host_behavior_check")
+        assert record is not None
+        provider = _connected_provider(server)
+        run_id = "bundle_host_behavior"
+        store = EventStore(tmp_path / "events.db")
+        store.open_run(run_id)
+        scenario_params: dict[str, dict] = {}
+        apply_webshell_initial_compromise_plan(
+            scenario_params,
+            ["host_behavior_check"],
+            url,
+        )
+        scenario_params["host_behavior_check"]["webshell_family"] = "jsp"
+        exec_ctx = ExecutionContext(
+            run_id=run_id,
+            target_net="127.0.0.0/30",
+            dry_run=True,
+            provider_type="webshell",
+            scenario_id="host_behavior_check",
+            execution_metadata={
+                "remote_work_dir": "/tmp/dsp",
+                "webshell_family": "jsp",
+            },
+        )
+        run_ctx = RunContext(
+            run_id=run_id,
+            target_net="127.0.0.0/30",
+            event_store=store,
+            config=RunConfig(
+                dry_run=True,
+                scenario_params=scenario_params,
+            ),
+            dry_run=True,
+        )
+        targets = resolve_targets("127.0.0.0/30", dry_run=True)
+        provider.prepare(exec_ctx)
+        provider.execute(exec_ctx, record, run_ctx, targets)
+
+        bundle_path = remote_bundle_path_for_run(run_id)
+        collection = RemoteEventCollector().collect(
+            RemoteEventCollectionRequest(
+                remote_execution_id=run_id,
+                remote_bundle_path=bundle_path,
+            ),
+            provider,
+            store,
+        )
+        provider.cleanup(exec_ctx)
+        bundle = load_jsonl_bundle(collection.local_bundle_path)
+        event_names = {event["event"] for event in bundle.events}
+        assert "host_behavior_check_started" in event_names
+        assert "host_behavior_command_dispatched" in event_names
+        assert "eicar_file_created" in event_names
+        assert "host_behavior_check_completed" in event_names
+        assert collection.events_imported >= 6
+    finally:
+        server.stop()
+
+
+def test_bundle_manifest_for_host_behavior_targets_webshell_host() -> None:
+    loader = PluginLoader()
+    record = loader.discover_and_load().get("host_behavior_check")
+    assert record is not None
+    params: dict[str, dict] = {}
+    apply_webshell_initial_compromise_plan(
+        params,
+        ["host_behavior_check"],
+        "http://10.10.10.50:8080/shell.jsp",
+    )
+    params["host_behavior_check"]["webshell_family"] = "jsp"
+    request = ScenarioExecutionRequest(
+        scenario_id="host_behavior_check",
+        scenario_params=params["host_behavior_check"],
+        execution_metadata={"remote_work_dir": "/tmp/dsp", "webshell_family": "jsp"},
+        run_id="plan_hb",
+        target_net="10.10.10.0/24",
+        dry_run=True,
+    )
+    targets = resolve_targets("10.10.10.0/24", dry_run=True)
+    manifest = build_manifest(request, targets, record)
+    assert manifest["plan"]["type"] == "host_behavior_check"
+    assert manifest["plan"]["target_host"] == "10.10.10.50"
+    assert manifest["plan"]["mode"] == "mock"
 
 
 def test_missing_remote_command_writes_skip_event(tmp_path: Path) -> None:
