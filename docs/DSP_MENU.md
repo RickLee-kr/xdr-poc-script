@@ -2,6 +2,22 @@
 
 SSH-friendly launcher for updating, configuring, and running DSP without memorizing long CLI commands.
 
+## Bootstrap install (new host)
+
+Install or update DSP and launch this menu in one step:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/release/v1.4.0-rc/install-dsp.sh | bash
+```
+
+Custom path, no menu launch:
+
+```bash
+DSP_REPO_DIR=/opt/xdr-poc-script DSP_NO_LAUNCH=1 bash install-dsp.sh
+```
+
+Details: [DSP_BOOTSTRAP_INSTALL.md](./DSP_BOOTSTRAP_INSTALL.md)
+
 ## Quick start
 
 From the repository root:
