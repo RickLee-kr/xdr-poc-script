@@ -11,6 +11,48 @@
 
 ---
 
+## Quick Start
+
+Install or update DSP and open the operator menu with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/release/v1.4.0-rc/install-dsp.sh | bash
+```
+
+This installer will:
+
+- Clone or update the repository (`release/v1.4.0-rc`)
+- Create and maintain the Python virtual environment (`.venv`)
+- Install DSP and its dependencies
+- Launch the interactive SSH-friendly DSP menu (`dsp-menu.sh`)
+- Let operators configure targets, profiles, and execution mode without memorizing long CLI flags
+
+Supports **local** and **webshell** execution modes. Operator settings are stored in `~/.dsp/config.env`; run artifacts remain under `~/.dsp/runs/`.
+
+More detail: [docs/DSP_BOOTSTRAP_INSTALL.md](./docs/DSP_BOOTSTRAP_INSTALL.md) · [docs/DSP_MENU.md](./docs/DSP_MENU.md)
+
+## Typical Workflow
+
+1. Run the installer (one-line command above)
+2. Open the DSP menu (`./dsp-menu.sh`, or auto-launched by the installer)
+3. Configure environment (target network, profile, local vs webshell)
+4. Run scenario
+5. Review reports (`~/.dsp/runs/<latest>/report.md`, traffic summary)
+
+## DSP Menu
+
+Interactive TUI for day-to-day operations (requires `whiptail` on Debian/Ubuntu; falls back to a plain text menu otherwise).
+
+```bash
+./dsp-menu.sh
+```
+
+The bootstrap installer launches this menu automatically unless `DSP_NO_LAUNCH=1` is set.
+
+<!-- Screenshot placeholder: DSP menu main screen (whiptail) -->
+
+---
+
 ## Repository Boundary
 
 | 구분 | 경로 | Phase 0 조작 |
