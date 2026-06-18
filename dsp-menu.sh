@@ -24,17 +24,6 @@ has_whiptail() {
   command -v whiptail >/dev/null 2>&1
 }
 
-# Whiptail/newt on Ubuntu defaults to /etc/newt/palette.ubuntu (magenta). Partial
-# NEWT_COLORS leaves label/entry/roottext magenta — pink unreadable text on white.
-# Override every palette slot we rely on unless DSP_MENU_KEEP_NEWT_COLORS=1.
-setup_whiptail_theme() {
-  if [[ "${DSP_MENU_KEEP_NEWT_COLORS:-}" == "1" ]]; then
-    return 0
-  fi
-  unset NEWT_COLORS_FILE
-  export NEWT_COLORS='root=,blue:border=white,blue:window=,white:title=white,blue:shadow=,black:textbox=black,white:label=black,white:roottext=black,white:helpline=black,white:button=black,white:actbutton=black,white:compactbutton=black,white:checkbox=black,white:actcheckbox=white,blue:entry=black,white:disentry=red,white:disabledentry=red,white:listbox=black,white:actlistbox=white,blue:sellistbox=white,blue:actsellistbox=white,blue:radiolabel=black,white:actselradiolabel=white,blue:scrollbar=,blue:emptyscale=,blue:fullscale=,blue'
-}
-
 show_webshell_setup_help() {
   whiptail --title "Configure — Webshell help" --scrolltext --msgbox \
 "Webshell remote execution — what to enter
@@ -71,7 +60,6 @@ normalize_webshell_family() {
 msg() {
   local text="$1"
   if has_whiptail; then
-    setup_whiptail_theme
     whiptail --title "DSP Menu" --msgbox "$text" 12 72 2>/dev/null || true
   else
     printf '%s\n' "$text"
@@ -82,7 +70,6 @@ msg() {
 err() {
   local text="$1"
   if has_whiptail; then
-    setup_whiptail_theme
     whiptail --title "DSP Menu — Error" --msgbox "$text" 12 72 2>/dev/null || true
   else
     printf 'ERROR: %s\n' "$text" >&2
@@ -152,7 +139,6 @@ activate_dsp_env() {
 }
 
 show_menu_whiptail() {
-  setup_whiptail_theme
   whiptail --title "DSP Menu" --menu "Detection Scenario Platform" 18 72 10 \
     "1" "Update latest patch" \
     "2" "Configure environment" \
@@ -213,7 +199,6 @@ do_update() {
 }
 
 configure_whiptail() {
-  setup_whiptail_theme
   local value
 
   value="$(whiptail --title "Configure" --inputbox \
@@ -486,9 +471,8 @@ do_show_status() {
 
 main() {
   ensure_config_dir
-  if has_whiptail; then
-    setup_whiptail_theme
-  fi
+  # Use Ubuntu/system whiptail palette (/etc/newt/palette); do not override NEWT_COLORS.
+  unset NEWT_COLORS NEWT_COLORS_FILE
   while true; do
     choice="$(pick_choice || true)"
     case "${choice:-}" in
