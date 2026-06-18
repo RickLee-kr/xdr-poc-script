@@ -554,6 +554,109 @@ def _run_shell_command(shell: str, *, timeout: float) -> None:
     )
 
 
+def _hb_write_plain_file(path: str, content: str, *, timeout: float) -> None:
+    quoted = shlex.quote(content)
+    _run_shell_command(f"printf %s {quoted} > {shlex.quote(path)}", timeout=timeout)
+
+
+def _hb_create_eicar_variant(path: str, item: dict[str, Any], *, timeout: float) -> None:
+    content = str(item["content"])
+    quoted = shlex.quote(content)
+    kind = str(item.get("kind") or "plain")
+    if kind == "plain":
+        _hb_write_plain_file(path, content, timeout=timeout)
+        return
+    if kind == "zip":
+        inner = str(item.get("inner_name") or "eicar.txt")
+        _run_shell_command(
+            "tmpdir=$(mktemp -d) && "
+            f"printf %s {quoted} > \"$tmpdir/{inner}\" && "
+            f"zip -j {shlex.quote(path)} \"$tmpdir/{inner}\" && "
+            "rm -rf \"$tmpdir\"",
+            timeout=timeout,
+        )
+        return
+    if kind == "nested_zip":
+        inner = str(item.get("inner_name") or "eicar.txt")
+        _run_shell_command(
+            "tmpdir=$(mktemp -d) && "
+            f"printf %s {quoted} > \"$tmpdir/{inner}\" && "
+            f"cd \"$tmpdir\" && zip inner.zip {inner} && "
+            f"zip -j {shlex.quote(path)} inner.zip && "
+            "rm -rf \"$tmpdir\"",
+            timeout=timeout,
+        )
+
+
+def _hb_create_archive(path: str, item: dict[str, Any], *, timeout: float) -> None:
+    kind = str(item.get("kind") or "tar_gz")
+    if kind == "zip":
+        _run_shell_command(
+            "tmpdir=$(mktemp -d) && echo test > \"$tmpdir/sample.txt\" && "
+            f"zip -j {shlex.quote(path)} \"$tmpdir/sample.txt\" && rm -rf \"$tmpdir\"",
+            timeout=timeout,
+        )
+        return
+    _run_shell_command(
+        "tmpdir=$(mktemp -d) && echo test > \"$tmpdir/sample.txt\" && "
+        f"tar czf {shlex.quote(path)} -C \"$tmpdir\" sample.txt && rm -rf \"$tmpdir\"",
+        timeout=timeout,
+    )
+
+
+def _hb_file_lifecycle(
+    log: EventLog,
+    *,
+    target: str,
+    mode: str,
+    timeout: float,
+    path: str,
+    created_event: str,
+    accessed_event: str,
+    deleted_event: str,
+    create_fn: Any,
+    evidence: dict[str, Any] | None = None,
+) -> None:
+    payload = {"path": path, **(evidence or {})}
+    log.append(
+        event=created_event,
+        status="info",
+        target=target,
+        artifact=path,
+        evidence=dict(payload),
+    )
+    if mode == "live":
+        create_fn()
+    log.append(
+        event=accessed_event,
+        status="info",
+        target=target,
+        artifact=path,
+        evidence=dict(payload),
+    )
+    if mode == "live":
+        subprocess.run(
+            ["cat", path],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    log.append(
+        event=deleted_event,
+        status="info",
+        target=target,
+        artifact=path,
+        evidence=dict(payload),
+    )
+    if mode == "live":
+        subprocess.run(
+            ["rm", "-f", path],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+
+
 def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
     if plan.get("mode") == "skip":
         _write_skip(
@@ -568,6 +671,7 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
     mode = str(plan.get("mode", "live"))
     timeout = float(plan.get("timeout", 30.0))
     commands = list(plan.get("commands") or [])
+    credential_checks = list(plan.get("credential_checks") or [])
     eicar = dict(plan.get("eicar") or {})
 
     log.append(
@@ -578,6 +682,11 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
         evidence={
             "target_host": target,
             "commands_planned": len(commands),
+            "credential_checks_planned": len(credential_checks),
+            "eicar_variants_planned": len(plan.get("eicar_variants") or []),
+            "suspicious_scripts_planned": len(plan.get("suspicious_scripts") or []),
+            "persistence_artifacts_planned": len(plan.get("persistence_artifacts") or []),
+            "archives_planned": len(plan.get("archives") or []),
             "mode": mode,
             "webshell_family": plan.get("webshell_family"),
         },
@@ -596,50 +705,108 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
         if mode == "live":
             _run_shell_command(shell, timeout=timeout)
 
+    for index, item in enumerate(credential_checks, start=1):
+        event_name = str(item["event"])
+        name = str(item["name"])
+        shell = str(item["shell"])
+        log.append(
+            event=event_name,
+            status="info",
+            target=target,
+            artifact=name,
+            evidence={"seq": index, "shell": shell, "check": name},
+        )
+        if mode == "live":
+            _run_shell_command(shell, timeout=timeout)
+
     path = eicar.get("path")
     content = eicar.get("content")
     if path and content:
-        log.append(
-            event="eicar_file_created",
-            status="info",
+        eicar_path = str(path)
+        _hb_file_lifecycle(
+            log,
             target=target,
-            artifact=str(path),
-            evidence={"path": path},
+            mode=mode,
+            timeout=timeout,
+            path=eicar_path,
+            created_event="eicar_file_created",
+            accessed_event="eicar_file_accessed",
+            deleted_event="eicar_file_deleted",
+            create_fn=lambda: _hb_write_plain_file(eicar_path, str(content), timeout=timeout),
         )
-        if mode == "live":
-            quoted = shlex.quote(str(content))
-            _run_shell_command(
-                f"printf %s {quoted} > {shlex.quote(str(path))}",
-                timeout=timeout,
-            )
-        log.append(
-            event="eicar_file_accessed",
-            status="info",
+
+    for variant in plan.get("eicar_variants") or []:
+        variant_path = str(variant["path"])
+        _hb_file_lifecycle(
+            log,
             target=target,
-            artifact=str(path),
-            evidence={"path": path},
+            mode=mode,
+            timeout=timeout,
+            path=variant_path,
+            created_event="eicar_variant_created",
+            accessed_event="eicar_variant_accessed",
+            deleted_event="eicar_variant_deleted",
+            create_fn=lambda p=variant_path, v=variant: _hb_create_eicar_variant(
+                p, v, timeout=timeout
+            ),
+            evidence={
+                "variant": str(variant.get("variant") or ""),
+                "kind": variant.get("kind"),
+            },
         )
-        if mode == "live":
-            subprocess.run(
-                ["cat", str(path)],
-                capture_output=True,
-                timeout=timeout,
-                check=False,
-            )
-        log.append(
-            event="eicar_file_deleted",
-            status="info",
+
+    for script in plan.get("suspicious_scripts") or []:
+        script_path = str(script["path"])
+        script_content = str(script["content"])
+        _hb_file_lifecycle(
+            log,
             target=target,
-            artifact=str(path),
-            evidence={"path": path},
+            mode=mode,
+            timeout=timeout,
+            path=script_path,
+            created_event="suspicious_script_created",
+            accessed_event="suspicious_script_accessed",
+            deleted_event="suspicious_script_deleted",
+            create_fn=lambda p=script_path, c=script_content: _hb_write_plain_file(
+                p, c, timeout=timeout
+            ),
+            evidence={"name": str(script.get("name") or "")},
         )
-        if mode == "live":
-            subprocess.run(
-                ["rm", "-f", str(path)],
-                capture_output=True,
-                timeout=timeout,
-                check=False,
-            )
+
+    for artifact in plan.get("persistence_artifacts") or []:
+        artifact_path = str(artifact["path"])
+        artifact_content = str(artifact["content"])
+        _hb_file_lifecycle(
+            log,
+            target=target,
+            mode=mode,
+            timeout=timeout,
+            path=artifact_path,
+            created_event="persistence_artifact_created",
+            accessed_event="persistence_artifact_accessed",
+            deleted_event="persistence_artifact_deleted",
+            create_fn=lambda p=artifact_path, c=artifact_content: _hb_write_plain_file(
+                p, c, timeout=timeout
+            ),
+            evidence={"name": str(artifact.get("name") or "")},
+        )
+
+    for archive in plan.get("archives") or []:
+        archive_path = str(archive["path"])
+        _hb_file_lifecycle(
+            log,
+            target=target,
+            mode=mode,
+            timeout=timeout,
+            path=archive_path,
+            created_event="archive_created",
+            accessed_event="archive_accessed",
+            deleted_event="archive_deleted",
+            create_fn=lambda p=archive_path, a=archive: _hb_create_archive(
+                p, a, timeout=timeout
+            ),
+            evidence={"name": str(archive.get("name") or ""), "kind": archive.get("kind")},
+        )
 
     log.append(
         event="host_behavior_check_completed",
@@ -649,6 +816,7 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
         evidence={
             "target_host": target,
             "commands_dispatched": len(commands),
+            "credential_checks_dispatched": len(credential_checks),
             "mode": mode,
         },
     )

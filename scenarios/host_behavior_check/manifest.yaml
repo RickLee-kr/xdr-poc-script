@@ -3,9 +3,11 @@ id: host_behavior_check
 name: Host Behavior Check — EDR Observation Commands
 version: "1.0.0"
 description: >
-  Harmless host enumeration and EICAR file lifecycle on the webshell compromise host.
-  Runs after initial HTTP/SQLi compromise and before internal recon. Optional —
-  enable via --enable-host-behavior-check or explicit --scenarios.
+  Harmless host enumeration, credential artifact simulation, EICAR variants,
+  suspicious script drops, persistence artifact simulation, and archive activity
+  on the webshell compromise host. Runs after initial HTTP/SQLi compromise and
+  before internal recon. Optional — enable via --enable-host-behavior-check or
+  explicit --scenarios.
 
 category: endpoint
 tags: [phase_2, edr, host_behavior, webshell, linux]
@@ -53,8 +55,8 @@ defaults:
   timeout: 30.0
 
 safety:
-  max_events: 100
-  max_duration_sec: 120
+  max_events: 120
+  max_duration_sec: 180
   allowed_domains: []
   allowed_ports: []
   forbidden_actions: [privilege_escalation, malware_execute]

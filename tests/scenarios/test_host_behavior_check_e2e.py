@@ -145,8 +145,16 @@ def test_host_behavior_check_dry_run_generates_events_without_shell(tmp_runs_dir
     assert "eicar_file_created" in event_names
     assert "eicar_file_accessed" in event_names
     assert "eicar_file_deleted" in event_names
+    assert "eicar_variant_created" in event_names
+    assert "credential_artifact_enumeration" in event_names
+    assert "ssh_key_enumeration" in event_names
+    assert "pem_file_enumeration" in event_names
+    assert "suspicious_script_created" in event_names
+    assert "persistence_artifact_created" in event_names
+    assert "archive_created" in event_names
     assert "host_behavior_check_completed" in event_names
     assert sum(1 for e in hb_events if e["event"] == "host_behavior_command_dispatched") == 8
+    assert len(hb_events) >= 50
 
     validation = json.loads((run_dir / "validation.json").read_text())
     hb_result = next(
@@ -177,7 +185,7 @@ def test_host_behavior_check_live_dispatches_shell_commands(tmp_runs_dir) -> Non
         )
 
     assert exit_code == 0
-    assert run_mock.call_count >= 8
+    assert run_mock.call_count >= 20
 
 
 def test_host_behavior_check_plugins_list() -> None:

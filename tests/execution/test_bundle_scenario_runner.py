@@ -185,8 +185,10 @@ def test_webshell_bundle_host_behavior_check_generates_events(tmp_path: Path) ->
         assert "host_behavior_check_started" in event_names
         assert "host_behavior_command_dispatched" in event_names
         assert "eicar_file_created" in event_names
+        assert "eicar_variant_created" in event_names
+        assert "credential_artifact_enumeration" in event_names
         assert "host_behavior_check_completed" in event_names
-        assert collection.events_imported >= 6
+        assert collection.events_imported >= 20
     finally:
         server.stop()
 
