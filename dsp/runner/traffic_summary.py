@@ -22,6 +22,11 @@ _SCENARIO_TRAFFIC_LINES: dict[str, tuple[tuple[str, str], ...]] = {
     "ldap_enumeration": (("attempts", "ldap_bind_or_search_attempt_count"),),
     "smb_login_failure": (("attempts", "smb_auth_attempt_count"),),
     "kerberos_failure": (("attempts", "kerberos_auth_attempt_count"),),
+    "rare_protocol_activity": (
+        ("attempts", "rare_protocol_probe_attempt_count"),
+        ("success", "rare_protocol_probe_success_count"),
+        ("failed", "rare_protocol_probe_failure_count"),
+    ),
 }
 
 

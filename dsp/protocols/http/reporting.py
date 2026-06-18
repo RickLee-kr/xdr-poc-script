@@ -37,6 +37,9 @@ def build_http_followup_report_section(
     trace_map = {
         "http_request_sent_count": "event=http_request_sent, status=sent",
         "http_response_received_count": "event=http_response_received, status=response",
+        "non_standard_port_connection_attempt_count": "event=non_standard_port_connection_attempt, status=sent",
+        "non_standard_port_connection_success_count": "event=non_standard_port_connection_success, status=response",
+        "non_standard_port_connection_failure_count": "event=non_standard_port_connection_failure",
     }
     for name in HTTP_FOLLOWUP_METRIC_NAMES:
         value = result.metrics.get(name, 0)
@@ -61,6 +64,19 @@ def build_http_followup_report_section(
         lines.append(f"- **Duration:** {duration}s")
     if sample_urls:
         lines.append(f"- **Sample URLs:** {', '.join(sample_urls[:5])}")
+
+    burst = summary.get("non_standard_port_burst") or {}
+    if burst.get("enabled"):
+        lines.extend(["", "**Non-Standard Port Burst**", ""])
+        ports = burst.get("ports") or []
+        if ports:
+            lines.append(f"- **Ports:** {', '.join(str(p) for p in ports)}")
+        if burst.get("attempts") is not None:
+            lines.append(f"- **Attempts:** {burst.get('attempts')}")
+        if burst.get("success") is not None:
+            lines.append(f"- **Success:** {burst.get('success')}")
+        if burst.get("failure") is not None:
+            lines.append(f"- **Failure:** {burst.get('failure')}")
 
     dump_summary = summary.get("request_dump_summary") or {}
     if dump_summary:

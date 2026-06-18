@@ -79,6 +79,8 @@ def build_traffic_summary(
         if not started:
             started = _last_evidence(events, sid, "ssh_failure_started")
         if not started:
+            started = _last_evidence(events, sid, "rare_protocol_activity_started")
+        if not started:
             started = _last_evidence(events, sid, "smb_scenario_started")
         if not started:
             started = _last_evidence(events, sid, "sql_injection_started")
@@ -90,6 +92,8 @@ def build_traffic_summary(
             completed = _last_evidence(events, sid, "http_followup_completed")
         if not completed:
             completed = _last_evidence(events, sid, "ssh_failure_completed")
+        if not completed:
+            completed = _last_evidence(events, sid, "rare_protocol_activity_completed")
         if not completed:
             completed = _last_evidence(events, sid, "smb_scenario_completed")
         if not completed:
@@ -104,6 +108,8 @@ def build_traffic_summary(
             skipped = _last_evidence(events, sid, "sql_injection_skipped")
         if not skipped:
             skipped = _last_evidence(events, sid, "ssh_failure_skipped")
+        if not skipped:
+            skipped = _last_evidence(events, sid, "rare_protocol_activity_skipped")
 
         scenario_summary: dict[str, Any] = {
             "target_ips": completed.get("targets") or started.get("hosts") or skipped.get("hosts") or [],
@@ -180,6 +186,18 @@ def build_traffic_summary(
                 "expected_url_scan_distribution": completed.get("expected_url_scan_distribution")
                 or started.get("expected_url_scan_distribution", {}),
             })
+            burst = (
+                completed.get("non_standard_port_burst")
+                or _last_evidence(events, sid, "non_standard_port_burst_completed")
+                or {}
+            )
+            if burst.get("enabled"):
+                scenario_summary["non_standard_port_burst"] = {
+                    "ports": burst.get("ports", []),
+                    "attempts": burst.get("attempts", 0),
+                    "success": burst.get("success", 0),
+                    "failure": burst.get("failure", 0),
+                }
         elif sid == "ssh_failure":
             scenario_summary.update({
                 "auth_attempts_planned": started.get("planned_attempts", 0),
@@ -187,6 +205,19 @@ def build_traffic_summary(
                 "auth_failed": completed.get("failure_count") or _count_events(events, sid, "ssh_auth_failed"),
                 "timeouts": _count_events(events, sid, "ssh_auth_timeout"),
                 "sample_usernames": completed.get("sample_usernames", []),
+            })
+        elif sid == "rare_protocol_activity":
+            scenario_summary.update({
+                "probes_planned": started.get("planned_probes", 0),
+                "attempts": completed.get("attempt_count")
+                or _count_events(events, sid, "rare_protocol_probe_attempt"),
+                "success": completed.get("success_count")
+                or _count_events(events, sid, "rare_protocol_probe_success"),
+                "failure": completed.get("failure_count")
+                or _count_events(events, sid, "rare_protocol_probe_failure"),
+                "protocols": completed.get("protocols") or started.get("protocols", []),
+                "execution_host": completed.get("execution_host") or started.get("execution_host", ""),
+                "duration_sec": completed.get("duration_sec"),
             })
         elif sid == "smb_login_failure":
             scenario_summary.update({

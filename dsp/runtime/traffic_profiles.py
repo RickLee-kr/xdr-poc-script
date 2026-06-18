@@ -67,6 +67,8 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
             "concurrency": 32,
             "include_attack_paths": True,
             "abnormal_ua_ratio": 0.10,
+            "non_standard_burst_min": 50,
+            "non_standard_burst_max": 200,
         },
         "high": {
             "max_hosts": 1,
@@ -91,6 +93,11 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
         "low": {"max_hosts": 1, "max_ports": 10, "timeout": 0.5, "concurrency": 32},
         "normal": {"max_hosts": 254, "max_ports": 10, "timeout": 0.5, "concurrency": 32},
         "high": {"max_hosts": 254, "max_ports": 10, "timeout": 0.5, "concurrency": 32},
+    },
+    "rare_protocol_activity": {
+        "low": {"timeout": 2.0, "rtp_burst_count": 4},
+        "normal": {"timeout": 3.0, "rtp_burst_count": 8},
+        "high": {"timeout": 3.0, "rtp_burst_count": 16},
     },
     "host_behavior_check": {
         "low": {"timeout": 30.0},

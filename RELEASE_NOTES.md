@@ -8,16 +8,71 @@
 
 ---
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.1/install-dsp.sh | bash
+```
+
+**Sparse install (default)** — bootstrap install and menu update use git sparse-checkout so operators receive runtime files only. Full developer clone: `DSP_FULL_CLONE=1`. See [`docs/validation/DSP_SPARSE_INSTALL_UX_REPORT.md`](docs/validation/DSP_SPARSE_INSTALL_UX_REPORT.md).
+
+---
+
 ## Summary
 
-DSP v1.4.1 is a **patch release** for install/update UX only. Default bootstrap install and menu update now use **git sparse-checkout** so operators receive runtime files only (`dsp/`, `scenarios/`, `scripts/`, operator docs) — not `tests/`, dev specs, or validation archives.
+DSP v1.4.1 extends Release 1.0 with operator install UX, host-behavior EDR coverage, HTTP non-standard port burst traffic, and rare-protocol activity simulation. **Release recommendation: READY WITH KNOWN LIMITATIONS.**
 
-- **No DSP runtime, scenario, or detection logic changes**
-- Full developer clone: `DSP_FULL_CLONE=1`
-- Existing full-clone installs are not auto-pruned; clean reinstall instructions are printed
-- Install URL: `v1.4.1` tag (v1.4.0 tag unchanged)
+---
 
-See [`docs/validation/DSP_SPARSE_INSTALL_UX_REPORT.md`](docs/validation/DSP_SPARSE_INSTALL_UX_REPORT.md).
+## Validated Providers
+
+| Provider | Status |
+|----------|--------|
+| **Local** | Validated |
+| **JSP** | Validated |
+| **PHP** | Validated |
+
+---
+
+## Known Limitations
+
+| Limitation | Detail |
+|------------|--------|
+| **ASPX preview** | Contract and HTTP transport exist; real Windows IIS execution not validated |
+| **Windows webshell path not validated** | Bundle runner, collector, and artifact handling are Linux-oriented |
+
+See [`docs/validation/ASPX_REAL_WEBSHELL_VALIDATION_REPORT.md`](docs/validation/ASPX_REAL_WEBSHELL_VALIDATION_REPORT.md).
+
+---
+
+## What's New in v1.4.1
+
+### Sparse Install (default)
+
+- Git sparse-checkout on bootstrap install and menu **Update latest patch**
+- Runtime cone: `dsp/`, `scenarios/`, `scripts/`, operator docs — excludes `tests/`, dev specs, `docs/validation/`
+
+### Host Behavior Check v2
+
+- EICAR variants
+- Credential artifact enumeration
+- Script drop
+- Persistence artifact simulation
+- Archive activity
+
+Reports: [`HOST_BEHAVIOR_ENHANCEMENT_REPORT.md`](docs/validation/HOST_BEHAVIOR_ENHANCEMENT_REPORT.md), [`HOST_BEHAVIOR_REAL_ACTIVITY_E2E_REPORT.md`](docs/validation/HOST_BEHAVIOR_REAL_ACTIVITY_E2E_REPORT.md)
+
+### Non-Standard Port Burst
+
+HTTP follow-up extension — burst traffic on non-standard ports for NDR/port-anomaly validation.
+
+Report: [`NON_STANDARD_PORT_BURST_REPORT.md`](docs/validation/NON_STANDARD_PORT_BURST_REPORT.md)
+
+### Rare Protocol Activity
+
+New scenario — safe rare-protocol connection attempts (FTP, Telnet, SMB, RDP, VNC, etc.) for protocol-anomaly detection testing.
+
+Report: [`RARE_PROTOCOL_ACTIVITY_REPORT.md`](docs/validation/RARE_PROTOCOL_ACTIVITY_REPORT.md)
 
 ---
 

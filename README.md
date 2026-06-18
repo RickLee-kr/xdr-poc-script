@@ -2,7 +2,7 @@
 
 Generate realistic security traffic for XDR, SIEM, EDR, and lab validation.
 
-**Release 1.4.1** — Generate realistic security-scenario traffic, collect structured events, and produce validation reports for lab and XDR testing.
+**Release 1.4.1** — Sparse runtime install by default, Host Behavior Check v2, Non-Standard Port Burst, and Rare Protocol Activity.
 
 DSP runs attack-simulation scenarios (port sweep, DNS tunnel, HTTP follow-up, SQL injection, SSH failure, and more) against a target network you define. Results land in a local run folder as events, reports, and evidence you can review or export.
 

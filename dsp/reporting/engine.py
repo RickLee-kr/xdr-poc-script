@@ -172,6 +172,11 @@ class ReportingEngine:
             lines.extend(["## Port Sweep Details", ""])
             lines.extend(port_sweep_sections)
 
+        rare_protocol_sections = self._build_rare_protocol_activity_sections(report)
+        if rare_protocol_sections:
+            lines.extend(["## Rare Protocol Activity Details", ""])
+            lines.extend(rare_protocol_sections)
+
         ldap_sections = self._build_ldap_enumeration_sections(report)
         if ldap_sections:
             lines.extend(["## LDAP Enumeration Details", ""])
@@ -435,6 +440,35 @@ class ReportingEngine:
     def _port_sweep_summary_from_store(self, run_id: str, scenario_id: str) -> dict[str, Any]:
         for ev in self.store.list_events(run_id, scenario_id):
             if ev.event == "port_sweep_completed":
+                return dict(ev.evidence)
+        return {}
+
+    def _build_rare_protocol_activity_sections(self, report: Report) -> list[str]:
+        """Append Rare Protocol Activity section when report_profile.protocol matches."""
+        if not self.registry:
+            return []
+        from dsp.protocols.rare.reporting import build_rare_protocol_report_section
+
+        lines: list[str] = []
+        for result in report.traffic_validation:
+            record = self.registry.get(result.scenario_id)
+            if not record:
+                continue
+            rp = record.manifest.report_profile
+            if rp.get("protocol") != "rare_protocol_activity":
+                continue
+            samples = report.event_samples.get(result.scenario_id)
+            summary = self._rare_protocol_activity_summary_from_store(
+                result.run_id, result.scenario_id
+            )
+            lines.extend(build_rare_protocol_report_section(result, samples, summary))
+        return lines
+
+    def _rare_protocol_activity_summary_from_store(
+        self, run_id: str, scenario_id: str
+    ) -> dict[str, Any]:
+        for ev in self.store.list_events(run_id, scenario_id):
+            if ev.event == "rare_protocol_activity_completed":
                 return dict(ev.evidence)
         return {}
 

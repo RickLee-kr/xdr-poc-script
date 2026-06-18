@@ -27,10 +27,12 @@ from dsp.protocols.dns.tunnel import (
 )
 from dsp.protocols.dns.volume_profiles import apply_volume_profile
 from dsp.protocols.http.sqli_payloads import plan_sqli_requests
+from dsp.protocols.http.non_standard_port_burst import plan_non_standard_port_burst
 from dsp.protocols.http.urls import MAX_HOSTS_DEFAULT, plan_followup_requests
 from dsp.protocols.recon import MAX_PORTS_DEFAULT, plan_port_sweep
 from dsp.protocols.ssh.attempts import SSH_PORT_DEFAULT, plan_ssh_attempts
 from dsp.protocols.host.behavior import build_host_behavior_plan
+from dsp.protocols.rare.attempts import plan_rare_protocol_activity
 
 
 def resolve_remote_run_dir(remote_work_dir: str, run_id: str) -> str:
@@ -118,6 +120,8 @@ def _build_plan(request: ScenarioExecutionRequest, targets: TargetSet) -> dict[s
         return _plan_ssh_failure(targets, params, dry_run=request.dry_run)
     if scenario_id == "host_behavior_check":
         return _plan_host_behavior_check(request, params, dry_run=request.dry_run)
+    if scenario_id == "rare_protocol_activity":
+        return _plan_rare_protocol_activity(targets, params, dry_run=request.dry_run)
     raise ValueError(f"unsupported scenario: {scenario_id!r}")
 
 
@@ -193,6 +197,7 @@ def _plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: 
         return {"type": "http_followup", "mode": "skip", "reason": "no_http_endpoints"}
 
     endpoints = [(ep.host, ep.port) for ep in selection.selected]
+    followup_hosts = [host for host, _ in endpoints]
     plans = plan_followup_requests(
         endpoints=endpoints,
         max_hosts=max_hosts,
@@ -200,6 +205,7 @@ def _plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: 
         max_total=int(params.get("max_total", 20)),
         include_attack_paths=bool(params.get("include_attack_paths", True)),
     )
+    burst_plan = plan_non_standard_port_burst(targets, followup_hosts, params)
     return {
         "type": "http_followup",
         "mode": "mock" if dry_run else "live",
@@ -212,6 +218,7 @@ def _plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: 
             }
             for plan in plans
         ],
+        "non_standard_port_burst": burst_plan,
     }
 
 
@@ -304,3 +311,30 @@ def _plan_host_behavior_check(
         dry_run=dry_run,
         webshell_family=str(family) if family else None,
     )
+
+
+def _plan_rare_protocol_activity(
+    targets: TargetSet,
+    params: dict[str, Any],
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    plans = plan_rare_protocol_activity(targets, params)
+    if not plans:
+        return {"type": "rare_protocol_activity", "mode": "skip", "reason": "no_probe_plans"}
+    return {
+        "type": "rare_protocol_activity",
+        "mode": "mock" if dry_run else "live",
+        "timeout": float(params.get("timeout", 3.0)),
+        "probes": [
+            {
+                "protocol": plan.protocol,
+                "host": plan.host,
+                "port": plan.port,
+                "transport": plan.transport,
+                "artifact": plan.artifact,
+                "rtp_packets": plan.rtp_packets,
+            }
+            for plan in plans
+        ],
+    }
