@@ -15,6 +15,8 @@ FAST_SAFE_DISCOVERY_PORTS: tuple[int, ...] = (
     22,
     53,
     80,
+    88,
+    389,
     443,
     445,
     8080,
@@ -35,6 +37,8 @@ PORT_CAPABILITY_MAP: dict[int, str] = {
     9090: "http_targets",
     22: "ssh_hosts",
     53: "dns_hosts",
+    88: "kerberos_hosts",
+    389: "ldap_hosts",
     445: "smb_hosts",
 }
 

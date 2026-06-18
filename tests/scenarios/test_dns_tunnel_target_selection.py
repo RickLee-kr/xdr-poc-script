@@ -29,11 +29,10 @@ def _targets(*, alive: list[str], dns_hosts: list[str] | None = None) -> TargetS
     )
 
 
-def test_select_tunnel_targets_uses_alive_hosts_not_dns_hosts() -> None:
+def test_select_tunnel_targets_prefers_dns_hosts_from_discovery() -> None:
     targets = _targets(alive=["10.10.10.97", "10.10.10.98"], dns_hosts=["10.10.10.20"])
     selected = select_tunnel_targets(targets, {}, max_hosts=2)
-    assert selected == ["10.10.10.97", "10.10.10.98"]
-    assert "10.10.10.20" not in selected
+    assert selected == ["10.10.10.20"]
 
 
 def test_select_tunnel_targets_runs_without_discovered_port_53() -> None:

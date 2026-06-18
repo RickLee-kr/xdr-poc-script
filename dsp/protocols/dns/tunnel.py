@@ -78,12 +78,15 @@ def select_tunnel_targets(
     max_hosts: int = 2,
 ) -> list[str]:
     """
-    Select live discovery hosts for DNS tunnel traffic.
-
-    Uses alive hosts from discovery — not dns_hosts / port-53 service buckets.
+    Select DNS resolver targets from discovery dns_hosts when available.
     """
     if config.get("targets"):
         return [str(t) for t in config["targets"]][:max_hosts]
+
+    if targets.discovery_enabled:
+        dns_hosts = targets.hosts_for_capability("dns_hosts")
+        if dns_hosts:
+            return [str(h) for h in dns_hosts][:max_hosts]
 
     if targets.discovery_enabled:
         alive = targets.discovery_meta.get("alive_hosts")
@@ -93,4 +96,4 @@ def select_tunnel_targets(
     if targets.hosts:
         return [str(h) for h in targets.hosts][:max_hosts]
 
-    return ["10.10.10.20"]
+    return []

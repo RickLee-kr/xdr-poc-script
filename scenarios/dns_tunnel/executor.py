@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime, timezone
 
 from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.event_store import Event
 from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.dns import DnsClient, build_dns_events
 from dsp.protocols.dns.tunnel import (
@@ -45,6 +47,26 @@ def run(
     client = DnsClient(mode=mode, timeout=0.05)
 
     host_targets = select_tunnel_targets(targets, params, max_hosts=max_hosts)
+    if not host_targets and targets.discovery_enabled:
+        activity = ActivityReporter(ctx, scenario_id)
+        activity.emit_skipped(reason="no_dns_hosts_discovered")
+        ctx.event_store.append(
+            Event(
+                run_id=ctx.run_id,
+                scenario_id=scenario_id,
+                timestamp=datetime.now(timezone.utc),
+                stage="executor",
+                event="dns_tunnel_skipped",
+                status="info",
+                source=source,
+                evidence={
+                    "reason": "no_dns_service_discovered",
+                    "discovered_dns_hosts": len(targets.hosts_for_capability("dns_hosts")),
+                },
+            )
+        )
+        return
+
     total_planned = plan_chunk_count(payload_mb, chunk_size)
     if max_chunks is not None:
         total_planned = min(total_planned, int(max_chunks))

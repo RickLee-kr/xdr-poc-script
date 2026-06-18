@@ -34,6 +34,7 @@ from dsp.protocols.http.urls import (
     MAX_REQUESTS_TOTAL_DEFAULT,
 )
 from dsp.protocols.types import HttpRequest
+from dsp.reporting.operational_visibility import derive_execution_reconciliation
 
 
 def select_sqli_endpoints(
@@ -362,6 +363,11 @@ def run(
     request_log_path = _write_sqli_request_log(ctx, request_log)
     wire_log_path = _write_sqli_wire_evidence_log(ctx, wire_log) if write_wire_evidence else None
     elapsed = round(time.monotonic() - t0, 3)
+    exec_status, exec_reason = derive_execution_reconciliation(
+        len(plans),
+        sent_count,
+        cancelled=ctx.cancelled,
+    )
     ctx.event_store.append(
         build_sql_injection_completed_event(
             run_id=ctx.run_id,
@@ -389,6 +395,8 @@ def run(
                 "selected_targets": selected_targets,
                 "sql_injection_requests_jsonl": str(request_log_path) if request_log_path else "",
                 "sql_wire_evidence_jsonl": str(wire_log_path) if wire_log_path else "",
+                "execution_status": exec_status,
+                "execution_reason": exec_reason,
             },
         )
     )

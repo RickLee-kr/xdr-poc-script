@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
+from dsp.engine.host_selection import select_hosts_for_capability
 from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.event_store import Event
 from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.kerberos import (
     ATTEMPTS_PER_HOST_DEFAULT,
@@ -27,12 +30,9 @@ def select_kerberos_hosts(
     *,
     max_hosts: int = MAX_HOSTS_DEFAULT,
 ) -> list[str]:
-    """Select up to max_hosts targets without discovery."""
-    if config.get("hosts"):
-        return [str(h) for h in config["hosts"]][:max_hosts]
-    if targets.hosts:
-        return list(targets.hosts)[:max_hosts]
-    return ["10.10.10.30"]
+    return select_hosts_for_capability(
+        targets, config, capability="kerberos_hosts", max_hosts=max_hosts
+    )
 
 
 def run(
@@ -57,6 +57,28 @@ def run(
     )
 
     hosts = select_kerberos_hosts(targets, params, max_hosts=max_hosts)
+    if not hosts:
+        activity = ActivityReporter(ctx, scenario_id)
+        activity.emit_skipped(reason="no_kerberos_hosts_discovered", auth_attempts=0)
+        ctx.event_store.append(
+            Event(
+                run_id=ctx.run_id,
+                scenario_id=scenario_id,
+                timestamp=datetime.now(timezone.utc),
+                stage="executor",
+                event="kerberos_failure_skipped",
+                status="info",
+                source=source,
+                evidence={
+                    "reason": "no_kerberos_service_discovered",
+                    "discovered_kerberos_hosts": len(
+                        targets.hosts_for_capability("kerberos_hosts")
+                    ),
+                },
+            )
+        )
+        return
+
     plans = plan_kerberos_attempts(
         hosts,
         max_hosts=max_hosts,

@@ -24,6 +24,7 @@ class Report:
     event_samples: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     run_metadata: dict[str, Any] = field(default_factory=dict)
     summaries: dict[str, dict[str, Any]] = field(default_factory=dict)
+    operational_visibility: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +136,10 @@ class ReportingEngine:
             lines.append("```json")
             lines.append(json.dumps(report.summaries, indent=2))
             lines.append("```")
+            lines.append("")
+
+        if report.operational_visibility:
+            lines.extend(report.operational_visibility.get("report_sections", []))
             lines.append("")
 
         dns_sections = self._build_dns_protocol_sections(report)

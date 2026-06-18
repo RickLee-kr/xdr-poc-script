@@ -37,6 +37,10 @@ from dsp.manual_verification import (
 )
 from dsp.plugins import PluginLoader, PluginStatus
 from dsp.reporting import ReportingEngine
+from dsp.reporting.operational_visibility import (
+    build_operational_visibility,
+    reconcile_scenario,
+)
 from dsp.runner.progress_emitter import ProgressEmitter
 from dsp.runner.target_selection import (
     resolve_selected_targets_by_protocol,
@@ -58,6 +62,11 @@ def _latest_skip_evidence(
         f"{scenario_id}_skipped",
         "http_followup_skipped",
         "sql_injection_skipped",
+        "smb_scenario_skipped",
+        "ssh_failure_skipped",
+        "ldap_enumeration_skipped",
+        "kerberos_failure_skipped",
+        "dns_tunnel_skipped",
         "scenario_skipped",
     )
     for event in reversed(store.list_events(run_id)):
@@ -73,6 +82,11 @@ def _scenario_executor_skipped(store: EventStore, run_id: str, scenario_id: str)
         f"{scenario_id}_skipped",
         "http_followup_skipped",
         "sql_injection_skipped",
+        "smb_scenario_skipped",
+        "ssh_failure_skipped",
+        "ldap_enumeration_skipped",
+        "kerberos_failure_skipped",
+        "dns_tunnel_skipped",
         "scenario_skipped",
     )
     for event_name in skip_names:
@@ -183,25 +197,20 @@ def generate_run_id() -> str:
 
 
 def compute_exit_code(results: list) -> int:
-    """Exit code derived from ValidationResult only."""
+    """Exit code for operational run completion.
+
+    Returns 0 when RunManager finished and produced validation artifacts, unless a
+    scenario hit CODE_FAILURE (implementation error). PARTIAL and SKIPPED are
+    operational outcomes — not run failures.
+    """
     if not results:
-        return 3
+        return 1
     decisions = [r.decision for r in results]
-    if all(d == ValidationDecision.SUCCESS for d in decisions):
-        return 0
-    if all(
-        d in (ValidationDecision.SUCCESS, ValidationDecision.SKIPPED) for d in decisions
-    ) and any(d == ValidationDecision.SUCCESS for d in decisions):
-        return 0
     if any(d == ValidationDecision.CODE_FAILURE for d in decisions):
         return 2
     if any(d == ValidationDecision.FAILED for d in decisions):
         return 1
-    if all(d == ValidationDecision.SKIPPED for d in decisions):
-        return 3
-    if any(d == ValidationDecision.PARTIAL for d in decisions):
-        return 1
-    return 1
+    return 0
 
 
 class RunManager:
@@ -518,6 +527,7 @@ class RunManager:
                         "notes": summary.notes,
                     }
                 if emitter is not None:
+                    reconciliation = reconcile_scenario(store, run_id, sid)
                     if _scenario_executor_skipped(store, run_id, sid):
                         skip_evidence = _latest_skip_evidence(store, run_id, sid)
                         emitter.on_scenario_completed()
@@ -527,6 +537,7 @@ class RunManager:
                                 "scenario_id": sid,
                                 "reason": skip_evidence.get("reason", "scenario_skipped"),
                                 "evidence": skip_evidence,
+                                "reconciliation": reconciliation,
                             },
                         )
                     else:
@@ -544,6 +555,7 @@ class RunManager:
                                 "metrics": completed_metrics,
                                 "extras": _scenario_completion_extras(sid, completed_evidence),
                                 "artifacts": _scenario_artifact_paths(sid, run_dir),
+                                "reconciliation": reconciliation,
                             },
                         )
 
@@ -594,13 +606,6 @@ class RunManager:
         run.status = RunStatus.COMPLETED
         run.ended_at = datetime.now(timezone.utc)
 
-        reporter = ReportingEngine(store, self.registry)
-        report = reporter.generate(run_id, results, run=run, summaries=summaries)
-        if detection_confirmation is not None:
-            report.detection_confirmation = detection_confirmation
-        reporter.write_report_md(run_dir / "report.md", report)
-        reporter.write_report_json(run_dir / "report.json", report)
-
         store.export_jsonl(run_dir / "events.jsonl")
         event_count = store.count(EventQuery(run_id=run_id))
 
@@ -618,6 +623,37 @@ class RunManager:
             json.dumps(traffic_summary, indent=2),
             encoding="utf-8",
         )
+
+        from dsp.reporting.operational_visibility import build_operational_visibility
+
+        operational = build_operational_visibility(
+            store,
+            run_id=run_id,
+            scenario_ids=scenario_ids,
+            targets=targets,
+            traffic_profile=summary_profile,
+        )
+        (run_dir / "operational_visibility.json").write_text(
+            json.dumps(
+                {
+                    "discovery_summary": operational["discovery_summary"],
+                    "scenario_selection": operational["scenario_selection"],
+                    "reconciliations": operational["reconciliations"],
+                    "rare_protocol_detail": operational["rare_protocol_detail"],
+                    "host_behavior_summary": operational["host_behavior_summary"],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        reporter = ReportingEngine(store, self.registry)
+        report = reporter.generate(run_id, results, run=run, summaries=summaries)
+        if detection_confirmation is not None:
+            report.detection_confirmation = detection_confirmation
+        report.operational_visibility = operational
+        reporter.write_report_md(run_dir / "report.md", report)
+        reporter.write_report_json(run_dir / "report.json", report)
 
         http_completed = next(
             (
@@ -659,6 +695,7 @@ class RunManager:
                     "event_count": event_count,
                     "summaries": summaries,
                     "run_dir": str(run_dir),
+                    "operational_visibility": operational,
                 },
             )
         store.close()

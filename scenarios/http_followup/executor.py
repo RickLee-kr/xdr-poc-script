@@ -36,6 +36,7 @@ from dsp.protocols.http.urls import (
 )
 from dsp.protocols.http.burst_executor import run_non_standard_port_burst
 from dsp.protocols.http.non_standard_port_burst import plan_non_standard_port_burst
+from dsp.reporting.operational_visibility import derive_execution_reconciliation
 from dsp.protocols.http.user_agents import (
     attach_followup_user_agents,
     classify_user_agent,
@@ -574,6 +575,12 @@ def run(
 
     elapsed = round(time.monotonic() - t0, 3)
     requests_per_second = round(sent_count / elapsed, 2) if elapsed > 0 else 0.0
+    exec_status, exec_reason = derive_execution_reconciliation(
+        len(plans),
+        sent_count,
+        cancelled=ctx.cancelled,
+        timeouts=timeout_count,
+    )
     ctx.event_store.append(
         build_http_followup_completed_event(
             run_id=ctx.run_id,
@@ -627,6 +634,8 @@ def run(
                 "http_followup_requests_jsonl": str(request_log_path) if request_log_path else "",
                 "http_wire_evidence_jsonl": str(wire_log_path) if wire_log_path else "",
                 "non_standard_port_burst": burst_summary,
+                "execution_status": exec_status,
+                "execution_reason": exec_reason,
             },
         )
     )

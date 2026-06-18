@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
+from dsp.engine.host_selection import select_hosts_for_capability
 from dsp.engine.scenario_engine import RunContext, TargetSet
+from dsp.event_store import Event
 from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.ldap import (
     DEFAULT_SAFE_FILTERS,
@@ -26,12 +29,7 @@ def select_ldap_hosts(
     *,
     max_hosts: int = MAX_HOSTS_DEFAULT,
 ) -> list[str]:
-    """Select up to max_hosts targets without discovery."""
-    if config.get("hosts"):
-        return [str(h) for h in config["hosts"]][:max_hosts]
-    if targets.hosts:
-        return list(targets.hosts)[:max_hosts]
-    return ["10.10.10.30"]
+    return select_hosts_for_capability(targets, config, capability="ldap_hosts", max_hosts=max_hosts)
 
 
 def _resolve_ports(config: dict) -> tuple[int, ...]:
@@ -61,6 +59,26 @@ def run(
     )
 
     hosts = select_ldap_hosts(targets, params, max_hosts=max_hosts)
+    if not hosts:
+        activity = ActivityReporter(ctx, scenario_id)
+        activity.emit_skipped(reason="no_ldap_hosts_discovered", auth_attempts=0)
+        ctx.event_store.append(
+            Event(
+                run_id=ctx.run_id,
+                scenario_id=scenario_id,
+                timestamp=datetime.now(timezone.utc),
+                stage="executor",
+                event="ldap_enumeration_skipped",
+                status="info",
+                source=source,
+                evidence={
+                    "reason": "no_ldap_service_discovered",
+                    "discovered_ldap_hosts": len(targets.hosts_for_capability("ldap_hosts")),
+                },
+            )
+        )
+        return
+
     ports = _resolve_ports(params)
     plans = plan_ldap_enumeration(
         hosts,

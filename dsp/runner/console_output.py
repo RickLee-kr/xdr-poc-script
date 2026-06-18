@@ -117,6 +117,9 @@ class OperationalConsole:
             self._write(f"Duration: {format_duration(duration)}")
             self._write(f"Events Generated: {events}")
             self._write("")
+            operational = data.get("operational_visibility") or {}
+            for line in operational.get("console_lines", []):
+                self._write(line)
 
     def print_traffic_summary(self) -> None:
         """Print aggregated per-scenario traffic counters."""
@@ -185,12 +188,28 @@ class OperationalConsole:
     def _emit_scenario_skipped(self, data: dict[str, Any]) -> None:
         sid = data.get("scenario_id", "")
         reason = data.get("reason", "scenario_skipped")
+        evidence = data.get("evidence") or {}
+        reconciliation = data.get("reconciliation") or {}
         if sid:
-            self._write(f"{scenario_display_name(sid)} SKIPPED")
-            self._write(f"  skip_reason={reason}")
-            evidence = data.get("evidence") or {}
-            if evidence.get("requests_sent") == 0:
-                self._write("  requests_sent=0")
+            self._write(f"{scenario_display_name(sid)}")
+            self._write("")
+            self._write("status=skipped")
+            self._write(f"reason={reconciliation.get('execution_reason', reason)}")
+            for key in (
+                "discovered_smb_hosts",
+                "discovered_ldap_hosts",
+                "discovered_kerberos_hosts",
+                "discovered_dns_hosts",
+            ):
+                if key in evidence:
+                    self._write(f"{key}={evidence[key]}")
+            if reconciliation:
+                self._write(f"planned={reconciliation.get('planned', 0)}")
+                self._write(f"executed={reconciliation.get('actual', 0)}")
+                self._write(f"execution_status={reconciliation.get('execution_status', 'skipped')}")
+                self._write(f"execution_reason={reconciliation.get('execution_reason', reason)}")
+            elif evidence.get("requests_sent") == 0:
+                self._write("requests_sent=0")
             self._write("")
 
     def _emit_scenario_started(self, data: dict[str, Any]) -> None:
@@ -366,7 +385,19 @@ class OperationalConsole:
         if sid:
             if metrics:
                 self._traffic_summaries[sid] = dict(metrics)
-            self._write(f"{scenario_display_name(sid)} Completed")
+            reconciliation = data.get("reconciliation") or {}
+            self._write(f"{scenario_display_name(sid)}")
+            self._write("")
+            if reconciliation:
+                self._write(f"planned={reconciliation.get('planned', 0)}")
+                self._write(f"executed={reconciliation.get('actual', reconciliation.get('planned', 0))}")
+                if reconciliation.get("planned"):
+                    self._write(f"execution_ratio={reconciliation.get('execution_ratio_pct', 0)}%")
+                self._write(f"execution_status={reconciliation.get('execution_status', 'full')}")
+                self._write(f"execution_reason={reconciliation.get('execution_reason', 'completed')}")
+                self._write("")
+            else:
+                self._write("Completed")
             for label, value in traffic_lines_for_scenario(sid, metrics):
                 self._write(f"  {label}={value}")
             for key in (
