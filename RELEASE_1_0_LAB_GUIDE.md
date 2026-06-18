@@ -6,6 +6,8 @@
 
 This guide describes **what DSP produces** and **how to inspect it**. It does **not** claim detection success, alert creation, or case validation. External SIEM/XDR review is a separate manual step outside DSP Release 1.0.
 
+**Release 1.0 validation status:** Local, JSP, and PHP providers validated in real lab environment. ASPX contract exists but real Windows IIS execution is **not validated** — treat ASPX as preview only. See [Release 1.0 Summary](./RELEASE_1_0_SUMMARY.md).
+
 ---
 
 ## 1. Prerequisites
@@ -39,7 +41,8 @@ mkdir -p "$DSP_RUNS_DIR"
 |------|--------------|
 | **Local dry-run** | DSP host only — no network targets required |
 | **Local live** | Reachable targets within `--target-net` CIDR |
-| **Webshell remote** | Lab webshell endpoint (JSP / PHP / ASPX) reachable from DSP host; remote host needs only shell access, writable `/tmp`, and scenario tools (`python3`, `curl`, `ssh`/`nc` as required). **No DSP install on the webshell host.** |
+| **Webshell remote (JSP / PHP)** | Validated path — lab webshell endpoint reachable from DSP host; Linux target with writable `/tmp/dsp`; remote CLI scenarios need `dsp-remote-scenario` on target. See [`docs/validation/JSP_REAL_WEBSHELL_VALIDATION_REPORT.md`](docs/validation/JSP_REAL_WEBSHELL_VALIDATION_REPORT.md) and [`docs/validation/PHP_REAL_WEBSHELL_VALIDATION_REPORT.md`](docs/validation/PHP_REAL_WEBSHELL_VALIDATION_REPORT.md). |
+| **Webshell remote (ASPX)** | **Not validated** — preview only; Windows IIS + platform dispatch not validated. Do not use for Release 1.0 sign-off. See [`docs/validation/ASPX_REAL_WEBSHELL_VALIDATION_REPORT.md`](docs/validation/ASPX_REAL_WEBSHELL_VALIDATION_REPORT.md). |
 
 Record for each session: operator name, date, DSP version (`dsp --version`), run ID, scenario ID, execution mode.
 
@@ -162,7 +165,7 @@ Webshell execution is available via the operational lab runner (§2.5) or Python
 
 | Setting | Example |
 |---------|---------|
-| `webshell_family` | `jsp`, `php`, or `aspx` |
+| `webshell_family` | `jsp` or `php` (validated); `aspx` preview only |
 | `webshell_url` | `https://lab-victim.example/shell.jsp` |
 | `run_id` | Stable ID shared with local Event Store and remote bundle |
 | `remote_bundle_path` | `/tmp/dsp/<run_id>/events.jsonl` (lab convention) |

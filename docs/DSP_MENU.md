@@ -65,6 +65,16 @@ REMOTE_WORK_DIR=/tmp/dsp
 - **PROFILE**: `low`, `normal`, or `high`
 - Webshell fields are prompted when mode is `webshell`
 
+### Webshell validation status (Release 1.0)
+
+| Family | Status |
+|--------|--------|
+| `jsp` | Validated — real Tomcat lab path |
+| `php` | Validated — real Apache + PHP lab path |
+| `aspx` | Preview only — not validated on Windows IIS; use for experimentation only |
+
+When configuring webshell mode, prefer **jsp** or **php** for validated remote execution. See [Release 1.0 Summary](../RELEASE_1_0_SUMMARY.md).
+
 ## Run commands (equivalent)
 
 **Local** (from config):

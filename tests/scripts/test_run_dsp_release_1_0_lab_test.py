@@ -115,7 +115,8 @@ def test_local_mode_passes_traffic_profile(tmp_path: Path) -> None:
         str(output_dir),
         check=True,
     )
-    assert "traffic_profile=balanced" in result.stdout
+    # v1.3.0+ maps legacy alias "balanced" → "normal".
+    assert "traffic_profile=normal" in result.stdout
     assert "scenario=dummy" in result.stdout
 
 

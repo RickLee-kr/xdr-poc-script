@@ -3,3 +3,19 @@
 __pycache__/
 *.pyc
 *.egg-info/
+
+# Local lab run artifacts (not versioned; see docs/validation/ for reports)
+lab/
+
+# Editor / agent workspace
+.cursor/
+
+# Working audit drafts (final reports live under docs/validation/)
+Host_Behavior_Check_Integration_Report.md
+Cursor-DSP-GUARDRAIL.md.txt
+docs/ASPX_RUNTIME_AUDIT.md
+docs/JSP_RUNTIME_AUDIT.md
+docs/PHP_RUNTIME_AUDIT.md
+docs/DSP_PACKAGING_AUDIT.md
+docs/DSP_PACKAGING_DISTRIBUTION_UX_REPORT.md
+docs/README_UX_AUDIT.md

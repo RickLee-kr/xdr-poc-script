@@ -1,3 +1,67 @@
+# DSP v1.4.0 Release Notes
+
+**Version:** 1.4.0  
+**Date:** 2026-06-18 (UTC)  
+**Branch:** `release/v1.4.0-rc`  
+**Package:** `detection-scenario-platform` (`dsp`)
+
+---
+
+## Summary
+
+DSP v1.4.0 completes Release 1.0 readiness documentation aligned with real-environment webshell validation. **Release recommendation: READY WITH KNOWN LIMITATIONS.**
+
+Validated providers: **Local**, **JSP**, **PHP**. ASPX remains preview — contract and transport exist, but real Windows IIS execution has not been validated.
+
+---
+
+### Release 1.0 Status
+
+| Area | Status |
+|------|--------|
+| Release scope (4 criteria) | Met via JSP + PHP real validation |
+| Local Provider | Validated |
+| JSP Webshell | Validated |
+| PHP Webshell | Validated |
+| ASPX Webshell | Not validated (preview) |
+
+---
+
+### Validation Milestone
+
+- Real Tomcat + JSP validation completed — 10/10 scenarios on `victim-linux` ([`docs/validation/JSP_REAL_WEBSHELL_VALIDATION_REPORT.md`](docs/validation/JSP_REAL_WEBSHELL_VALIDATION_REPORT.md))
+- Real Apache + PHP validation completed — 10/10 scenarios on `victim-linux` ([`docs/validation/PHP_REAL_WEBSHELL_VALIDATION_REPORT.md`](docs/validation/PHP_REAL_WEBSHELL_VALIDATION_REPORT.md))
+- Host Behavior Check validation completed — full EDR lifecycle events on JSP and PHP
+- Release 1.0 scope validated: remote execution, bundle collection, evidence export, manual verification workflow
+
+---
+
+### Known limitations (v1.4.0)
+
+| Limitation | Detail |
+|------------|--------|
+| **ASPX runtime validation pending** | No reachable IIS/`shell.aspx` endpoint in lab; 0/10 real E2E scenarios |
+| **Windows webshell execution path pending** | Bundle runner, collector, artifact handling, platform dispatch are Linux-oriented |
+| **ASPX preview status** | Contract and HTTP transport exist; not recommended for production validation until Windows IIS validation completes |
+
+See also: [`docs/validation/ASPX_REAL_WEBSHELL_VALIDATION_REPORT.md`](docs/validation/ASPX_REAL_WEBSHELL_VALIDATION_REPORT.md), [`docs/validation/ASPX_WINDOWS_COMPATIBILITY_AUDIT.md`](docs/validation/ASPX_WINDOWS_COMPATIBILITY_AUDIT.md), [`docs/validation/RELEASE_DOCUMENTATION_AUDIT.md`](docs/validation/RELEASE_DOCUMENTATION_AUDIT.md).
+
+---
+
+### Operator CLI (unchanged from v1.3.0)
+
+```bash
+# Local run
+dsp run --target-net 10.10.10.0/24 --profile normal
+
+# Webshell — validated families: jsp, php
+dsp run --execution-provider webshell --webshell-family jsp \
+  --webshell-url http://10.10.10.20:8080/shell.jsp \
+  --target-net 10.10.10.0/24 --profile normal
+```
+
+---
+
 # DSP v1.3.0 Release Notes
 
 **Version:** 1.3.0  
@@ -77,7 +141,9 @@ See [`docs/dsp-operational-cli-v1.3.0.md`](docs/dsp-operational-cli-v1.3.0.md).
 
 ## Summary
 
-DSP v1.2.0 completes the webshell remote execution path on the standard `dsp run` entry point. Operators can run detection scenarios on a remote host via JSP/PHP/ASPX webshell, collect event bundles, import them into the local Event Store, and receive validation, reporting, and evidence packages — without changing S2 exit codes or requiring Stellar API integration.
+DSP v1.2.0 completes the webshell remote execution path on the standard `dsp run` entry point. Operators can run detection scenarios on a remote host via JSP/PHP/ASPX webshell (CLI supports all three families), collect event bundles, import them into the local Event Store, and receive validation, reporting, and evidence packages — without changing S2 exit codes or requiring Stellar API integration.
+
+> **Note (v1.4.0):** Real runtime validation completed for **JSP** and **PHP** only. **ASPX** remains preview until Windows IIS validation completes. See v1.4.0 release notes above.
 
 Live lab validation on `victim-linux` (`10.10.10.20`) confirmed real DNS, HTTP, and TCP traffic generation plus evidence export for the webshell path. See [`docs/remote-live-traffic-validation-report.md`](docs/remote-live-traffic-validation-report.md).
 

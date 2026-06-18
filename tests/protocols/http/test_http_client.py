@@ -91,4 +91,5 @@ def test_send_request_http_does_not_pass_ssl_context():
     assert result.outcome == "response"
     assert result.status_code == 302
     _, kwargs = opener.open.call_args
-    assert "context" not in kwargs
+    # HTTP URLs must not pass an SSL context (None is acceptable).
+    assert kwargs.get("context") is None
