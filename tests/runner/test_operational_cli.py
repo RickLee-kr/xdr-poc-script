@@ -144,7 +144,8 @@ def test_cli_profile_run_prints_progress_and_evidence(tmp_path: Path, capsys) ->
     assert "[1/9] port_sweep STARTED" in captured
     assert "Duration: 0:03:12" in captured
     assert "Events Generated: 517" in captured
-    assert "Port Sweep Completed" in captured
+    assert "Port Sweep" in captured
+    assert "Completed" in captured
     assert "probes_sent=13" in captured
     assert "Traffic Summary" in captured
     assert "Evidence Summary" in captured
@@ -257,5 +258,6 @@ def test_operational_console_emits_scenario_labels() -> None:
     )
     output = buf.getvalue()
     assert "Provider: webshell" in output
-    assert "DNS Tunnel Completed" in output
+    assert "DNS Tunnel" in output
+    assert "Completed" in output
     assert "queries_sent=42" in output

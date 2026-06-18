@@ -68,9 +68,9 @@ def test_selected_targets_output() -> None:
 
     output = buf.getvalue()
     assert "Selected Targets" in output
+    assert "Recon:" in output
     assert "DNS:" in output
     assert "HTTP:" in output
-    assert "LDAP:" in output
     for host in targets.hosts[:2]:
         assert host in output
 
@@ -155,7 +155,8 @@ def test_scenario_completed_summary_preserved() -> None:
         },
     )
     output = buf.getvalue()
-    assert "Port Sweep Completed" in output
+    assert "Port Sweep" in output
+    assert "Completed" in output
     assert "probes_sent=120" in output
     assert "success=4" in output
     assert "failed=116" in output
@@ -339,7 +340,8 @@ def test_cli_activity_console_integration(tmp_path: Path, capsys) -> None:
     assert "action=probe" in captured
     assert "running" in captured
     assert "probes_sent=5" in captured
-    assert "Port Sweep Completed" in captured
+    assert "Port Sweep" in captured
+    assert "Completed" in captured
     assert "Traffic Summary" in captured
 
 

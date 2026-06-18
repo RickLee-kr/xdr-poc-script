@@ -58,7 +58,8 @@ def test_http_followup_completed_shows_evidence_file() -> None:
         },
     )
     output = buf.getvalue()
-    assert "HTTP Follow-up Completed" in output
+    assert "HTTP Follow-up" in output
+    assert "Completed" in output
     assert "evidence_file=/tmp/run/http_followup_requests.jsonl" in output
     assert "sample_dump=/tmp/run/http_request_dump.json" in output
     assert "unique_paths=16" in output

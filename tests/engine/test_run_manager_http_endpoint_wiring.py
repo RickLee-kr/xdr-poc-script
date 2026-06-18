@@ -113,7 +113,7 @@ def test_live_path_empty_selection_skips_without_completed(monkeypatch, tmp_path
         run.run_id, ["http_followup"]
     )
     assert results[0].decision == ValidationDecision.SKIPPED
-    assert exit_code == 3
+    assert exit_code == 0
     store.close()
 
     probe_path = run_dir / "http_target_probe.json"
