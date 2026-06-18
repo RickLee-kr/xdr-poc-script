@@ -2,7 +2,7 @@
 # Bootstrap installer — clone/update DSP, create venv, install package, launch menu.
 set -euo pipefail
 
-RELEASE_BRANCH="${DSP_RELEASE_BRANCH:-release/v1.4.0-rc}"
+RELEASE_BRANCH="${DSP_RELEASE_BRANCH:-release/v1.4.0}"
 REPO_URL="${DSP_REPO_URL:-https://github.com/RickLee-kr/xdr-poc-script.git}"
 DSP_REPO_DIR="${DSP_REPO_DIR:-/home/aella/xdr-poc-script}"
 DSP_NO_LAUNCH="${DSP_NO_LAUNCH:-0}"

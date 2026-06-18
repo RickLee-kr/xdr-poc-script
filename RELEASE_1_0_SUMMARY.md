@@ -1,6 +1,6 @@
 # DSP Release 1.0 Summary
 
-**Version:** 1.0.0 (package `1.4.0` on branch `release/v1.4.0-rc`)  
+**Version:** 1.0.0 (package **v1.4.0**, tag `v1.4.0`)  
 **Status:** **READY WITH KNOWN LIMITATIONS** — core platform, JSP/PHP webshell validation, evidence packaging, E2E harness
 
 ---

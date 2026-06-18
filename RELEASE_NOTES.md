@@ -2,7 +2,8 @@
 
 **Version:** 1.4.0  
 **Date:** 2026-06-18 (UTC)  
-**Branch:** `release/v1.4.0-rc`  
+**Tag:** `v1.4.0`  
+**Release branch:** `release/v1.4.0`  
 **Package:** `detection-scenario-platform` (`dsp`)
 
 ---

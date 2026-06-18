@@ -8,7 +8,7 @@ DEFAULT_REPO_DIR="${SCRIPT_DIR}"
 CONFIG_DIR="${HOME}/.dsp"
 CONFIG_FILE="${CONFIG_DIR}/config.env"
 RUNS_DIR="${HOME}/.dsp/runs"
-RELEASE_BRANCH="release/v1.4.0-rc"
+RELEASE_BRANCH="release/v1.4.0"
 
 # shellcheck disable=SC2034
 MENU_ITEMS=(
