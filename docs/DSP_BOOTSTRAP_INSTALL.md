@@ -5,13 +5,13 @@ One-command install/update for a new host. Clones or updates the repository, cre
 ## One-line install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.0/install-dsp.sh | bash
+curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.1/install-dsp.sh | bash
 ```
 
 Alternative:
 
 ```bash
-wget -O install-dsp.sh https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.0/install-dsp.sh
+wget -O install-dsp.sh https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.1/install-dsp.sh
 bash install-dsp.sh
 ```
 
@@ -19,7 +19,7 @@ bash install-dsp.sh
 
 1. Checks **git**, **python3**, **python3 venv** (`import venv`), and **pip** (or `ensurepip`)
 2. Ensures `~/.dsp/` exists (does **not** overwrite `~/.dsp/config.env` if present)
-3. Clones or updates `release/v1.4.0` into the install directory
+3. Clones or updates `release/v1.4.0` into the install directory (**sparse runtime checkout by default** — only `dsp/`, `scenarios/`, `scripts/`, operator docs, and install scripts)
 4. Creates `.venv` if missing
 5. Runs `pip install -e .` in the venv
 6. Makes `dsp-menu.sh` executable
@@ -35,6 +35,33 @@ Existing run artifacts under `~/.dsp/runs/` are never deleted.
 | `DSP_RELEASE_BRANCH` | `release/v1.4.0` |
 | `DSP_REPO_URL` | `https://github.com/RickLee-kr/xdr-poc-script.git` |
 | `DSP_NO_LAUNCH` | `0` (launch menu after install) |
+| `DSP_FULL_CLONE` | `0` (use sparse runtime checkout; set `1` for full developer clone) |
+
+## Sparse runtime install (default)
+
+By default the installer uses **git sparse-checkout** so operators receive only runtime files:
+
+- Included: `dsp/`, `scenarios/`, `scripts/`, `pyproject.toml`, `README.md`, `install-dsp.sh`, `dsp-menu.sh`, `docs/DSP_MENU.md`, `docs/DSP_BOOTSTRAP_INSTALL.md`, optional `RELEASE_NOTES.md` and `RELEASE_1_0_LAB_GUIDE.md`
+- Excluded: `tests/`, `lab/`, root `*_SPEC.md` / `ARCHITECTURE_*` / `PHASE_*`, `docs/validation/`, `docs/archive/`, `.cursor/`, and other dev-only paths
+
+Menu **Update latest patch** keeps sparse checkout when the install was sparse.
+
+### Full clone (developers)
+
+```bash
+DSP_FULL_CLONE=1 bash install-dsp.sh
+```
+
+### Existing full clone installs
+
+If you installed before sparse checkout, extra dev files are **not** removed automatically. To switch to a minimal runtime tree:
+
+```bash
+rm -rf /path/to/xdr-poc-script
+DSP_NO_LAUNCH=1 bash install-dsp.sh
+```
+
+If sparse checkout is unavailable (old git), the installer falls back to a full clone.
 
 ## Custom install path
 
@@ -55,7 +82,7 @@ Useful for CI, smoke checks, or rerunning the installer safely.
 The script is **idempotent**. Run the same one-liner again to `git pull` and reinstall the package:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.0/install-dsp.sh | bash
+curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.1/install-dsp.sh | bash
 ```
 
 Or from an existing clone:

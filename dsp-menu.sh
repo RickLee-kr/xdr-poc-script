@@ -4,6 +4,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_REPO_DIR="${SCRIPT_DIR}"
+SPARSE_HELPER="${SCRIPT_DIR}/scripts/dsp-runtime-sparse.sh"
 
 CONFIG_DIR="${HOME}/.dsp"
 CONFIG_FILE="${CONFIG_DIR}/config.env"
@@ -185,6 +186,21 @@ do_update() {
     git fetch origin
     git checkout "$RELEASE_BRANCH"
     git pull origin "$RELEASE_BRANCH"
+    if [[ -f "$SPARSE_HELPER" ]]; then
+      # shellcheck disable=SC1090
+      source "$SPARSE_HELPER"
+      if dsp_repo_is_sparse "$DSP_REPO_DIR"; then
+        dsp_apply_sparse_checkout "$DSP_REPO_DIR"
+        printf '\nSparse runtime checkout maintained.\n'
+        printf 'Install type: sparse\n'
+      else
+        printf '\nInstall type: full\n'
+        dsp_full_clone_notice "$DSP_REPO_DIR"
+        printf '\nTo switch to sparse runtime install, clean reinstall:\n'
+        printf '  rm -rf "%s"\n' "$DSP_REPO_DIR"
+        printf '  DSP_NO_LAUNCH=1 bash install-dsp.sh\n'
+      fi
+    fi
     printf '\nUpdate complete.\n'
     git log -1 --oneline
   } >"$log" 2>&1 || true
@@ -437,6 +453,11 @@ do_show_status() {
     if [[ -d "${DSP_REPO_DIR}/.git" ]]; then
       cd "$DSP_REPO_DIR"
       printf 'Repo: %s\n' "$DSP_REPO_DIR"
+      if [[ -f "$SPARSE_HELPER" ]]; then
+        # shellcheck disable=SC1090
+        source "$SPARSE_HELPER"
+        printf 'Install type: %s\n' "$(dsp_repo_install_type "$DSP_REPO_DIR")"
+      fi
       git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD
       git log -1 --oneline 2>/dev/null || true
       printf '\nStatus:\n'

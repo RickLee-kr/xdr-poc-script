@@ -2,7 +2,7 @@
 
 Generate realistic security traffic for XDR, SIEM, EDR, and lab validation.
 
-**Release 1.4.0** — Generate realistic security-scenario traffic, collect structured events, and produce validation reports for lab and XDR testing.
+**Release 1.4.1** — Generate realistic security-scenario traffic, collect structured events, and produce validation reports for lab and XDR testing.
 
 DSP runs attack-simulation scenarios (port sweep, DNS tunnel, HTTP follow-up, SQL injection, SSH failure, and more) against a target network you define. Results land in a local run folder as events, reports, and evidence you can review or export.
 
@@ -13,7 +13,7 @@ DSP runs attack-simulation scenarios (port sweep, DNS tunnel, HTTP follow-up, SQ
 **One command** — clone, install, and open the operator menu:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.0/install-dsp.sh | bash
+curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.1/install-dsp.sh | bash
 ```
 
 Then in the menu:
@@ -28,7 +28,10 @@ Then in the menu:
 **Config:** `~/.dsp/config.env`
 
 Install only (no menu): `DSP_NO_LAUNCH=1 bash install-dsp.sh`  
-Custom path: `DSP_REPO_DIR=/opt/xdr-poc-script bash install-dsp.sh`
+Custom path: `DSP_REPO_DIR=/opt/xdr-poc-script bash install-dsp.sh`  
+Full developer clone: `DSP_FULL_CLONE=1 bash install-dsp.sh`
+
+By default the installer uses **git sparse-checkout** — only runtime files (`dsp/`, `scenarios/`, `scripts/`, operator docs) land in the install directory, not `tests/`, specs, or validation docs. See [Bootstrap install](./docs/DSP_BOOTSTRAP_INSTALL.md).
 
 ---
 
@@ -52,7 +55,7 @@ DSP validates **traffic and event generation**, not vendor alert firing.
 Run this **once** on a new machine. It clones or updates the repo, creates `.venv`, installs DSP, and opens the menu.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.0/install-dsp.sh | bash
+curl -fsSL https://raw.githubusercontent.com/RickLee-kr/xdr-poc-script/v1.4.1/install-dsp.sh | bash
 ```
 
 Install only (no menu): `DSP_NO_LAUNCH=1 bash install-dsp.sh`
@@ -71,7 +74,7 @@ cd /path/to/xdr-poc-script
 | **Configure environment** | Target network (CIDR), profile, local vs webshell, webshell URL |
 | **Run scenario** | Execute using saved settings |
 | **Show latest report** | Open the most recent run under `~/.dsp/runs/` |
-| **Update latest patch** | Pull `release/v1.4.0` |
+| **Update latest patch** | Pull `release/v1.4.0` (maintains sparse checkout when applicable) |
 | **Show version/status** | Git state, `dsp --version`, current config |
 
 **Config file:** `~/.dsp/config.env`  

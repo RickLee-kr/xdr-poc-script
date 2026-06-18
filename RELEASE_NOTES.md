@@ -1,3 +1,26 @@
+# DSP v1.4.1 Release Notes
+
+**Version:** 1.4.1  
+**Date:** 2026-06-18 (UTC)  
+**Tag:** `v1.4.1`  
+**Release branch:** `release/v1.4.0`  
+**Package:** `detection-scenario-platform` (`dsp`)
+
+---
+
+## Summary
+
+DSP v1.4.1 is a **patch release** for install/update UX only. Default bootstrap install and menu update now use **git sparse-checkout** so operators receive runtime files only (`dsp/`, `scenarios/`, `scripts/`, operator docs) — not `tests/`, dev specs, or validation archives.
+
+- **No DSP runtime, scenario, or detection logic changes**
+- Full developer clone: `DSP_FULL_CLONE=1`
+- Existing full-clone installs are not auto-pruned; clean reinstall instructions are printed
+- Install URL: `v1.4.1` tag (v1.4.0 tag unchanged)
+
+See [`docs/validation/DSP_SPARSE_INSTALL_UX_REPORT.md`](docs/validation/DSP_SPARSE_INSTALL_UX_REPORT.md).
+
+---
+
 # DSP v1.4.0 Release Notes
 
 **Version:** 1.4.0  
