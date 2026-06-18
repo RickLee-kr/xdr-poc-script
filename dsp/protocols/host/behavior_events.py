@@ -12,6 +12,21 @@ HOST_BEHAVIOR_COMMAND_DISPATCHED = "host_behavior_command_dispatched"
 EICAR_FILE_CREATED = "eicar_file_created"
 EICAR_FILE_ACCESSED = "eicar_file_accessed"
 EICAR_FILE_DELETED = "eicar_file_deleted"
+EICAR_VARIANT_CREATED = "eicar_variant_created"
+EICAR_VARIANT_ACCESSED = "eicar_variant_accessed"
+EICAR_VARIANT_DELETED = "eicar_variant_deleted"
+CREDENTIAL_ARTIFACT_ENUMERATION = "credential_artifact_enumeration"
+SSH_KEY_ENUMERATION = "ssh_key_enumeration"
+PEM_FILE_ENUMERATION = "pem_file_enumeration"
+SUSPICIOUS_SCRIPT_CREATED = "suspicious_script_created"
+SUSPICIOUS_SCRIPT_ACCESSED = "suspicious_script_accessed"
+SUSPICIOUS_SCRIPT_DELETED = "suspicious_script_deleted"
+PERSISTENCE_ARTIFACT_CREATED = "persistence_artifact_created"
+PERSISTENCE_ARTIFACT_ACCESSED = "persistence_artifact_accessed"
+PERSISTENCE_ARTIFACT_DELETED = "persistence_artifact_deleted"
+ARCHIVE_CREATED = "archive_created"
+ARCHIVE_ACCESSED = "archive_accessed"
+ARCHIVE_DELETED = "archive_deleted"
 HOST_BEHAVIOR_CHECK_COMPLETED = "host_behavior_check_completed"
 
 HOST_BEHAVIOR_TRAFFIC_EVENTS = frozenset(
@@ -20,6 +35,21 @@ HOST_BEHAVIOR_TRAFFIC_EVENTS = frozenset(
         EICAR_FILE_CREATED,
         EICAR_FILE_ACCESSED,
         EICAR_FILE_DELETED,
+        EICAR_VARIANT_CREATED,
+        EICAR_VARIANT_ACCESSED,
+        EICAR_VARIANT_DELETED,
+        CREDENTIAL_ARTIFACT_ENUMERATION,
+        SSH_KEY_ENUMERATION,
+        PEM_FILE_ENUMERATION,
+        SUSPICIOUS_SCRIPT_CREATED,
+        SUSPICIOUS_SCRIPT_ACCESSED,
+        SUSPICIOUS_SCRIPT_DELETED,
+        PERSISTENCE_ARTIFACT_CREATED,
+        PERSISTENCE_ARTIFACT_ACCESSED,
+        PERSISTENCE_ARTIFACT_DELETED,
+        ARCHIVE_CREATED,
+        ARCHIVE_ACCESSED,
+        ARCHIVE_DELETED,
     }
 )
 
@@ -93,6 +123,28 @@ def build_host_behavior_command_dispatched_event(
     )
 
 
+def build_lifecycle_event(
+    *,
+    run_id: str,
+    scenario_id: str,
+    target: str,
+    source: str,
+    event: str,
+    artifact: str,
+    evidence: dict[str, Any] | None = None,
+) -> Event:
+    return _event(
+        run_id=run_id,
+        scenario_id=scenario_id,
+        event=event,
+        status="info",
+        target=target,
+        source=source,
+        artifact=artifact,
+        evidence=evidence,
+    )
+
+
 def build_eicar_file_created_event(
     *,
     run_id: str,
@@ -101,13 +153,12 @@ def build_eicar_file_created_event(
     source: str,
     path: str,
 ) -> Event:
-    return _event(
+    return build_lifecycle_event(
         run_id=run_id,
         scenario_id=scenario_id,
-        event=EICAR_FILE_CREATED,
-        status="info",
         target=target,
         source=source,
+        event=EICAR_FILE_CREATED,
         artifact=path,
         evidence={"path": path},
     )
@@ -121,13 +172,12 @@ def build_eicar_file_accessed_event(
     source: str,
     path: str,
 ) -> Event:
-    return _event(
+    return build_lifecycle_event(
         run_id=run_id,
         scenario_id=scenario_id,
-        event=EICAR_FILE_ACCESSED,
-        status="info",
         target=target,
         source=source,
+        event=EICAR_FILE_ACCESSED,
         artifact=path,
         evidence={"path": path},
     )
@@ -141,13 +191,12 @@ def build_eicar_file_deleted_event(
     source: str,
     path: str,
 ) -> Event:
-    return _event(
+    return build_lifecycle_event(
         run_id=run_id,
         scenario_id=scenario_id,
-        event=EICAR_FILE_DELETED,
-        status="info",
         target=target,
         source=source,
+        event=EICAR_FILE_DELETED,
         artifact=path,
         evidence={"path": path},
     )
