@@ -127,5 +127,5 @@ def test_runner_exit_from_validation():
         reason="SOT_EMPTY", metrics={},
     )
     assert compute_exit_code([success]) == 0
-    assert compute_exit_code([failed]) == 1
+    assert compute_exit_code([failed]) == 0
     assert compute_exit_code([code_fail]) == 2

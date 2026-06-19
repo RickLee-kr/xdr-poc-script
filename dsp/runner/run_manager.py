@@ -183,25 +183,34 @@ def generate_run_id() -> str:
 
 
 def compute_exit_code(results: list) -> int:
-    """Exit code derived from ValidationResult only."""
+    """Exit code for operational run completion.
+
+    Process exit reflects execution success (traffic generated, evidence written),
+    not S2 validation thresholds. PARTIAL, FAILED, and SKIPPED are recorded in
+    validation.json but do not fail the run. CODE_FAILURE indicates an
+    implementation or execution integrity error.
+    """
     if not results:
-        return 3
-    decisions = [r.decision for r in results]
-    if all(d == ValidationDecision.SUCCESS for d in decisions):
-        return 0
-    if all(
-        d in (ValidationDecision.SUCCESS, ValidationDecision.SKIPPED) for d in decisions
-    ) and any(d == ValidationDecision.SUCCESS for d in decisions):
-        return 0
-    if any(d == ValidationDecision.CODE_FAILURE for d in decisions):
+        return 1
+    if any(r.decision == ValidationDecision.CODE_FAILURE for r in results):
         return 2
-    if any(d == ValidationDecision.FAILED for d in decisions):
-        return 1
-    if all(d == ValidationDecision.SKIPPED for d in decisions):
-        return 3
-    if any(d == ValidationDecision.PARTIAL for d in decisions):
-        return 1
-    return 1
+    return 0
+
+
+def format_validation_warnings(results: list) -> list[str]:
+    """Build console warning lines for non-success validation outcomes."""
+    lines: list[str] = []
+    for result in results:
+        if result.decision in (ValidationDecision.SUCCESS, ValidationDecision.CODE_FAILURE):
+            continue
+        if result.decision in (ValidationDecision.FAILED, ValidationDecision.PARTIAL):
+            label = "Validation Warning"
+        else:
+            label = "Validation Note"
+        lines.append(
+            f"{label}: {result.scenario_id} → {result.decision.value} ({result.reason})"
+        )
+    return lines
 
 
 class RunManager:
@@ -243,7 +252,7 @@ class RunManager:
                 dry_run=dry_run,
                 requested_scenarios=scenario_ids,
             )
-            return run, self.runs_dir, 3
+            return run, self.runs_dir, 1
 
         if execution_provider == "webshell":
             missing = []
@@ -261,7 +270,7 @@ class RunManager:
                     dry_run=dry_run,
                     requested_scenarios=scenario_ids,
                 )
-                return run, self.runs_dir, 3
+                return run, self.runs_dir, 1
 
         active = set(self.registry.active_ids())
         if not scenario_ids:
@@ -273,7 +282,7 @@ class RunManager:
                 target_net=target_net,
                 dry_run=dry_run,
             )
-            return run, self.runs_dir, 3
+            return run, self.runs_dir, 1
 
         for sid in scenario_ids:
             record = self.registry.get(sid)
@@ -285,7 +294,7 @@ class RunManager:
                     dry_run=dry_run,
                     requested_scenarios=scenario_ids,
                 )
-                return run, self.runs_dir, 3
+                return run, self.runs_dir, 1
             if record.status == PluginStatus.DISABLED:
                 run = Run(
                     run_id=generate_run_id(),
@@ -294,7 +303,7 @@ class RunManager:
                     dry_run=dry_run,
                     requested_scenarios=scenario_ids,
                 )
-                return run, self.runs_dir, 3
+                return run, self.runs_dir, 1
             if not record.is_runnable:
                 run = Run(
                     run_id=generate_run_id(),
@@ -303,7 +312,7 @@ class RunManager:
                     dry_run=dry_run,
                     requested_scenarios=scenario_ids,
                 )
-                return run, self.runs_dir, 3
+                return run, self.runs_dir, 1
 
         if confirm_detection:
             try:
@@ -319,7 +328,7 @@ class RunManager:
                     dry_run=dry_run,
                     requested_scenarios=scenario_ids,
                 )
-                return run, self.runs_dir, 2
+                return run, self.runs_dir, 1
 
         run_id = generate_run_id()
         run_dir = self.runs_dir / run_id
@@ -659,6 +668,7 @@ class RunManager:
                     "event_count": event_count,
                     "summaries": summaries,
                     "run_dir": str(run_dir),
+                    "validation_warnings": format_validation_warnings(results),
                 },
             )
         store.close()

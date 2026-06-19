@@ -117,6 +117,10 @@ class OperationalConsole:
             self._write(f"Duration: {format_duration(duration)}")
             self._write(f"Events Generated: {events}")
             self._write("")
+            for warning in data.get("validation_warnings") or []:
+                self._write(warning)
+            if data.get("validation_warnings"):
+                self._write("")
 
     def print_traffic_summary(self) -> None:
         """Print aggregated per-scenario traffic counters."""

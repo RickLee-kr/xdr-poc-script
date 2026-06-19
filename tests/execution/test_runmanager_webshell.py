@@ -88,4 +88,4 @@ def test_run_manager_webshell_requires_webshell_config(tmp_runs_dir: Path) -> No
     )
 
     assert run.status.value == "config_error"
-    assert exit_code == 3
+    assert exit_code == 1

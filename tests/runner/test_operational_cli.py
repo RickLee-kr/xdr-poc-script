@@ -191,7 +191,7 @@ def test_cli_high_large_target_blocked(capsys) -> None:
         ]
     )
     captured = capsys.readouterr()
-    assert exit_code == 3
+    assert exit_code == 1
     assert "ERROR:" in captured.err
     assert LARGE_TARGET_ERROR in captured.err
 

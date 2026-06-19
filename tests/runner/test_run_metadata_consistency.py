@@ -96,7 +96,7 @@ def test_validation_failure_metadata_still_consistent(tmp_runs_dir, monkeypatch)
         dry_run=True,
     )
 
-    assert exit_code == 1
+    assert exit_code == 0
     assert run.status.value == "completed"
     assert run.ended_at is not None
 

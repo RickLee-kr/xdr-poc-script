@@ -147,5 +147,5 @@ def test_unsupported_stellar_client_mode_fails_cleanly(tmp_runs_dir):
         confirm_detection=True,
         stellar_client="splunk",
     )
-    assert exit_code == 2
+    assert exit_code == 1
     assert run.status.value == "config_error"

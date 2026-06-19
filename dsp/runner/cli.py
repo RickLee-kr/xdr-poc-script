@@ -219,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         except ValueError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
-            return 3
+            return 1
 
         console = OperationalConsole(
             provider=args.execution_provider,

@@ -69,7 +69,7 @@ def test_unsupported_provider_fails_cleanly(tmp_runs_dir):
         detection_provider="splunk",
     )
 
-    assert exit_code == 2
+    assert exit_code == 1
     assert run.status.value == "config_error"
     assert not (run_dir / "events.db").exists()
 
@@ -96,7 +96,7 @@ def test_s2_failure_produces_s3_inconclusive(tmp_runs_dir, monkeypatch):
         confirm_detection=True,
     )
 
-    assert exit_code == 1
+    assert exit_code == 0
 
     validation = json.loads((run_dir / "validation.json").read_text())
     assert validation["results"][0]["decision"] == "failed"
@@ -122,7 +122,7 @@ def test_validation_result_unchanged_by_s3(tmp_runs_dir):
     assert result["metrics"]["synthetic_action_count"] >= 3
 
 
-def test_exit_code_remains_s2_based(tmp_runs_dir, monkeypatch):
+def test_exit_code_ignores_s2_threshold_failures(tmp_runs_dir, monkeypatch):
     def mock_validate_run(self, run_id, scenario_ids):
         return [
             ValidationResult(
@@ -144,7 +144,7 @@ def test_exit_code_remains_s2_based(tmp_runs_dir, monkeypatch):
         confirm_detection=True,
     )
 
-    assert exit_code == 1
+    assert exit_code == 0
 
 
 def test_cli_without_confirm_detection(tmp_runs_dir):
@@ -191,4 +191,4 @@ def test_cli_unsupported_provider(tmp_runs_dir):
             "splunk",
         ],
     )
-    assert exit_code == 2
+    assert exit_code == 1
