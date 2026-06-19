@@ -206,8 +206,7 @@ configure_whiptail() {
 
 Examples:
   10.10.10.0/24     (lab subnet)
-  192.168.56.0/24
-  127.0.0.0/30      (local loopback test)" \
+  192.168.56.0/24" \
     14 78 "$TARGET_NET" 3>&1 1>&2 2>&3)" || return 1
   TARGET_NET="${value//$'\n'/}"
 
