@@ -329,11 +329,37 @@ class WebshellTestServer:
 
         if self.script_stdout_mode == "command_timeout":
             return self._format_command_output(b"command timeout")
+        if self.script_stdout_mode == "command_timeout_partial":
+            return self._format_command_output(self._partial_timeout_output(local_script))
         if self.script_stdout_mode == "empty":
             return self._format_command_output(b"")
         if self.script_stdout_mode == "truncated":
             return self._format_command_output(b"partial output\n")
         return combined.encode()
+
+    def _partial_timeout_output(self, local_script: Path) -> bytes:
+        summary_path = local_script.parent / "traffic_summary.json"
+        if summary_path.is_file():
+            summary_path.unlink()
+        manifest_path = local_script.parent / "manifest.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            paths = manifest.get("paths") or {}
+            work_dir = str(paths.get("work_dir") or "")
+            bundle_path = str(paths.get("bundle") or "")
+            summary_remote = str(paths.get("traffic_summary") or "")
+            if summary_remote in self._files:
+                del self._files[summary_remote]
+            local_bundle = local_script.parent / "events.jsonl"
+            if local_bundle.is_file() and bundle_path:
+                self._files[bundle_path] = local_bundle.read_bytes()
+            status_path = local_script.parent / "remote_status.json"
+            if status_path.is_file() and work_dir:
+                self._write_remote_file(
+                    f"{work_dir.rstrip('/')}/remote_status.json",
+                    status_path.read_bytes(),
+                )
+        return b"command timeout"
 
     def _read_remote_file(self, remote_path: str) -> bytes | None:
         if remote_path in self._files:

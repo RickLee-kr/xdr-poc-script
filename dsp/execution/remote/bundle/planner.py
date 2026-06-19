@@ -9,6 +9,10 @@ from dsp import EVENT_SCHEMA_VERSION
 from dsp.engine.host_selection import resolve_http_endpoint_selection, select_hosts_for_capability
 from dsp.engine.scenario_engine import TargetSet
 from dsp.execution.remote.bundle.models import BUNDLE_SCENARIOS, RemoteScenarioSkip
+from dsp.execution.remote.bundle.timeout import (
+    apply_remote_execution_budget,
+    compute_bundle_execution_timeout_seconds,
+)
 from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.execution.remote.paths import resolve_remote_bundle_path
 from dsp.plugins.models import PluginRecord
@@ -72,6 +76,10 @@ def build_manifest(
         },
         "plan": _build_plan(request, targets),
     }
+    manifest["plan"] = apply_remote_execution_budget(manifest["plan"])
+    manifest["execution_timeout_seconds"] = compute_bundle_execution_timeout_seconds(
+        manifest
+    )
     return manifest
 
 

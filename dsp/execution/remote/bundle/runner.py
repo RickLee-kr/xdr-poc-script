@@ -12,6 +12,7 @@ from dsp.execution.providers.runtime.command import CommandRequest, CommandResul
 from dsp.execution.remote.bundle.models import BUNDLE_SCENARIOS
 from dsp.execution.remote.bundle.packager import pack_scenario_bundle
 from dsp.execution.remote.bundle.planner import build_manifest
+from dsp.execution.remote.bundle.timeout import compute_bundle_execution_timeout_seconds
 from dsp.execution.remote.bundle.upload import (
     RemoteCompletionVerification,
     VerifiedUploadResult,
@@ -39,6 +40,7 @@ _DIAG_EXEC_OUTPUT = "execution_stdout_stderr.txt"
 _DIAG_REMOTE_LS_AFTER_EXEC = "remote_ls_after_execution.txt"
 _DIAG_REMOTE_EVENTS_WC = "remote_events_wc_after_execution.txt"
 _DIAG_REMOTE_SUMMARY = "remote_summary_after_execution.txt"
+_DIAG_REMOTE_STATUS = "remote_status_after_execution.txt"
 
 
 class BundleScenarioRunner:
@@ -95,6 +97,11 @@ class BundleScenarioRunner:
                 verification=script_verification,
             )
 
+        timeout_seconds = int(
+            manifest.get("execution_timeout_seconds")
+            or compute_bundle_execution_timeout_seconds(manifest)
+        )
+
         script_path = f"{remote_run_dir}/run_scenario.py"
         command = CommandRequest.new(
             f"python3 {shlex.quote(script_path)}",
@@ -120,6 +127,7 @@ class BundleScenarioRunner:
             run_id=str(request.run_id),
             provider=provider,
             diag_dir=diag_dir,
+            timeout_seconds=timeout_seconds,
         )
 
         command_result = CommandResult(
@@ -225,6 +233,7 @@ class BundleScenarioRunner:
         run_id: str,
         provider: WebshellExecutionProvider,
         diag_dir: Path | None = None,
+        timeout_seconds: int = 300,
     ) -> None:
         execution_text = normalize_webshell_command_output(exec_output)
         parsed = cls._parse_execution_result(exec_output)
@@ -236,7 +245,7 @@ class BundleScenarioRunner:
                 return
             raise RemoteBundleExecutionError(
                 "events.jsonl missing or empty after run_scenario.py success marker; "
-                f"{bundle_verification.reason or 'verification failed'}; "
+                f"{remote_bundle_path}: {bundle_verification.reason or 'verification failed'}; "
                 "see execution_stdout_stderr.txt, upload_script_result.txt, "
                 "and remote_ls_after_upload.txt",
                 remote_path=remote_bundle_path,
@@ -245,11 +254,13 @@ class BundleScenarioRunner:
             )
 
         summary_path = f"{remote_run_dir.rstrip('/')}/traffic_summary.json"
+        status_path = f"{remote_run_dir.rstrip('/')}/remote_status.json"
         artifact_verification = verify_remote_execution_artifacts(
             provider,
             remote_run_dir=remote_run_dir,
             events_path=remote_bundle_path,
             summary_path=summary_path,
+            status_path=status_path,
             run_id=run_id,
         )
         if artifact_verification.ok:
@@ -261,6 +272,7 @@ class BundleScenarioRunner:
             remote_bundle_path=remote_bundle_path,
             artifact_verification=artifact_verification,
             diag_dir=diag_dir,
+            timeout_seconds=timeout_seconds,
         )
 
     @classmethod
@@ -272,6 +284,7 @@ class BundleScenarioRunner:
         remote_bundle_path: str,
         artifact_verification: RemoteCompletionVerification,
         diag_dir: Path | None,
+        timeout_seconds: int = 300,
     ) -> None:
         if diag_dir is not None:
             diag_dir.mkdir(parents=True, exist_ok=True)
@@ -287,15 +300,38 @@ class BundleScenarioRunner:
                 artifact_verification.summary_output,
                 encoding="utf-8",
             )
+            (diag_dir / _DIAG_REMOTE_STATUS).write_text(
+                artifact_verification.status_output,
+                encoding="utf-8",
+            )
 
-        detail_parts = [f"stdout: {marker_reason}"]
+        detail_parts = [
+            f"stdout: {marker_reason}",
+            f"remote_command_timeout_seconds: {timeout_seconds}",
+            f"remote_stdout_bytes: {len(execution_text)}",
+        ]
         if artifact_verification.reason:
             detail_parts.append(f"artifacts: {artifact_verification.reason}")
+        detail_parts.append(
+            "remote_paths: "
+            f"events={artifact_verification.events_path} "
+            f"(present={artifact_verification.events_present}), "
+            f"summary={artifact_verification.summary_path} "
+            f"(present={artifact_verification.summary_present}), "
+            f"status={artifact_verification.status_path} "
+            f"(present={artifact_verification.status_present})"
+        )
+        if artifact_verification.status_output.strip():
+            status_preview = artifact_verification.status_output.strip().replace("\n", " ")
+            if len(status_preview) > 240:
+                status_preview = status_preview[:240] + "…"
+            detail_parts.append(f"last_status: {status_preview}")
         raise RemoteBundleExecutionError(
             "remote bundle execution could not be verified; "
             + "; ".join(detail_parts)
             + "; see execution_stdout_stderr.txt, remote_ls_after_execution.txt, "
-            "remote_events_wc_after_execution.txt, and remote_summary_after_execution.txt",
+            "remote_events_wc_after_execution.txt, remote_summary_after_execution.txt, "
+            "and remote_status_after_execution.txt",
             remote_path=remote_bundle_path,
             execution_output=execution_text,
             verification=artifact_verification,
