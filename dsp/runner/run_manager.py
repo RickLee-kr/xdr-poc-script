@@ -24,7 +24,10 @@ from dsp.engine.host_selection import (
     http_target_probe_payload,
     print_http_endpoint_probe_diagnostics,
 )
-from dsp.runtime.scenario_plan import apply_webshell_initial_compromise_plan
+from dsp.runtime.scenario_plan import (
+    WEBSHELL_EXECUTION_KEY,
+    apply_webshell_initial_compromise_plan,
+)
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
@@ -431,11 +434,19 @@ class RunManager:
             config.scenario_params,
             scenario_ids,
             discovered_http_hosts=targets.hosts_for_capability("http_targets"),
+            webshell_execution=config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
+            if execution_provider == "webshell"
+            else None,
+            attack_target_net=target_net,
         )
         if http_probe_selection is not None:
             probe_payload = http_target_probe_payload(
                 http_probe_selection,
                 discovered_http_hosts=targets.hosts_for_capability("http_targets"),
+                webshell_execution=config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
+                if execution_provider == "webshell"
+                else None,
+                attack_target_net=target_net,
             )
             (run_dir / "http_target_probe.json").write_text(
                 json.dumps(probe_payload, indent=2),
@@ -462,7 +473,18 @@ class RunManager:
                 targets,
                 config.scenario_params,
             )
-            emitter.emit("targets_selected", {"groups": selected})
+            targets_payload: dict[str, Any] = {"groups": selected}
+            if execution_provider == "webshell" and webshell_url:
+                ws_ctx = config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
+                if isinstance(ws_ctx, dict):
+                    targets_payload["execution_host"] = {
+                        "host": ws_ctx.get("execution_host"),
+                        "port": ws_ctx.get("execution_port"),
+                        "path": ws_ctx.get("execution_path", "/"),
+                    }
+                    targets_payload["webshell_url"] = ws_ctx.get("webshell_url")
+                    targets_payload["attack_target_net"] = target_net
+            emitter.emit("targets_selected", targets_payload)
 
         provider = self._create_execution_provider(
             execution_provider,
@@ -622,6 +644,9 @@ class RunManager:
             scenario_ids=scenario_ids,
             targets=targets,
             traffic_profile=summary_profile,
+            webshell_execution=config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
+            if execution_provider == "webshell"
+            else None,
         )
         (run_dir / "traffic_summary.json").write_text(
             json.dumps(traffic_summary, indent=2),

@@ -17,8 +17,13 @@ from dsp.protocols.http.target_probe import (
 )
 from dsp.protocols.http.urls import HTTP_DETECTION_PORTS, HTTP_PORT_PRIORITY
 from dsp.runtime.scenario_plan import (
+    DISCOVERED_HTTP_SERVICE_REASON,
+    DISCOVERED_HTTPS_SERVICE_REASON,
+    FALLBACK_NO_DISCOVERED_HTTP_REASON,
     INITIAL_COMPROMISE_ENDPOINT_KEY,
     INITIAL_COMPROMISE_SELECTION_REASON,
+    PHASE1_WEBSHELL_ATTACK_KEY,
+    WEBSHELL_EXECUTION_KEY,
 )
 
 # HTTP-only detection mode — no HTTPS fallback for URL scan / SQLi
@@ -264,13 +269,37 @@ def _initial_compromise_endpoint(config: dict) -> dict[str, object] | None:
     return raw
 
 
+def _webshell_execution_endpoint(config: dict) -> dict[str, object] | None:
+    ctx = config.get(WEBSHELL_EXECUTION_KEY)
+    if isinstance(ctx, dict):
+        endpoint = ctx.get("endpoint")
+        if isinstance(endpoint, dict) and "host" in endpoint and "port" in endpoint:
+            return endpoint
+    return _initial_compromise_endpoint(config)
+
+
+def _webshell_execution_context(config: dict) -> dict[str, object] | None:
+    ctx = config.get(WEBSHELL_EXECUTION_KEY)
+    return ctx if isinstance(ctx, dict) else None
+
+
+def _attack_target_reason_for_discovery(selection: HttpFollowupSelection) -> str:
+    if not selection.selected:
+        return ""
+    endpoint = selection.selected[0]
+    if endpoint.scheme == "https":
+        return DISCOVERED_HTTPS_SERVICE_REASON
+    return DISCOVERED_HTTP_SERVICE_REASON
+
+
 def selection_from_initial_compromise(
     endpoint: dict[str, object],
     *,
     dry_run: bool = False,
     timeout: float = 10.0,
+    selection_reason: str = INITIAL_COMPROMISE_SELECTION_REASON,
 ) -> HttpFollowupSelection:
-    """Fixed Phase A target — webshell host from ``webshell_url`` (no discovery override)."""
+    """Fixed Phase A target — webshell host from ``webshell_url``."""
     host = str(endpoint["host"])
     port = int(endpoint["port"])
     scheme = str(endpoint.get("scheme") or "http")
@@ -284,14 +313,77 @@ def selection_from_initial_compromise(
     selected = replace(
         probed,
         selected=True,
-        selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+        selection_reason=selection_reason,
         rejection_reason="",
     )
     annotated = annotate_probe_selection([probed], [selected])
     return HttpFollowupSelection(
         probed=annotated,
         selected=[selected],
-        selected_http_target_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+        selected_http_target_reason=selection_reason,
+    )
+
+
+def resolve_http_attack_endpoint_selection(
+    targets: TargetSet,
+    config: dict,
+    *,
+    max_hosts: int,
+    dry_run: bool = False,
+    timeout: float = 10.0,
+) -> HttpFollowupSelection:
+    """Select HTTP attack targets — discovery first; webshell host only as fallback."""
+    explicit_phase1 = bool(config.get(PHASE1_WEBSHELL_ATTACK_KEY))
+    webshell_ep = _webshell_execution_endpoint(config)
+    has_discovered_http = bool(targets.hosts_for_capability("http_targets"))
+
+    if not explicit_phase1 and has_discovered_http:
+        selection = probe_and_select_http_followup_endpoints(
+            targets,
+            config,
+            max_hosts=max_hosts,
+            dry_run=dry_run,
+            timeout=timeout,
+        )
+        if selection.selected:
+            return HttpFollowupSelection(
+                probed=selection.probed,
+                selected=selection.selected,
+                skip_reason=selection.skip_reason,
+                selected_http_target_reason=_attack_target_reason_for_discovery(selection),
+                https_targets_skipped=selection.https_targets_skipped,
+            )
+        if webshell_ep is not None:
+            return selection_from_initial_compromise(
+                webshell_ep,
+                dry_run=dry_run,
+                timeout=timeout,
+                selection_reason=FALLBACK_NO_DISCOVERED_HTTP_REASON,
+            )
+        return selection
+
+    if explicit_phase1 and webshell_ep is not None:
+        return selection_from_initial_compromise(
+            webshell_ep,
+            dry_run=dry_run,
+            timeout=timeout,
+            selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+        )
+
+    if webshell_ep is not None and not has_discovered_http:
+        return selection_from_initial_compromise(
+            webshell_ep,
+            dry_run=dry_run,
+            timeout=timeout,
+            selection_reason=FALLBACK_NO_DISCOVERED_HTTP_REASON,
+        )
+
+    return probe_and_select_http_followup_endpoints(
+        targets,
+        config,
+        max_hosts=max_hosts,
+        dry_run=dry_run,
+        timeout=timeout,
     )
 
 
@@ -308,9 +400,9 @@ def resolve_http_endpoint_selection(
     if cached:
         return selection_from_cache(cached)  # type: ignore[arg-type]
     ic = _initial_compromise_endpoint(config)
-    if ic is not None:
+    if ic is not None and bool(config.get(PHASE1_WEBSHELL_ATTACK_KEY)):
         return selection_from_initial_compromise(ic, dry_run=dry_run, timeout=timeout)
-    return probe_and_select_http_followup_endpoints(
+    return resolve_http_attack_endpoint_selection(
         targets,
         config,
         max_hosts=max_hosts,
@@ -337,21 +429,13 @@ def cache_http_endpoint_selection(
         for sid in http_scenarios
     )
     timeout = float(ref_params.get("timeout", 10.0))
-    ic = _initial_compromise_endpoint(ref_params)
-    if ic is not None:
-        selection = selection_from_initial_compromise(
-            ic,
-            dry_run=dry_run,
-            timeout=timeout,
-        )
-    else:
-        selection = probe_and_select_http_followup_endpoints(
-            targets,
-            ref_params,
-            max_hosts=max_hosts,
-            dry_run=dry_run,
-            timeout=timeout,
-        )
+    selection = resolve_http_attack_endpoint_selection(
+        targets,
+        ref_params,
+        max_hosts=max_hosts,
+        dry_run=dry_run,
+        timeout=timeout,
+    )
     cache = selection_to_cache(selection)
     for sid in http_scenarios:
         scenario_params.setdefault(sid, {})[HTTP_ENDPOINT_SELECTION_CACHE_KEY] = cache
@@ -395,11 +479,22 @@ def format_http_probe_diagnostic_lines(
     selection: HttpFollowupSelection,
     *,
     discovered_http_hosts: list[str] | None = None,
+    webshell_endpoint_diagnostics: list[dict[str, int | str | bool]] | None = None,
 ) -> list[str]:
     """Format operator-readable probe diagnostics for each HTTP endpoint."""
     lines: list[str] = []
     if discovered_http_hosts is not None:
-        lines.append(f"discovery_http_hosts={discovered_http_hosts}")
+        lines.append(f"discovered_attack_http_endpoints={discovered_http_hosts}")
+    if webshell_endpoint_diagnostics is not None:
+        lines.append("webshell_endpoint_diagnostics:")
+        if not webshell_endpoint_diagnostics:
+            lines.append("  (no webshell endpoint probed)")
+        else:
+            for row in webshell_endpoint_diagnostics:
+                host = str(row["host"])
+                port = int(row["port"])
+                quality = response_quality_label(row)
+                lines.append(f"  {host}:{port} scheme=http response_quality={quality}")
     lines.append("HTTP endpoint probe diagnostics:")
     if not selection.probed:
         lines.append("  (no endpoints probed)")
@@ -434,16 +529,32 @@ def print_http_endpoint_probe_diagnostics(
     scenario_ids: list[str],
     *,
     discovered_http_hosts: list[str] | None = None,
+    webshell_execution: dict[str, object] | None = None,
+    attack_target_net: str | None = None,
 ) -> HttpFollowupSelection | None:
     """Print probe diagnostics and return cached selection when available."""
     selection = cached_http_endpoint_selection(scenario_params, scenario_ids)
     if selection is None:
         return None
+    webshell_probe_rows: list[dict[str, int | str | bool]] | None = None
+    if webshell_execution:
+        endpoint = webshell_execution.get("endpoint")
+        if isinstance(endpoint, dict):
+            ws_probe = selection_from_initial_compromise(
+                endpoint,
+                dry_run=True,
+                timeout=10.0,
+                selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+            )
+            webshell_probe_rows = ws_probe.probe_summaries
     for line in format_http_probe_diagnostic_lines(
         selection,
         discovered_http_hosts=discovered_http_hosts,
+        webshell_endpoint_diagnostics=webshell_probe_rows,
     ):
         print(line)
+    if attack_target_net:
+        print(f"attack_target_net={attack_target_net}")
     return selection
 
 
@@ -451,17 +562,39 @@ def http_target_probe_payload(
     selection: HttpFollowupSelection,
     *,
     discovered_http_hosts: list[str] | None = None,
+    webshell_execution: dict[str, object] | None = None,
+    attack_target_net: str | None = None,
 ) -> dict[str, object]:
     """Serialize probe diagnostics for traffic_summary / run artifacts."""
-    return {
+    payload: dict[str, object] = {
         "discovery_http_hosts": discovered_http_hosts or [],
+        "discovered_attack_http_endpoints": discovered_http_hosts or [],
         "target_probe": selection.probe_summaries,
         "selected_targets": format_selected_target_labels(selection.selected)
         if selection.selected
         else [],
+        "selected_attack_targets": format_selected_target_labels(selection.selected)
+        if selection.selected
+        else [],
         "rejected_targets": selection.rejected_targets,
         "skip_reason": selection.skip_reason,
+        "selected_target_reason": selection.selected_http_target_reason,
     }
+    if attack_target_net:
+        payload["attack_target_net"] = attack_target_net
+    if webshell_execution:
+        endpoint = webshell_execution.get("endpoint")
+        if isinstance(endpoint, dict):
+            ws_probe = selection_from_initial_compromise(
+                endpoint,
+                dry_run=True,
+                timeout=10.0,
+                selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+            )
+            payload["webshell_endpoint_diagnostics"] = ws_probe.probe_summaries
+        payload["execution_host"] = webshell_execution.get("execution_host")
+        payload["webshell_url"] = webshell_execution.get("webshell_url")
+    return payload
 
 
 def select_http_followup_endpoints(

@@ -152,6 +152,27 @@ class OperationalConsole:
 
     def _emit_selected_targets(self, data: dict[str, Any]) -> None:
         groups: dict[str, list[str]] = data.get("groups") or {}
+        execution_host = data.get("execution_host")
+        if execution_host:
+            host = execution_host.get("host", "")
+            port = execution_host.get("port", "")
+            path = execution_host.get("path", "/")
+            self._write("Execution Host:")
+            self._write(f"  {host}:{port}{path}")
+            self._write("")
+            if data.get("attack_target_net"):
+                self._write(f"Attack Target Net: {data['attack_target_net']}")
+                self._write("")
+            self._write("Attack Targets:")
+            if not groups:
+                self._write("  (none)")
+            else:
+                for protocol, hosts in groups.items():
+                    self._write(f"  {protocol}:")
+                    for host_label in hosts:
+                        self._write(f"    {host_label}")
+            self._write("")
+            return
         if not groups:
             return
         self._write("Selected Targets")
@@ -181,9 +202,14 @@ class OperationalConsole:
         )
         for line in format_http_probe_diagnostic_lines(
             selection,
-            discovered_http_hosts=list(data.get("discovery_http_hosts") or []),
+            discovered_http_hosts=list(data.get("discovered_attack_http_endpoints") or data.get("discovery_http_hosts") or []),
+            webshell_endpoint_diagnostics=list(data.get("webshell_endpoint_diagnostics") or []),
         ):
             self._write(line)
+        if data.get("attack_target_net"):
+            self._write(f"attack_target_net={data['attack_target_net']}")
+        if data.get("selected_target_reason"):
+            self._write(f"selected_target_reason={data['selected_target_reason']}")
         self._write("")
 
     def _emit_scenario_skipped(self, data: dict[str, Any]) -> None:

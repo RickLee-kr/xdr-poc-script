@@ -91,8 +91,8 @@ def test_profiles_preserve_discovery_first_ordering(profile: str) -> None:
         assert scenarios.index("sql_injection") < scenarios.index("dns_tunnel")
 
 
-def test_webshell_http_followup_targets_webshell_host() -> None:
-    """Test B — webshell-url host is HTTP Follow-up target."""
+def test_webshell_http_followup_targets_discovered_hosts_when_available() -> None:
+    """Webshell host is execution-only; discovered HTTP hosts are attack targets."""
     webshell_url = "http://10.10.10.50:8080/shell.jsp"
     params = build_operational_scenario_params(
         "low",
@@ -109,15 +109,14 @@ def test_webshell_http_followup_targets_webshell_host() -> None:
         dry_run=True,
     )
     assert selection.selected
-    assert selection.selected[0].host == "10.10.10.50"
-    assert selection.selected[0].port == 8080
+    assert selection.selected[0].host == "10.10.10.97"
 
     remote_plan = _plan_http_followup(targets, params["http_followup"], dry_run=True)
-    assert remote_plan["requests"][0]["url"].startswith("http://10.10.10.50:8080")
+    assert "10.10.10.97" in remote_plan["requests"][0]["url"]
 
 
-def test_webshell_sql_injection_targets_webshell_host() -> None:
-    """Test C — webshell-url host is SQL Injection target."""
+def test_webshell_sql_injection_targets_discovered_hosts_when_available() -> None:
+    """Webshell host is execution-only; discovered HTTP hosts are SQLi targets."""
     webshell_url = "http://10.10.10.50:8080/shell.jsp"
     params = build_operational_scenario_params(
         "normal",
@@ -133,12 +132,11 @@ def test_webshell_sql_injection_targets_webshell_host() -> None:
         max_hosts=2,
         dry_run=True,
     )
-    assert selection.selected[0].host == "10.10.10.50"
-    assert selection.selected[0].port == 8080
+    assert selection.selected[0].host == "10.10.10.97"
 
     remote_plan = _plan_sql_injection(targets, params["sql_injection"], dry_run=True)
     assert remote_plan["requests"]
-    assert "10.10.10.50:8080" in remote_plan["requests"][0]["url"]
+    assert "10.10.10.97" in remote_plan["requests"][0]["url"]
 
 
 def test_discovery_drives_http_followup_without_webshell_override() -> None:

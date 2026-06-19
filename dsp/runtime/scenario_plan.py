@@ -13,6 +13,11 @@ from dsp.protocols.recon import DEFAULT_PORTS, MAX_PORTS_DEFAULT, plan_port_swee
 
 INITIAL_COMPROMISE_ENDPOINT_KEY = "initial_compromise_endpoint"
 INITIAL_COMPROMISE_SELECTION_REASON = "initial_compromise_host"
+WEBSHELL_EXECUTION_KEY = "_webshell_execution"
+PHASE1_WEBSHELL_ATTACK_KEY = "phase1_webshell_attack"
+DISCOVERED_HTTP_SERVICE_REASON = "discovered_http_service"
+DISCOVERED_HTTPS_SERVICE_REASON = "discovered_https_service"
+FALLBACK_NO_DISCOVERED_HTTP_REASON = "fallback_no_discovered_http"
 
 
 @dataclass(frozen=True)
@@ -63,10 +68,21 @@ def apply_webshell_initial_compromise_plan(
     scenario_ids: list[str],
     webshell_url: str,
 ) -> InitialCompromiseEndpoint:
-    """Inject Phase A HTTP/SQLi targets for webshell execution mode."""
+    """Record webshell execution host and Phase-1 targets for host-behavior scenarios."""
     endpoint = parse_initial_compromise_endpoint(webshell_url)
     payload = endpoint.to_dict()
-    for sid in ("http_followup", "sql_injection", "host_behavior_check", "rare_protocol_activity"):
+    parsed = urlparse(webshell_url)
+    execution_context = {
+        "webshell_url": webshell_url,
+        "execution_host": endpoint.host,
+        "execution_port": endpoint.port,
+        "execution_path": parsed.path or "/",
+        "endpoint": payload,
+    }
+    scenario_params[WEBSHELL_EXECUTION_KEY] = execution_context
+    for sid in scenario_ids:
+        scenario_params.setdefault(sid, {})[WEBSHELL_EXECUTION_KEY] = execution_context
+    for sid in ("host_behavior_check", "rare_protocol_activity"):
         if sid in scenario_ids:
             scenario_params.setdefault(sid, {})[INITIAL_COMPROMISE_ENDPOINT_KEY] = payload
     return endpoint

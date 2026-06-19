@@ -56,6 +56,7 @@ def build_traffic_summary(
     scenario_ids: list[str],
     targets: TargetSet,
     traffic_profile: str,
+    webshell_execution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build planned vs actual traffic summary for a run."""
     events = [_normalize_event(e) for e in store.list_events(run_id)]
@@ -63,12 +64,16 @@ def build_traffic_summary(
     summary: dict[str, Any] = {
         "traffic_profile": traffic_profile,
         "target_net": targets.target_net,
+        "attack_target_net": targets.target_net,
         "discovery": {
             "enabled": targets.discovery_enabled,
             **targets.discovery_meta,
         },
         "scenarios": {},
     }
+    if webshell_execution:
+        summary["execution_host"] = webshell_execution.get("execution_host")
+        summary["webshell_url"] = webshell_execution.get("webshell_url")
 
     for sid in scenario_ids:
         started = _last_evidence(events, sid, f"{sid}_started")
@@ -273,7 +278,11 @@ def build_traffic_summary(
         if target_probe:
             summary["target_probe"] = target_probe
             summary["selected_targets"] = scenario_probe.get("selected_targets", [])
+            summary["selected_attack_targets"] = scenario_probe.get("selected_targets", [])
             summary["rejected_targets"] = scenario_probe.get("rejected_targets", [])
+            summary["selected_target_reason"] = scenario_probe.get(
+                "selected_http_target_reason", ""
+            )
             if scenario_probe.get("skip_reason"):
                 summary["http_endpoint_skip_reason"] = scenario_probe["skip_reason"]
             break
