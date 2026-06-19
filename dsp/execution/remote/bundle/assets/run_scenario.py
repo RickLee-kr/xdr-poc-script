@@ -484,7 +484,13 @@ def _run_http_followup(log: EventLog, plan: dict[str, Any]) -> None:
     burst_plan = dict(plan.get("non_standard_port_burst") or {})
     burst_summary: dict[str, Any] = {"enabled": False}
     if burst_plan.get("enabled"):
-        burst_summary = _run_non_standard_port_burst(log, burst_plan, timeout=timeout, mode=mode)
+        burst_summary = _run_non_standard_port_burst(
+            log,
+            burst_plan,
+            timeout=timeout,
+            connect_timeout=connect_timeout,
+            mode=mode,
+        )
     log.append(
         event="http_followup_completed",
         status="info",
@@ -497,6 +503,7 @@ def _run_non_standard_port_burst(
     burst_plan: dict[str, Any],
     *,
     timeout: float,
+    connect_timeout: float,
     mode: str,
 ) -> dict[str, Any]:
     requests = list(burst_plan.get("requests") or [])
@@ -544,7 +551,15 @@ def _run_non_standard_port_burst(
             status_code = 200 if int(item.get("seq") or 0) % 3 else 404
             outcome = "sent"
         else:
-            status_code, outcome = _curl_request(url, method, timeout, user_agent, None, None)
+            status_code, outcome = _curl_request(
+                url,
+                method,
+                timeout,
+                user_agent,
+                None,
+                None,
+                connect_timeout=connect_timeout,
+            )
         result_evidence = dict(base_evidence)
         if status_code is not None:
             result_evidence["status_code"] = status_code
@@ -1206,8 +1221,9 @@ def _planned_status(manifest: dict[str, Any]) -> dict[str, Any]:
     if plan_type == "http_followup":
         planned["requests"] = len(plan.get("requests") or [])
         burst = plan.get("non_standard_port_burst") or {}
-        if burst.get("enabled"):
-            planned["burst_attempts"] = len(burst.get("requests") or [])
+        planned["burst_attempts"] = (
+            len(burst.get("requests") or []) if burst.get("enabled") else 0
+        )
     elif plan_type == "port_sweep":
         planned["probes"] = len(plan.get("probes") or [])
     elif plan_type == "dns_tunnel":
