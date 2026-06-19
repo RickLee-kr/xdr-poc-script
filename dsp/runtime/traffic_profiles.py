@@ -47,8 +47,8 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
     },
     "dga": {
         "low": {"phase1_count": 3, "phase2_count": 2, "timeout": 0.1},
-        "normal": {"phase1_count": 10, "phase2_count": 5, "timeout": 0.05},
-        "high": {"phase1_count": 30, "phase2_count": 15, "timeout": 0.05},
+        "normal": {"phase1_count": 35, "phase2_count": 10, "timeout": 0.05},
+        "high": {"phase1_count": 40, "phase2_count": 15, "timeout": 0.05},
     },
     "http_followup": {
         "low": {
@@ -106,8 +106,8 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
     },
     "kerberos_failure": {
         "low": {"max_hosts": 1, "attempts_per_host": 3, "timeout": 15.0},
-        "normal": {"max_hosts": 2, "attempts_per_host": 10, "timeout": 10.0},
-        "high": {"max_hosts": 2, "attempts_per_host": 25, "timeout": 5.0},
+        "normal": {"max_hosts": 2, "attempts_per_host": 10, "timeout": 1.0},
+        "high": {"max_hosts": 2, "attempts_per_host": 25, "timeout": 1.0},
     },
     "smb_login_failure": {
         "low": {"max_hosts": 1, "attempts_per_host": 3, "timeout": 15.0},

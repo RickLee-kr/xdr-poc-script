@@ -11,6 +11,8 @@ from dsp.protocols.kerberos.attempts import PlannedKerberosAttempt
 from dsp.protocols.types import KerberosAttempt, KerberosAttemptResult
 
 DEFAULT_TIMEOUT_SEC = 10.0
+# Failure-scenario probes only need to emit traffic; do not block on KDC silence.
+DEFAULT_KDC_RESPONSE_WAIT_SEC = 0.0
 
 
 def _der_length(length: int) -> bytes:
@@ -72,6 +74,7 @@ def _execute_attempt(
     attempt: KerberosAttempt,
     *,
     timeout: float,
+    kdc_response_wait_sec: float,
     dry_run: bool,
 ) -> KerberosAttemptResult:
     attempt_id = uuid.uuid4().hex[:8]
@@ -106,6 +109,22 @@ def _execute_attempt(
     try:
         sock.settimeout(timeout)
         sock.sendto(probe, (attempt.host, attempt.port))
+        if kdc_response_wait_sec <= 0:
+            return KerberosAttemptResult(
+                target=attempt.target,
+                port=attempt.port,
+                username=attempt.username,
+                realm=attempt.realm,
+                outcome="auth_failed",
+                attempt_id=attempt_id,
+                dry_run=False,
+                connection_opened=True,
+                evidence={
+                    **evidence,
+                    "note": "as_req_sent",
+                },
+            )
+        sock.settimeout(kdc_response_wait_sec)
         try:
             response, _ = sock.recvfrom(4096)
             return KerberosAttemptResult(
@@ -165,6 +184,7 @@ class KerberosClient:
         dry_run: bool = True,
         mock: bool = True,
         timeout: float = DEFAULT_TIMEOUT_SEC,
+        kdc_response_wait_sec: float = DEFAULT_KDC_RESPONSE_WAIT_SEC,
         safe_mode: bool = True,
     ) -> None:
         resolved = self._resolve_mode(mode=mode, dry_run=dry_run, mock=mock)
@@ -174,6 +194,7 @@ class KerberosClient:
         self.dry_run = resolved == "mock"
         self.mock = resolved == "mock"
         self.timeout = timeout
+        self.kdc_response_wait_sec = max(0.0, float(kdc_response_wait_sec))
         self.safe_mode = safe_mode
 
     @staticmethod
@@ -192,7 +213,12 @@ class KerberosClient:
         if self.mode == "live":
             if mock_outcome is not None:
                 raise KerberosProtocolError("mock_outcome is not supported in live mode")
-            return _execute_attempt(attempt, timeout=self.timeout, dry_run=False)
+            return _execute_attempt(
+                attempt,
+                timeout=self.timeout,
+                kdc_response_wait_sec=self.kdc_response_wait_sec,
+                dry_run=False,
+            )
         return self._mock_attempt(attempt, mock_outcome=mock_outcome)
 
     def _mock_attempt(

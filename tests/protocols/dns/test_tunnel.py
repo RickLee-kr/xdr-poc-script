@@ -13,6 +13,7 @@ from dsp.protocols.dns.tunnel import (
     chunk_to_b32_label,
     is_valid_tunnel_fqdn,
     iter_payload_chunks,
+    plan_burst_schedule,
     plan_chunk_count,
 )
 
@@ -45,6 +46,13 @@ def test_build_tunnel_fqdn_format():
 def test_build_tunnel_fqdn_sequence_padding():
     fqdn = build_tunnel_fqdn(42, "abc", "lab.example")
     assert fqdn.startswith("idx-000042-")
+
+
+def test_plan_burst_schedule_covers_total():
+    schedule = plan_burst_schedule(50)
+    assert sum(schedule) == 50
+    assert all(1 <= size <= 10 for size in schedule)
+    assert len(schedule) >= 5
 
 
 def test_invalid_tunnel_fqdn_rejected():

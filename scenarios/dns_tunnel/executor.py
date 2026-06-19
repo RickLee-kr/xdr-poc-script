@@ -15,7 +15,9 @@ from dsp.protocols.dns.tunnel import (
     build_tunnel_fqdn,
     chunk_to_b32_label,
     iter_payload_chunks,
+    plan_burst_schedule,
     plan_chunk_count,
+    sample_burst_pause_sec,
     select_tunnel_targets,
 )
 from dsp.protocols.dns.tunnel_events import (
@@ -78,79 +80,90 @@ def run(
         bytes_encoded = 0
         t0 = time.monotonic()
         activity = ActivityReporter(ctx, scenario_id, total=total_planned)
+        burst_schedule = plan_burst_schedule(total_planned)
+        chunk_iter = iter_payload_chunks(payload_mb, chunk_size)
+        seq = 0
 
-        for seq, chunk in enumerate(iter_payload_chunks(payload_mb, chunk_size), start=1):
+        for burst_idx, burst_size in enumerate(burst_schedule):
             if ctx.cancelled:
                 break
-            if seq > total_planned:
-                break
+            for _ in range(burst_size):
+                if ctx.cancelled:
+                    break
+                seq += 1
+                chunk = next(chunk_iter)
 
-            b32_label = chunk_to_b32_label(chunk)
-            fqdn = build_tunnel_fqdn(seq, b32_label, domain)
-            if len(sample_fqdns) < 3:
-                sample_fqdns.append(fqdn)
+                b32_label = chunk_to_b32_label(chunk)
+                fqdn = build_tunnel_fqdn(seq, b32_label, domain)
+                if len(sample_fqdns) < 3:
+                    sample_fqdns.append(fqdn)
 
-            chunk_evidence = {
-                "session_id": session_id,
-                "seq": seq,
-                "chunk_bytes": len(chunk),
-                "label_length": len(b32_label),
-                "domain": domain,
-            }
-            ctx.event_store.append(
-                build_tunnel_chunk_created_event(
+                chunk_evidence = {
+                    "session_id": session_id,
+                    "seq": seq,
+                    "chunk_bytes": len(chunk),
+                    "label_length": len(b32_label),
+                    "domain": domain,
+                    "burst_index": burst_idx + 1,
+                }
+                ctx.event_store.append(
+                    build_tunnel_chunk_created_event(
+                        run_id=ctx.run_id,
+                        scenario_id=scenario_id,
+                        target=target,
+                        fqdn=fqdn,
+                        source=source,
+                        evidence=chunk_evidence,
+                    )
+                )
+
+                query = client.make_query(target, fqdn)
+                activity.update(target=target, sample_query=fqdn)
+                activity.record(action="send", target=target, query=fqdn)
+                if mode == "mock":
+                    result = client.query(target, fqdn, mock_outcome="response")
+                else:
+                    result = client.send_fire_and_forget(target, fqdn)
+
+                query_evidence = {
+                    "session_id": session_id,
+                    "seq": seq,
+                    "qtype": query.qtype,
+                    "resolver": target,
+                    "port": query.port,
+                    "query_id": result.query_id,
+                    "outcome": result.outcome,
+                    "label_length": len(b32_label),
+                    "burst_index": burst_idx + 1,
+                }
+                if result.evidence.get("bytes_sent") is not None:
+                    query_evidence["bytes_sent"] = result.evidence["bytes_sent"]
+                ctx.event_store.append(
+                    build_tunnel_query_sent_event(
+                        run_id=ctx.run_id,
+                        scenario_id=scenario_id,
+                        target=target,
+                        fqdn=fqdn,
+                        source=source,
+                        evidence=query_evidence,
+                    )
+                )
+
+                for event in build_dns_events(
                     run_id=ctx.run_id,
                     scenario_id=scenario_id,
-                    target=target,
-                    fqdn=fqdn,
+                    query=query,
+                    result=result,
                     source=source,
-                    evidence=chunk_evidence,
-                )
-            )
+                    include_created=False,
+                ):
+                    ctx.event_store.append(event)
 
-            query = client.make_query(target, fqdn)
-            activity.update(target=target, sample_query=fqdn)
-            activity.record(action="send", target=target, query=fqdn)
-            if mode == "mock":
-                result = client.query(target, fqdn, mock_outcome="response")
-            else:
-                result = client.send_fire_and_forget(target, fqdn)
+                chunks_sent += 1
+                bytes_encoded += len(chunk)
 
-            query_evidence = {
-                "session_id": session_id,
-                "seq": seq,
-                "qtype": query.qtype,
-                "resolver": target,
-                "port": query.port,
-                "query_id": result.query_id,
-                "outcome": result.outcome,
-                "label_length": len(b32_label),
-            }
-            if result.evidence.get("bytes_sent") is not None:
-                query_evidence["bytes_sent"] = result.evidence["bytes_sent"]
-            ctx.event_store.append(
-                build_tunnel_query_sent_event(
-                    run_id=ctx.run_id,
-                    scenario_id=scenario_id,
-                    target=target,
-                    fqdn=fqdn,
-                    source=source,
-                    evidence=query_evidence,
-                )
-            )
-
-            for event in build_dns_events(
-                run_id=ctx.run_id,
-                scenario_id=scenario_id,
-                query=query,
-                result=result,
-                source=source,
-                include_created=False,
-            ):
-                ctx.event_store.append(event)
-
-            chunks_sent += 1
-            bytes_encoded += len(chunk)
+            if burst_idx < len(burst_schedule) - 1 and not ctx.cancelled:
+                time.sleep(sample_burst_pause_sec())
 
         activity.emit_final_progress()
         elapsed = round(time.monotonic() - t0, 3)
@@ -162,6 +175,7 @@ def run(
             "targets": host_targets,
             "sample_fqdns": sample_fqdns,
             "domain": domain,
+            "burst_schedule": burst_schedule,
         }
         ctx.event_store.append(
             build_tunnel_completed_event(

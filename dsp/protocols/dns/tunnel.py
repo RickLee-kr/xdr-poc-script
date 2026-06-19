@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import random
 import re
 from typing import TYPE_CHECKING, Iterator
 
@@ -15,6 +16,10 @@ if TYPE_CHECKING:
 CHUNK_SIZE_DEFAULT = 30
 PAYLOAD_MB_DEFAULT = 2.0
 TUNNEL_DOMAIN_DEFAULT = "dns-tunnel.com"
+BURST_MIN_QUERIES = 5
+BURST_MAX_QUERIES = 10
+BURST_PAUSE_MIN_SEC = 0.5
+BURST_PAUSE_MAX_SEC = 2.0
 IDX_FQDN_PATTERN = re.compile(r"^idx-\d{6}-[a-z2-7]+\.", re.IGNORECASE)
 
 
@@ -31,6 +36,38 @@ def plan_chunk_count(payload_mb: float, chunk_size: int = CHUNK_SIZE_DEFAULT) ->
         raise DnsProtocolError("chunk_size must be positive")
     total_bytes = int(payload_mb * 1024 * 1024)
     return max(1, (total_bytes + chunk_size - 1) // chunk_size)
+
+
+def plan_burst_schedule(
+    total: int,
+    *,
+    burst_min: int = BURST_MIN_QUERIES,
+    burst_max: int = BURST_MAX_QUERIES,
+) -> list[int]:
+    """Split total DNS tunnel queries into human-like burst sizes."""
+    if total <= 0:
+        raise DnsProtocolError("total queries must be positive")
+    if burst_min <= 0 or burst_max < burst_min:
+        raise DnsProtocolError("invalid burst size range")
+
+    schedule: list[int] = []
+    remaining = total
+    while remaining > 0:
+        size = min(random.randint(burst_min, burst_max), remaining)
+        schedule.append(size)
+        remaining -= size
+    return schedule
+
+
+def sample_burst_pause_sec(
+    *,
+    pause_min: float = BURST_PAUSE_MIN_SEC,
+    pause_max: float = BURST_PAUSE_MAX_SEC,
+) -> float:
+    """Return a random inter-burst pause duration."""
+    if pause_min <= 0 or pause_max < pause_min:
+        raise DnsProtocolError("invalid burst pause range")
+    return random.uniform(pause_min, pause_max)
 
 
 def iter_payload_chunks(

@@ -44,8 +44,28 @@ def test_live_safe_mode_requires_enabled():
         client.attempt(plan)
 
 
-def test_live_attempt_uses_udp_as_req():
-    client = KerberosClient(mode="live", safe_mode=True, timeout=1.0)
+def test_live_attempt_fire_and_forget_skips_recv():
+    client = KerberosClient(mode="live", safe_mode=True, timeout=10.0)
+    plan = PlannedKerberosAttempt(
+        host="127.0.0.1",
+        port=88,
+        username="admin",
+        realm="LOCAL.REALM",
+    )
+
+    mock_sock = MagicMock()
+
+    with patch("socket.socket", return_value=mock_sock):
+        result = client.attempt(plan)
+
+    assert result.outcome == "auth_failed"
+    assert result.evidence.get("note") == "as_req_sent"
+    mock_sock.sendto.assert_called_once()
+    mock_sock.recvfrom.assert_not_called()
+
+
+def test_live_attempt_uses_udp_as_req_when_waiting_for_kdc():
+    client = KerberosClient(mode="live", safe_mode=True, timeout=1.0, kdc_response_wait_sec=1.0)
     plan = PlannedKerberosAttempt(
         host="127.0.0.1",
         port=88,

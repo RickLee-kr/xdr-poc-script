@@ -26,6 +26,7 @@ from dsp.protocols.dns.tunnel import (
     build_tunnel_fqdn,
     chunk_to_b32_label,
     iter_payload_chunks,
+    plan_burst_schedule,
     plan_chunk_count,
     select_tunnel_targets,
 )
@@ -189,6 +190,7 @@ def _plan_dns_tunnel(targets: TargetSet, params: dict[str, Any], *, dry_run: boo
         "domain": domain,
         "timeout": float(tuned.get("timeout", 0.05)),
         "queries": queries,
+        "burst_schedule": plan_burst_schedule(total),
     }
 
 
