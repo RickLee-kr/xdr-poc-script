@@ -1,0 +1,81 @@
+manifest_schema_version: "1.0.0"
+id: rare_protocol_activity
+name: Rare Protocol Activity — Uncommon Application Traffic
+version: "1.0.0"
+description: >
+  Generates safe rare-protocol probe traffic (TELNET, RTSP, SIP, RTP) from the
+  execution vantage point to support Stellar Cyber Uncommon Application Anomaly
+  (XT2003) lab validation. Discovery-first target selection with safe probe
+  fallback. No remote-control software, sessions, authentication, or media streams.
+
+category: network
+tags: [phase_15, rare_protocol, uncommon_app, ndr, xdr, stellar, xt2003]
+enabled: true
+
+supported_targets:
+  requires: [alive_host]
+  optional: []
+  max_hosts: 1
+
+supported_protocols: [tcp, udp]
+
+validation_profile:
+  profile_version: "1.0.0"
+  metrics:
+    - name: rare_protocol_probe_attempt_count
+      event_filter:
+        event: rare_protocol_probe_attempt
+        status: sent
+      aggregate: count
+    - name: rare_protocol_probe_success_count
+      event_filter:
+        event: rare_protocol_probe_success
+        status: sent
+      aggregate: count
+    - name: rare_protocol_probe_failure_count
+      event_filter:
+        event: rare_protocol_probe_failure
+      aggregate: count
+  success:
+    rare_protocol_probe_attempt_count:
+      min: 1
+  fail_fast:
+    - SOT_EMPTY_AFTER_EXECUTE
+
+report_profile:
+  profile_version: "1.0.0"
+  protocol: rare_protocol_activity
+  highlight_metrics:
+    - rare_protocol_probe_attempt_count
+    - rare_protocol_probe_success_count
+    - rare_protocol_probe_failure_count
+  sample_events: 5
+  sample_filter:
+    event: rare_protocol_probe_attempt
+
+defaults:
+  timeout: 3.0
+  rtp_burst_count: 8
+  safe_mode: true
+
+safety:
+  max_events: 500
+  max_duration_sec: 120
+  allowed_domains: []
+  allowed_ports: [23, 554, 5060, 5004]
+  forbidden_actions:
+    - malware_execute
+    - privilege_escalation
+    - valid_credential_use
+    - lateral_movement
+  target_net_enforced: true
+
+requirements:
+  dsp_min_version: "1.4.0"
+  python_min_version: "3.11"
+
+executor:
+  module: executor
+  entrypoint: run
+  remote_capable: true
+  dry_run_supported: true

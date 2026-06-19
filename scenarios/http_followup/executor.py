@@ -34,6 +34,8 @@ from dsp.protocols.http.urls import (
     PlannedHttpRequest,
     compute_requests_per_target,
 )
+from dsp.protocols.http.burst_executor import run_non_standard_port_burst
+from dsp.protocols.http.non_standard_port_burst import plan_non_standard_port_burst
 from dsp.protocols.http.user_agents import (
     attach_followup_user_agents,
     classify_user_agent,
@@ -555,6 +557,21 @@ def run(
     request_evidence = [_evidence_dump_record(outcome) for outcome in outcomes]
     request_log_path = _write_request_log(ctx, request_evidence)
     wire_log_path = _write_wire_evidence_log(ctx, wire_log) if write_wire_evidence else None
+
+    burst_plan = plan_non_standard_port_burst(targets, hosts, params)
+    burst_summary: dict[str, Any] = {"enabled": False}
+    if burst_plan.get("enabled"):
+        burst_summary = run_non_standard_port_burst(
+            ctx,
+            burst_plan=burst_plan,
+            client=client,
+            mode=mode,
+            source=source,
+            scenario_id=scenario_id,
+            concurrency=concurrency,
+            primary_target=hosts[0],
+        )
+
     elapsed = round(time.monotonic() - t0, 3)
     requests_per_second = round(sent_count / elapsed, 2) if elapsed > 0 else 0.0
     ctx.event_store.append(
@@ -609,6 +626,7 @@ def run(
                 "redirect_only_candidates": selection.redirect_only_candidates,
                 "http_followup_requests_jsonl": str(request_log_path) if request_log_path else "",
                 "http_wire_evidence_jsonl": str(wire_log_path) if wire_log_path else "",
+                "non_standard_port_burst": burst_summary,
             },
         )
     )

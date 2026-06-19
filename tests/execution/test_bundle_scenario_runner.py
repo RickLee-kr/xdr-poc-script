@@ -52,6 +52,7 @@ def test_bundle_scenarios_cover_mvp_set() -> None:
         "sql_injection",
         "ssh_failure",
         "host_behavior_check",
+        "rare_protocol_activity",
     }
 
 

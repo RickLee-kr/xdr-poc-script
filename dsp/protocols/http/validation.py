@@ -7,6 +7,9 @@ from typing import Any
 HTTP_FOLLOWUP_METRIC_NAMES = [
     "http_request_sent_count",
     "http_response_received_count",
+    "non_standard_port_connection_attempt_count",
+    "non_standard_port_connection_success_count",
+    "non_standard_port_connection_failure_count",
 ]
 
 
@@ -28,6 +31,29 @@ def http_followup_validation_profile(**overrides: Any) -> dict[str, Any]:
                 "event_filter": {
                     "event": "http_response_received",
                     "status": "response",
+                },
+                "aggregate": "count",
+            },
+            {
+                "name": "non_standard_port_connection_attempt_count",
+                "event_filter": {
+                    "event": "non_standard_port_connection_attempt",
+                    "status": "sent",
+                },
+                "aggregate": "count",
+            },
+            {
+                "name": "non_standard_port_connection_success_count",
+                "event_filter": {
+                    "event": "non_standard_port_connection_success",
+                    "status": "response",
+                },
+                "aggregate": "count",
+            },
+            {
+                "name": "non_standard_port_connection_failure_count",
+                "event_filter": {
+                    "event": "non_standard_port_connection_failure",
                 },
                 "aggregate": "count",
             },

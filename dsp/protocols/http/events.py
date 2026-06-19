@@ -14,6 +14,11 @@ HTTP_REQUEST_SENT = "http_request_sent"
 HTTP_RESPONSE_RECEIVED = "http_response_received"
 HTTP_REQUEST_ERROR = "http_request_error"
 HTTP_FOLLOWUP_COMPLETED = "http_followup_completed"
+NON_STANDARD_PORT_BURST_STARTED = "non_standard_port_burst_started"
+NON_STANDARD_PORT_CONNECTION_ATTEMPT = "non_standard_port_connection_attempt"
+NON_STANDARD_PORT_CONNECTION_SUCCESS = "non_standard_port_connection_success"
+NON_STANDARD_PORT_CONNECTION_FAILURE = "non_standard_port_connection_failure"
+NON_STANDARD_PORT_BURST_COMPLETED = "non_standard_port_burst_completed"
 
 HTTP_FOLLOWUP_TRAFFIC_EVENTS = frozenset(
     {
@@ -21,6 +26,9 @@ HTTP_FOLLOWUP_TRAFFIC_EVENTS = frozenset(
         HTTP_REQUEST_SENT,
         HTTP_RESPONSE_RECEIVED,
         HTTP_REQUEST_ERROR,
+        NON_STANDARD_PORT_CONNECTION_ATTEMPT,
+        NON_STANDARD_PORT_CONNECTION_SUCCESS,
+        NON_STANDARD_PORT_CONNECTION_FAILURE,
     }
 )
 
@@ -165,6 +173,117 @@ def build_http_followup_completed_event(
         status="info",
         target=target,
         artifact="http_followup_session",
+        evidence=dict(evidence),
+        source=source,
+    )
+
+
+def build_non_standard_port_burst_started_event(
+    *,
+    run_id: str,
+    scenario_id: str,
+    target: str,
+    source: str,
+    evidence: dict[str, Any],
+) -> Event:
+    return Event(
+        run_id=run_id,
+        scenario_id=scenario_id,
+        timestamp=datetime.now(timezone.utc),
+        stage="executor",
+        event=NON_STANDARD_PORT_BURST_STARTED,
+        status="info",
+        target=target,
+        artifact="non_standard_port_burst",
+        evidence=dict(evidence),
+        source=source,
+    )
+
+
+def build_non_standard_port_connection_attempt_event(
+    *,
+    run_id: str,
+    scenario_id: str,
+    target: str,
+    source: str,
+    evidence: dict[str, Any],
+) -> Event:
+    return Event(
+        run_id=run_id,
+        scenario_id=scenario_id,
+        timestamp=datetime.now(timezone.utc),
+        stage="executor",
+        event=NON_STANDARD_PORT_CONNECTION_ATTEMPT,
+        status="sent",
+        target=target,
+        artifact=str(evidence.get("url") or target),
+        evidence=dict(evidence),
+        source=source,
+    )
+
+
+def build_non_standard_port_connection_success_event(
+    *,
+    run_id: str,
+    scenario_id: str,
+    target: str,
+    source: str,
+    evidence: dict[str, Any],
+) -> Event:
+    return Event(
+        run_id=run_id,
+        scenario_id=scenario_id,
+        timestamp=datetime.now(timezone.utc),
+        stage="executor",
+        event=NON_STANDARD_PORT_CONNECTION_SUCCESS,
+        status="response",
+        target=target,
+        artifact=str(evidence.get("url") or target),
+        evidence=dict(evidence),
+        source=source,
+    )
+
+
+def build_non_standard_port_connection_failure_event(
+    *,
+    run_id: str,
+    scenario_id: str,
+    target: str,
+    source: str,
+    evidence: dict[str, Any],
+    status: str = "error",
+) -> Event:
+    return Event(
+        run_id=run_id,
+        scenario_id=scenario_id,
+        timestamp=datetime.now(timezone.utc),
+        stage="executor",
+        event=NON_STANDARD_PORT_CONNECTION_FAILURE,
+        status=status,
+        target=target,
+        artifact=str(evidence.get("url") or target),
+        evidence=dict(evidence),
+        source=source,
+    )
+
+
+def build_non_standard_port_burst_completed_event(
+    *,
+    run_id: str,
+    scenario_id: str,
+    target: str,
+    source: str,
+    evidence: dict[str, Any],
+) -> Event:
+    return Event(
+        run_id=run_id,
+        scenario_id=scenario_id,
+        timestamp=datetime.now(timezone.utc),
+        stage="executor",
+        event=NON_STANDARD_PORT_BURST_COMPLETED,
+        status="info",
+        target=target,
+        artifact="non_standard_port_burst",
         evidence=dict(evidence),
         source=source,
     )

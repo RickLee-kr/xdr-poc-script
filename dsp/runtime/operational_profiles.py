@@ -35,6 +35,7 @@ DISCOVERY_FIRST_SCENARIO_ORDER: tuple[str, ...] = (
     "kerberos_failure",
     "dns_tunnel",
     "dga",
+    "rare_protocol_activity",
     "port_sweep",
 )
 
@@ -61,6 +62,7 @@ _SCENARIO_LABELS: dict[str, str] = {
     "smb_login_failure": "SMB Login Failure",
     "ssh_failure": "SSH Failure",
     "kerberos_failure": "Kerberos Failure",
+    "rare_protocol_activity": "Rare Protocol Activity",
     "dummy": "Dummy",
 }
 

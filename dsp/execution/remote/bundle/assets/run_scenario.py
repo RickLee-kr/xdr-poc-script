@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import random
 import shlex
 import shutil
 import socket
@@ -480,11 +481,112 @@ def _run_http_followup(log: EventLog, plan: dict[str, Any]) -> None:
                 evidence={"url": url, "status_code": status_code},
             )
         sent += 1
+    burst_plan = dict(plan.get("non_standard_port_burst") or {})
+    burst_summary: dict[str, Any] = {"enabled": False}
+    if burst_plan.get("enabled"):
+        burst_summary = _run_non_standard_port_burst(log, burst_plan, timeout=timeout, mode=mode)
     log.append(
         event="http_followup_completed",
         status="info",
-        evidence={"requests_sent": sent},
+        evidence={"requests_sent": sent, "non_standard_port_burst": burst_summary},
     )
+
+
+def _run_non_standard_port_burst(
+    log: EventLog,
+    burst_plan: dict[str, Any],
+    *,
+    timeout: float,
+    mode: str,
+) -> dict[str, Any]:
+    requests = list(burst_plan.get("requests") or [])
+    ports = list(burst_plan.get("ports") or [])
+    targets = list(burst_plan.get("targets") or [])
+    primary = str(targets[0]["host"]) if targets else ""
+    log.append(
+        event="non_standard_port_burst_started",
+        status="info",
+        target=primary,
+        evidence={
+            "attempts_planned": len(requests),
+            "ports": ports,
+            "targets": targets,
+            "mode": mode,
+        },
+    )
+    attempts = 0
+    successes = 0
+    failures = 0
+    for item in requests:
+        url = str(item["url"])
+        method = str(item.get("method") or "GET")
+        user_agent = str(item.get("user_agent") or "Mozilla/5.0")
+        host = str(item.get("host") or "")
+        port = int(item.get("port") or 0)
+        base_evidence = {
+            "seq": item.get("seq"),
+            "host": host,
+            "port": port,
+            "url": url,
+            "method": method,
+            "user_agent": user_agent,
+            "discovered": item.get("discovered"),
+            "probe": item.get("probe"),
+        }
+        log.append(
+            event="non_standard_port_connection_attempt",
+            status="sent",
+            target=host or url,
+            evidence=dict(base_evidence),
+        )
+        attempts += 1
+        if mode == "mock":
+            status_code = 200 if int(item.get("seq") or 0) % 3 else 404
+            outcome = "sent"
+        else:
+            status_code, outcome = _curl_request(url, method, timeout, user_agent, None, None)
+        result_evidence = dict(base_evidence)
+        if status_code is not None:
+            result_evidence["status_code"] = status_code
+        result_evidence["outcome"] = outcome
+        success = status_code is not None and int(status_code) < 500
+        if success:
+            successes += 1
+            log.append(
+                event="non_standard_port_connection_success",
+                status="response",
+                target=host or url,
+                evidence=result_evidence,
+            )
+        else:
+            failures += 1
+            log.append(
+                event="non_standard_port_connection_failure",
+                status=outcome if outcome != "sent" else "error",
+                target=host or url,
+                evidence=result_evidence,
+            )
+    log.append(
+        event="non_standard_port_burst_completed",
+        status="info",
+        target=primary,
+        evidence={
+            "enabled": True,
+            "ports": ports,
+            "targets": targets,
+            "attempts": attempts,
+            "success": successes,
+            "failure": failures,
+        },
+    )
+    return {
+        "enabled": True,
+        "ports": ports,
+        "targets": targets,
+        "attempts": attempts,
+        "success": successes,
+        "failure": failures,
+    }
 
 
 def _run_sql_injection(log: EventLog, plan: dict[str, Any]) -> None:
@@ -619,6 +721,174 @@ def _run_ssh_failure(log: EventLog, plan: dict[str, Any]) -> None:
         status="info",
         target=first_host,
         evidence={"auth_attempts": len(attempts), "auth_failure_count": failure_count},
+    )
+
+
+def _rare_rtsp_request(method: str, host: str, port: int, cseq: int) -> bytes:
+    url = f"rtsp://{host}:{port}/"
+    lines = [f"{method} {url} RTSP/1.0", f"CSeq: {cseq}", "User-Agent: DSP-RareProtocol-Lab/1.0"]
+    if method == "DESCRIBE":
+        lines.append("Accept: application/sdp")
+    lines.extend(["", ""])
+    return "\r\n".join(lines).encode("ascii")
+
+
+def _rare_sip_request(method: str, host: str, port: int, transport: str) -> bytes:
+    via = "UDP" if transport == "udp" else "TCP"
+    lines = [
+        f"{method} sip:{host}:{port} SIP/2.0",
+        f"Via: SIP/2.0/{via} {host}:{port};branch=z9hG4bK-dsp-rare",
+        "Max-Forwards: 70",
+        f"To: <sip:probe@{host}>",
+        "From: <sip:dsp-lab@local>;tag=dsp-rare",
+        "Call-ID: dsp-rare-proto-activity@lab",
+        f"CSeq: 1 {method}",
+        f"Contact: <sip:dsp-lab@{host}:{port}>",
+        "Content-Length: 0",
+        "",
+        "",
+    ]
+    return "\r\n".join(lines).encode("ascii")
+
+
+def _rare_rtp_packet(seq: int) -> bytes:
+    header = struct.pack("!BBHII", 0x80, 96, seq & 0xFFFF, 0, 0x44535001)
+    return header + b"DSP-LAB"
+
+
+def _rare_execute_probe(probe: dict[str, Any], timeout: float) -> tuple[bool, str, dict[str, Any]]:
+    protocol = str(probe.get("protocol", "")).upper()
+    host = str(probe["host"])
+    port = int(probe["port"])
+    transport = str(probe.get("transport", "tcp"))
+    try:
+        if protocol == "TELNET":
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                sock.settimeout(timeout)
+                banner = b""
+                try:
+                    banner = sock.recv(256)
+                except socket.timeout:
+                    pass
+            return True, "banner_read" if banner else "connected", {"banner_bytes": len(banner)}
+        if protocol == "RTSP":
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                sock.settimeout(timeout)
+                for cseq, method in enumerate(("OPTIONS", "DESCRIBE"), start=1):
+                    sock.sendall(_rare_rtsp_request(method, host, port, cseq))
+                    try:
+                        sock.recv(512)
+                    except socket.timeout:
+                        pass
+            return True, "request_sent", {"methods": ["OPTIONS", "DESCRIBE"]}
+        if protocol == "SIP":
+            sent = 0
+            for tr in (("udp", "tcp") if transport == "udp_tcp" else (transport,)):
+                for method in ("OPTIONS", "REGISTER"):
+                    payload = _rare_sip_request(method, host, port, tr)
+                    if tr == "udp":
+                        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                            sock.settimeout(timeout)
+                            sock.sendto(payload, (host, port))
+                    else:
+                        with socket.create_connection((host, port), timeout=timeout) as sock:
+                            sock.settimeout(timeout)
+                            sock.sendall(payload)
+                    sent += 1
+            return True, "request_sent", {"sent": sent}
+        if protocol == "RTP":
+            count = max(1, int(probe.get("rtp_packets", 8)))
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                base = random.randint(1, 0xFFFF)
+                for offset in range(count):
+                    sock.sendto(_rare_rtp_packet(base + offset), (host, port))
+            return True, "packet_sent", {"rtp_packets": count}
+    except OSError as exc:
+        return False, type(exc).__name__.lower(), {"error": str(exc)}
+    return False, "unsupported_protocol", {}
+
+
+def _run_rare_protocol_activity(log: EventLog, plan: dict[str, Any]) -> None:
+    if plan.get("mode") == "skip":
+        _write_skip(
+            log,
+            {"scenario_id": "rare_protocol_activity"},
+            str(plan.get("reason") or "no_probe_plans"),
+            [],
+        )
+        return
+    probes = plan.get("probes") or []
+    timeout = float(plan.get("timeout", 3.0))
+    mode = plan.get("mode", "live")
+    vantage = probes[0]["host"] if probes else ""
+    protocols = sorted({str(p.get("protocol", "")) for p in probes if p.get("protocol")})
+    log.append(
+        event="rare_protocol_activity_started",
+        status="info",
+        target=vantage,
+        artifact="rare_protocol_session",
+        evidence={
+            "planned_probes": len(probes),
+            "protocols": protocols,
+            "mode": mode,
+        },
+    )
+    attempt_count = 0
+    success_count = 0
+    failure_count = 0
+    for index, probe in enumerate(probes, start=1):
+        host = str(probe["host"])
+        artifact = str(probe.get("artifact") or f"{probe.get('protocol')}:{host}:{probe.get('port')}")
+        base_evidence = {
+            "seq": index,
+            "protocol": probe.get("protocol"),
+            "host": host,
+            "port": int(probe["port"]),
+            "transport": probe.get("transport"),
+        }
+        log.append(
+            event="rare_protocol_probe_attempt",
+            status="sent",
+            target=host,
+            artifact=artifact,
+            evidence=dict(base_evidence),
+        )
+        attempt_count += 1
+        if mode == "mock":
+            ok, outcome, extra = True, "probe_sent", {"mode": "mock"}
+        else:
+            ok, outcome, extra = _rare_execute_probe(probe, timeout)
+        outcome_evidence = {**base_evidence, "outcome": outcome, **extra}
+        if ok:
+            success_count += 1
+            log.append(
+                event="rare_protocol_probe_success",
+                status="sent",
+                target=host,
+                artifact=artifact,
+                evidence=outcome_evidence,
+            )
+        else:
+            failure_count += 1
+            failure_status = outcome if outcome in {"error", "timeout", "connection_refused"} else "error"
+            log.append(
+                event="rare_protocol_probe_failure",
+                status=failure_status,
+                target=host,
+                artifact=artifact,
+                evidence=outcome_evidence,
+            )
+    log.append(
+        event="rare_protocol_activity_completed",
+        status="info",
+        target=vantage,
+        artifact="rare_protocol_session",
+        evidence={
+            "protocols": protocols,
+            "attempt_count": attempt_count,
+            "success_count": success_count,
+            "failure_count": failure_count,
+        },
     )
 
 
@@ -920,6 +1190,7 @@ def _dispatch(log: EventLog, manifest: dict[str, Any]) -> None:
         "sql_injection": _run_sql_injection,
         "ssh_failure": _run_ssh_failure,
         "host_behavior_check": _run_host_behavior_check,
+        "rare_protocol_activity": _run_rare_protocol_activity,
     }
     handler = handlers.get(plan_type)
     if handler is None:

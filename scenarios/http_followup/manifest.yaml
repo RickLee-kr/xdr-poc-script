@@ -3,7 +3,8 @@ id: http_followup
 name: HTTP Follow-up — Fixed Path Web Access
 version: "1.0.0"
 description: >
-  Generates detectable HTTP access activity using fixed paths across up to 2 hosts.
+  Generates detectable HTTP access activity using fixed paths across up to 2 hosts,
+  followed by a non-standard port connection burst for NDR anomaly pattern simulation.
   Max 10 requests per host, 20 requests total. Not a vulnerability scanner.
 
 category: web
@@ -29,6 +30,20 @@ validation_profile:
       event_filter:
         event: http_response_received
         status: response
+      aggregate: count
+    - name: non_standard_port_connection_attempt_count
+      event_filter:
+        event: non_standard_port_connection_attempt
+        status: sent
+      aggregate: count
+    - name: non_standard_port_connection_success_count
+      event_filter:
+        event: non_standard_port_connection_success
+        status: response
+      aggregate: count
+    - name: non_standard_port_connection_failure_count
+      event_filter:
+        event: non_standard_port_connection_failure
       aggregate: count
   success:
     http_request_sent_count:
@@ -56,7 +71,7 @@ safety:
   max_events: 500
   max_duration_sec: 300
   allowed_domains: []
-  allowed_ports: [80, 8080, 8000, 8008, 8888, 9000]
+  allowed_ports: [80, 8080, 8000, 8008, 8088, 8443, 8888, 9000, 9001, 9443]
   forbidden_actions: []
   target_net_enforced: true
 

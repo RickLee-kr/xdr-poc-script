@@ -109,7 +109,7 @@ def test_http_followup_normal_profile_completes_without_command_timeout(
         targets = resolve_targets("10.10.10.0/24", dry_run=False)
         manifest = build_manifest(request, targets, record)
         assert manifest["execution_timeout_seconds"] >= 120
-        burst = manifest["plan"].get("non_standard_port_burst") or {}
+        burst = manifest["plan"]["non_standard_port_burst"]
         assert not burst.get("enabled") or len(burst.get("requests") or []) <= 15
 
         diag_dir = tmp_path / "diag"

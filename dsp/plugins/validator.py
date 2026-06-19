@@ -16,7 +16,7 @@ CATEGORIES = frozenset(
     {"network", "dns", "web", "auth", "endpoint", "identity", "composite"}
 )
 PROTOCOLS = frozenset(
-    {"dns_udp", "dns_tcp", "http", "https", "ssh", "smb", "ldap", "rdp", "kerberos", "tcp"}
+    {"dns_udp", "dns_tcp", "http", "https", "ssh", "smb", "ldap", "rdp", "kerberos", "tcp", "udp"}
 )
 TARGET_CAPABILITIES = frozenset(
     {
