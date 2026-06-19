@@ -188,22 +188,32 @@ class OperationalConsole:
         from dsp.protocols.http.target_probe import HTTPEndpointProbeResult
 
         probe_rows = data.get("target_probe") or []
-        if not probe_rows:
+        selected_rows = data.get("selected_endpoint_probe") or []
+        if not probe_rows and not selected_rows and not data.get("selected_targets"):
             self._write("HTTP endpoint probe diagnostics:")
             self._write("  (no endpoints probed)")
             self._write("")
             return
         probed = [HTTPEndpointProbeResult.from_dict(dict(row)) for row in probe_rows]
-        selected = [item for item in probed if item.selected]
+        if selected_rows:
+            selected = [HTTPEndpointProbeResult.from_dict(dict(row)) for row in selected_rows]
+        else:
+            selected = [item for item in probed if item.selected]
         selection = HttpFollowupSelection(
             probed=probed,
             selected=selected,
             skip_reason=data.get("skip_reason"),
+            selected_http_target_reason=str(data.get("selected_target_reason") or ""),
         )
         for line in format_http_probe_diagnostic_lines(
             selection,
             discovered_http_hosts=list(data.get("discovered_attack_http_endpoints") or data.get("discovery_http_hosts") or []),
             webshell_endpoint_diagnostics=list(data.get("webshell_endpoint_diagnostics") or []),
+            webshell_mode=bool(
+                data.get("webshell_url")
+                or data.get("execution_host")
+                or data.get("webshell_endpoint_diagnostics")
+            ),
         ):
             self._write(line)
         if data.get("attack_target_net"):

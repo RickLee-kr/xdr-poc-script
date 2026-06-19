@@ -19,6 +19,7 @@ from dsp.protocols.http.urls import HTTP_DETECTION_PORTS, HTTP_PORT_PRIORITY
 from dsp.runtime.scenario_plan import (
     DISCOVERED_HTTP_SERVICE_REASON,
     DISCOVERED_HTTPS_SERVICE_REASON,
+    DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST,
     FALLBACK_NO_DISCOVERED_HTTP_REASON,
     INITIAL_COMPROMISE_ENDPOINT_KEY,
     INITIAL_COMPROMISE_SELECTION_REASON,
@@ -292,6 +293,94 @@ def _attack_target_reason_for_discovery(selection: HttpFollowupSelection) -> str
     return DISCOVERED_HTTP_SERVICE_REASON
 
 
+def _discovered_http_endpoint_tuples(
+    targets: TargetSet,
+    config: dict,
+    *,
+    max_hosts: int,
+) -> list[tuple[str, int]]:
+    """Pick one HTTP endpoint per discovered host from discovery metadata."""
+    if config.get("hosts"):
+        http_hosts = [str(h) for h in config["hosts"]][:max_hosts]
+    else:
+        http_hosts = list(targets.hosts_for_capability("http_targets"))[:max_hosts]
+    if not http_hosts:
+        return []
+
+    discovered = _filter_http_detection_endpoints(
+        _dedupe_endpoints(targets.endpoints_for_capability("http_targets"))
+    )
+    discovered_ports_by_host: dict[str, set[int]] = {}
+    for host, port in discovered:
+        discovered_ports_by_host.setdefault(host, set()).add(port)
+
+    rank = {port: idx for idx, port in enumerate(HTTP_PLAIN_PORTS)}
+    endpoints: list[tuple[str, int]] = []
+    for host in sorted(http_hosts, key=lambda h: tuple(int(p) for p in h.split("."))):
+        ports = discovered_ports_by_host.get(host)
+        if ports:
+            port = min(ports, key=lambda p: (rank.get(p, len(HTTP_PLAIN_PORTS)), p))
+        else:
+            port = HTTP_PLAIN_PORTS[0]
+        endpoints.append((host, port))
+    return endpoints[:max_hosts]
+
+
+def _dsp_probe_failure_summary(probe_summaries: list[dict[str, int | str | bool]]) -> str:
+    if not probe_summaries:
+        return "no endpoints probed"
+    qualities = {response_quality_label(row) for row in probe_summaries}
+    if qualities <= {"connection_error"}:
+        return "connection_error"
+    if qualities <= {"timeout_only"}:
+        return "timeout"
+    if "connection_error" in qualities or "timeout_only" in qualities:
+        return "failed / timeout / connection_error"
+    return "no selectable endpoint from DSP host"
+
+
+def selection_from_discovered_http_hosts_unverified(
+    targets: TargetSet,
+    config: dict,
+    *,
+    probed: list[HTTPEndpointProbeResult],
+    max_hosts: int,
+) -> HttpFollowupSelection:
+    """Webshell mode: keep discovered attack hosts when DSP-side probe cannot verify them."""
+    endpoint_tuples = _discovered_http_endpoint_tuples(
+        targets,
+        config,
+        max_hosts=max_hosts,
+    )
+    if not endpoint_tuples:
+        annotated = annotate_probe_selection(probed, []) if probed else []
+        return HttpFollowupSelection(
+            probed=annotated,
+            selected=[],
+            skip_reason=SKIP_REASON_HTTP_TARGETS_NOT_FOUND,
+            https_targets_skipped=_https_targets_skipped_list(targets),
+        )
+
+    selected = [
+        HTTPEndpointProbeResult(
+            host=host,
+            port=port,
+            scheme="http",
+            selected=True,
+            selection_reason=DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST,
+            rejection_reason="",
+        )
+        for host, port in endpoint_tuples
+    ]
+    annotated = annotate_probe_selection(probed, selected) if probed else selected
+    return HttpFollowupSelection(
+        probed=annotated,
+        selected=selected,
+        selected_http_target_reason=DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST,
+        https_targets_skipped=_https_targets_skipped_list(targets),
+    )
+
+
 def selection_from_initial_compromise(
     endpoint: dict[str, object],
     *,
@@ -354,11 +443,11 @@ def resolve_http_attack_endpoint_selection(
                 https_targets_skipped=selection.https_targets_skipped,
             )
         if webshell_ep is not None:
-            return selection_from_initial_compromise(
-                webshell_ep,
-                dry_run=dry_run,
-                timeout=timeout,
-                selection_reason=FALLBACK_NO_DISCOVERED_HTTP_REASON,
+            return selection_from_discovered_http_hosts_unverified(
+                targets,
+                config,
+                probed=selection.probed,
+                max_hosts=max_hosts,
             )
         return selection
 
@@ -480,11 +569,27 @@ def format_http_probe_diagnostic_lines(
     *,
     discovered_http_hosts: list[str] | None = None,
     webshell_endpoint_diagnostics: list[dict[str, int | str | bool]] | None = None,
+    webshell_mode: bool = False,
 ) -> list[str]:
     """Format operator-readable probe diagnostics for each HTTP endpoint."""
     lines: list[str] = []
+    unverified_webshell = (
+        webshell_mode
+        and selection.selected_http_target_reason
+        == DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST
+    )
+
     if discovered_http_hosts is not None:
-        lines.append(f"discovered_attack_http_endpoints={discovered_http_hosts}")
+        if webshell_mode:
+            lines.append("Discovered HTTP attack hosts:")
+            if discovered_http_hosts:
+                for host in discovered_http_hosts:
+                    lines.append(f"  {host}")
+            else:
+                lines.append("  (none)")
+        else:
+            lines.append(f"discovered_attack_http_endpoints={discovered_http_hosts}")
+
     if webshell_endpoint_diagnostics is not None:
         lines.append("webshell_endpoint_diagnostics:")
         if not webshell_endpoint_diagnostics:
@@ -495,26 +600,60 @@ def format_http_probe_diagnostic_lines(
                 port = int(row["port"])
                 quality = response_quality_label(row)
                 lines.append(f"  {host}:{port} scheme=http response_quality={quality}")
-    lines.append("HTTP endpoint probe diagnostics:")
-    if not selection.probed:
-        lines.append("  (no endpoints probed)")
+
+    if webshell_mode:
+        lines.append("DSP-side endpoint probe:")
+        if unverified_webshell:
+            lines.append(f"  {_dsp_probe_failure_summary(selection.probe_summaries)}")
+        elif not selection.probed:
+            lines.append("  (no endpoints probed)")
+        else:
+            for row in selection.probe_summaries:
+                host = str(row["host"])
+                port = int(row["port"])
+                quality = response_quality_label(row)
+                if row.get("selected"):
+                    status = "selected"
+                    reason = str(row.get("selection_reason") or "")
+                else:
+                    status = "rejected"
+                    reason = str(row.get("rejection_reason") or "")
+                line = f"  {host}:{port} response_quality={quality} {status}"
+                if reason:
+                    line += f" reason={reason}"
+                lines.append(line)
+        if unverified_webshell:
+            lines.append("Webshell mode decision:")
+            lines.append(
+                "  keeping discovered attack hosts because traffic will "
+                "originate from webshell host"
+            )
     else:
-        for row in selection.probe_summaries:
-            host = str(row["host"])
-            port = int(row["port"])
-            label = f"{host}:{port}"
-            quality = response_quality_label(row)
-            if row.get("selected"):
-                status = "selected"
-                reason = str(row.get("selection_reason") or "")
-            else:
-                status = "rejected"
-                reason = str(row.get("rejection_reason") or "")
-            line = f"  {label} scheme=http response_quality={quality} {status}"
-            if reason:
-                line += f" reason={reason}"
-            lines.append(line)
+        lines.append("HTTP endpoint probe diagnostics:")
+        if not selection.probed:
+            lines.append("  (no endpoints probed)")
+        else:
+            for row in selection.probe_summaries:
+                host = str(row["host"])
+                port = int(row["port"])
+                label = f"{host}:{port}"
+                quality = response_quality_label(row)
+                if row.get("selected"):
+                    status = "selected"
+                    reason = str(row.get("selection_reason") or "")
+                else:
+                    status = "rejected"
+                    reason = str(row.get("rejection_reason") or "")
+                line = f"  {label} scheme=http response_quality={quality} {status}"
+                if reason:
+                    line += f" reason={reason}"
+                lines.append(line)
+
     if selection.selected:
+        if webshell_mode:
+            lines.append("Selected attack targets:")
+            for ep in selection.selected:
+                lines.append(f"  {ep.host}:{ep.port} reason={ep.selection_reason}")
         lines.append(f"selected_endpoints={format_selected_target_labels(selection.selected)}")
     else:
         lines.append(
@@ -551,6 +690,7 @@ def print_http_endpoint_probe_diagnostics(
         selection,
         discovered_http_hosts=discovered_http_hosts,
         webshell_endpoint_diagnostics=webshell_probe_rows,
+        webshell_mode=webshell_execution is not None,
     ):
         print(line)
     if attack_target_net:
@@ -579,6 +719,7 @@ def http_target_probe_payload(
         "rejected_targets": selection.rejected_targets,
         "skip_reason": selection.skip_reason,
         "selected_target_reason": selection.selected_http_target_reason,
+        "selected_endpoint_probe": [item.to_dict() for item in selection.selected],
     }
     if attack_target_net:
         payload["attack_target_net"] = attack_target_net

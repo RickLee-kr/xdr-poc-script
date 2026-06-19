@@ -12,11 +12,14 @@ from dsp.protocols.http.urls import HTTP_DETECTION_PORTS
 from dsp.protocols.recon import DEFAULT_PORTS, MAX_PORTS_DEFAULT, plan_port_sweep
 
 INITIAL_COMPROMISE_ENDPOINT_KEY = "initial_compromise_endpoint"
-INITIAL_COMPROMISE_SELECTION_REASON = "initial_compromise_host"
+INITIAL_COMPROMISE_SELECTION_REASON = "initial_compromise_host_explicit_phase1"
 WEBSHELL_EXECUTION_KEY = "_webshell_execution"
 PHASE1_WEBSHELL_ATTACK_KEY = "phase1_webshell_attack"
 DISCOVERED_HTTP_SERVICE_REASON = "discovered_http_service"
 DISCOVERED_HTTPS_SERVICE_REASON = "discovered_https_service"
+DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST = (
+    "discovered_http_service_unverified_from_dsp_host"
+)
 FALLBACK_NO_DISCOVERED_HTTP_REASON = "fallback_no_discovered_http"
 
 
