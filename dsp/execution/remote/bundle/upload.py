@@ -342,12 +342,17 @@ class RemoteCompletionVerification:
     remote_run_dir: str
     events_path: str
     summary_path: str
+    status_path: str
     events_line_count: int | None
     summary_event_count: int | None
     summary_run_id: str | None
     ls_output: str
     events_wc_output: str
     summary_output: str
+    status_output: str
+    events_present: bool
+    summary_present: bool
+    status_present: bool
     reason: str | None = None
 
     def format_report(self) -> str:
@@ -355,6 +360,10 @@ class RemoteCompletionVerification:
             f"remote_run_dir: {self.remote_run_dir}",
             f"events_path: {self.events_path}",
             f"summary_path: {self.summary_path}",
+            f"status_path: {self.status_path}",
+            f"events_present: {self.events_present}",
+            f"summary_present: {self.summary_present}",
+            f"status_present: {self.status_present}",
             f"events_line_count: {self.events_line_count}",
             f"summary_event_count: {self.summary_event_count}",
             f"summary_run_id: {self.summary_run_id}",
@@ -373,6 +382,9 @@ class RemoteCompletionVerification:
                 "",
                 "traffic_summary.json:",
                 self.summary_output,
+                "",
+                "remote_status.json:",
+                self.status_output,
             ]
         )
         return "\n".join(lines)
@@ -384,30 +396,42 @@ def verify_remote_execution_artifacts(
     remote_run_dir: str,
     events_path: str,
     summary_path: str,
+    status_path: str,
     run_id: str,
 ) -> RemoteCompletionVerification:
     """Verify remote run artifacts prove scenario completion without stdout marker."""
     ls_output = _decode_output(
         provider.run_remote_command(f"ls -la {shlex.quote(remote_run_dir)} 2>&1")
     )
+    status_output = _decode_output(
+        provider.run_remote_command(f"cat {shlex.quote(status_path)} 2>&1")
+    )
+    status_present = not _looks_missing(status_output)
+
     if _looks_missing(ls_output):
         return RemoteCompletionVerification(
             ok=False,
             remote_run_dir=remote_run_dir,
             events_path=events_path,
             summary_path=summary_path,
+            status_path=status_path,
             events_line_count=None,
             summary_event_count=None,
             summary_run_id=None,
             ls_output=ls_output,
             events_wc_output="",
             summary_output="",
-            reason="remote bundle directory missing",
+            status_output=status_output,
+            events_present=False,
+            summary_present=False,
+            status_present=status_present,
+            reason=f"remote bundle directory missing: {remote_run_dir}",
         )
 
     events_verification = verify_remote_bundle_exists(provider, events_path)
     events_wc_output = events_verification.wc_output
     events_line_count: int | None = None
+    events_present = events_verification.ok
     if events_verification.ok:
         events_wc_output = _decode_output(
             provider.run_remote_command(f"wc -l < {shlex.quote(events_path)} 2>&1")
@@ -419,13 +443,20 @@ def verify_remote_execution_artifacts(
             remote_run_dir=remote_run_dir,
             events_path=events_path,
             summary_path=summary_path,
+            status_path=status_path,
             events_line_count=events_line_count,
             summary_event_count=None,
             summary_run_id=None,
             ls_output=ls_output,
             events_wc_output=events_wc_output,
             summary_output="",
-            reason=events_verification.reason or "events.jsonl missing or empty",
+            status_output=status_output,
+            events_present=False,
+            summary_present=False,
+            status_present=status_present,
+            reason=(
+                f"{events_path}: {events_verification.reason or 'missing or empty'}"
+            ),
         )
     if events_line_count is None or events_line_count <= 0:
         return RemoteCompletionVerification(
@@ -433,31 +464,42 @@ def verify_remote_execution_artifacts(
             remote_run_dir=remote_run_dir,
             events_path=events_path,
             summary_path=summary_path,
+            status_path=status_path,
             events_line_count=events_line_count,
             summary_event_count=None,
             summary_run_id=None,
             ls_output=ls_output,
             events_wc_output=events_wc_output,
             summary_output="",
-            reason="events.jsonl has no lines",
+            status_output=status_output,
+            events_present=events_present,
+            summary_present=False,
+            status_present=status_present,
+            reason=f"{events_path}: events.jsonl has no lines",
         )
 
     summary_output = _decode_output(
         provider.run_remote_command(f"cat {shlex.quote(summary_path)} 2>&1")
     )
+    summary_present = not _looks_missing(summary_output)
     if _looks_missing(summary_output):
         return RemoteCompletionVerification(
             ok=False,
             remote_run_dir=remote_run_dir,
             events_path=events_path,
             summary_path=summary_path,
+            status_path=status_path,
             events_line_count=events_line_count,
             summary_event_count=None,
             summary_run_id=None,
             ls_output=ls_output,
             events_wc_output=events_wc_output,
             summary_output=summary_output,
-            reason="traffic_summary.json missing",
+            status_output=status_output,
+            events_present=events_present,
+            summary_present=False,
+            status_present=status_present,
+            reason=f"{summary_path}: traffic_summary.json missing",
         )
 
     try:
@@ -468,13 +510,18 @@ def verify_remote_execution_artifacts(
             remote_run_dir=remote_run_dir,
             events_path=events_path,
             summary_path=summary_path,
+            status_path=status_path,
             events_line_count=events_line_count,
             summary_event_count=None,
             summary_run_id=None,
             ls_output=ls_output,
             events_wc_output=events_wc_output,
             summary_output=summary_output,
-            reason="traffic_summary.json is not valid JSON",
+            status_output=status_output,
+            events_present=events_present,
+            summary_present=summary_present,
+            status_present=status_present,
+            reason=f"{summary_path}: traffic_summary.json is not valid JSON",
         )
     if not isinstance(summary_payload, dict):
         return RemoteCompletionVerification(
@@ -482,13 +529,18 @@ def verify_remote_execution_artifacts(
             remote_run_dir=remote_run_dir,
             events_path=events_path,
             summary_path=summary_path,
+            status_path=status_path,
             events_line_count=events_line_count,
             summary_event_count=None,
             summary_run_id=None,
             ls_output=ls_output,
             events_wc_output=events_wc_output,
             summary_output=summary_output,
-            reason="traffic_summary.json is not a JSON object",
+            status_output=status_output,
+            events_present=events_present,
+            summary_present=summary_present,
+            status_present=status_present,
+            reason=f"{summary_path}: traffic_summary.json is not a JSON object",
         )
 
     summary_run_id = str(summary_payload.get("run_id") or "")
@@ -504,13 +556,21 @@ def verify_remote_execution_artifacts(
             remote_run_dir=remote_run_dir,
             events_path=events_path,
             summary_path=summary_path,
+            status_path=status_path,
             events_line_count=events_line_count,
             summary_event_count=summary_event_count,
             summary_run_id=summary_run_id or None,
             ls_output=ls_output,
             events_wc_output=events_wc_output,
             summary_output=summary_output,
-            reason=f"traffic_summary.json run_id mismatch: expected {run_id!r}, got {summary_run_id!r}",
+            status_output=status_output,
+            events_present=events_present,
+            summary_present=summary_present,
+            status_present=status_present,
+            reason=(
+                f"{summary_path}: traffic_summary.json run_id mismatch: "
+                f"expected {run_id!r}, got {summary_run_id!r}"
+            ),
         )
     if summary_event_count is None or summary_event_count <= 0:
         return RemoteCompletionVerification(
@@ -518,13 +578,18 @@ def verify_remote_execution_artifacts(
             remote_run_dir=remote_run_dir,
             events_path=events_path,
             summary_path=summary_path,
+            status_path=status_path,
             events_line_count=events_line_count,
             summary_event_count=summary_event_count,
             summary_run_id=summary_run_id or None,
             ls_output=ls_output,
             events_wc_output=events_wc_output,
             summary_output=summary_output,
-            reason="traffic_summary.json event_count is zero or missing",
+            status_output=status_output,
+            events_present=events_present,
+            summary_present=summary_present,
+            status_present=status_present,
+            reason=f"{summary_path}: traffic_summary.json event_count is zero or missing",
         )
 
     return RemoteCompletionVerification(
@@ -532,12 +597,17 @@ def verify_remote_execution_artifacts(
         remote_run_dir=remote_run_dir,
         events_path=events_path,
         summary_path=summary_path,
+        status_path=status_path,
         events_line_count=events_line_count,
         summary_event_count=summary_event_count,
         summary_run_id=summary_run_id or None,
         ls_output=ls_output,
         events_wc_output=events_wc_output,
         summary_output=summary_output,
+        status_output=status_output,
+        events_present=events_present,
+        summary_present=summary_present,
+        status_present=status_present,
         reason=None,
     )
 

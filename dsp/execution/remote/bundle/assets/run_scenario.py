@@ -37,6 +37,8 @@ class EventLog:
         scenario_version: str,
         schema_version: str,
         source: str = "remote",
+        bundle_path: Path | None = None,
+        status_writer: RemoteStatusWriter | None = None,
     ) -> None:
         self.run_id = run_id
         self.scenario_id = scenario_id
@@ -44,6 +46,8 @@ class EventLog:
         self.schema_version = schema_version
         self.source = source
         self.events: list[dict[str, Any]] = []
+        self._bundle_path = bundle_path
+        self._status_writer = status_writer
 
     def append(
         self,
@@ -70,6 +74,15 @@ class EventLog:
                 "tags": [],
             }
         )
+        self._flush_bundle()
+        if self._status_writer is not None:
+            self._status_writer.update(
+                attempted={"events": len(self.events), "last_event": event},
+            )
+
+    def _flush_bundle(self) -> None:
+        if self._bundle_path is not None:
+            self.write_bundle(self._bundle_path)
 
     def write_bundle(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +109,50 @@ class EventLog:
             "events": [record["event"] for record in self.events],
         }
         path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        if self._status_writer is not None:
+            self._status_writer.update(
+                phase="summary_written",
+                attempted={"events": len(self.events)},
+            )
+
+
+class RemoteStatusWriter:
+    """Heartbeat file for remote bundle execution progress."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        scenario_id: str,
+        planned: dict[str, Any],
+    ) -> None:
+        self.path = path
+        started_at = _utcnow()
+        self._data: dict[str, Any] = {
+            "phase": "starting",
+            "scenario": scenario_id,
+            "started_at": started_at,
+            "last_update": started_at,
+            "planned": planned,
+            "attempted": {"events": 0},
+            "error": None,
+        }
+        self.write()
+
+    def update(self, **fields: Any) -> None:
+        self._data["last_update"] = _utcnow()
+        for key, value in fields.items():
+            if key == "attempted" and isinstance(value, dict):
+                attempted = dict(self._data.get("attempted") or {})
+                attempted.update(value)
+                self._data["attempted"] = attempted
+            else:
+                self._data[key] = value
+        self.write()
+
+    def write(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self._data, indent=2) + "\n", encoding="utf-8")
 
 
 def _required_commands(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -330,7 +387,16 @@ def _run_dns_tunnel(log: EventLog, plan: dict[str, Any]) -> None:
     )
 
 
-def _curl_request(url: str, method: str, timeout: float, user_agent: str, body: bytes | None, content_type: str | None) -> tuple[int | None, str]:
+def _curl_request(
+    url: str,
+    method: str,
+    timeout: float,
+    user_agent: str,
+    body: bytes | None,
+    content_type: str | None,
+    *,
+    connect_timeout: float | None = None,
+) -> tuple[int | None, str]:
     cmd = [
         "curl",
         "-sS",
@@ -345,6 +411,8 @@ def _curl_request(url: str, method: str, timeout: float, user_agent: str, body: 
         "-X",
         method,
     ]
+    if connect_timeout is not None:
+        cmd.extend(["--connect-timeout", str(max(1, int(connect_timeout)))])
     if body is not None:
         cmd.extend(["-H", f"Content-Type: {content_type or 'application/octet-stream'}", "--data-binary", "@-"])
     cmd.append(url)
@@ -368,6 +436,7 @@ def _run_http_followup(log: EventLog, plan: dict[str, Any]) -> None:
         return
     requests = plan.get("requests") or []
     timeout = float(plan.get("timeout", 10.0))
+    connect_timeout = float(plan.get("connect_timeout", timeout))
     mode = plan.get("mode", "live")
     log.append(
         event="http_followup_started",
@@ -389,7 +458,15 @@ def _run_http_followup(log: EventLog, plan: dict[str, Any]) -> None:
             status_code = 404
             outcome = "sent"
         else:
-            status_code, outcome = _curl_request(url, method, timeout, user_agent, None, None)
+            status_code, outcome = _curl_request(
+                url,
+                method,
+                timeout,
+                user_agent,
+                None,
+                None,
+                connect_timeout=connect_timeout,
+            )
         log.append(
             event="http_request_sent",
             status="sent",
@@ -407,7 +484,13 @@ def _run_http_followup(log: EventLog, plan: dict[str, Any]) -> None:
     burst_plan = dict(plan.get("non_standard_port_burst") or {})
     burst_summary: dict[str, Any] = {"enabled": False}
     if burst_plan.get("enabled"):
-        burst_summary = _run_non_standard_port_burst(log, burst_plan, timeout=timeout, mode=mode)
+        burst_summary = _run_non_standard_port_burst(
+            log,
+            burst_plan,
+            timeout=timeout,
+            connect_timeout=connect_timeout,
+            mode=mode,
+        )
     log.append(
         event="http_followup_completed",
         status="info",
@@ -420,6 +503,7 @@ def _run_non_standard_port_burst(
     burst_plan: dict[str, Any],
     *,
     timeout: float,
+    connect_timeout: float,
     mode: str,
 ) -> dict[str, Any]:
     requests = list(burst_plan.get("requests") or [])
@@ -467,7 +551,15 @@ def _run_non_standard_port_burst(
             status_code = 200 if int(item.get("seq") or 0) % 3 else 404
             outcome = "sent"
         else:
-            status_code, outcome = _curl_request(url, method, timeout, user_agent, None, None)
+            status_code, outcome = _curl_request(
+                url,
+                method,
+                timeout,
+                user_agent,
+                None,
+                None,
+                connect_timeout=connect_timeout,
+            )
         result_evidence = dict(base_evidence)
         if status_code is not None:
             result_evidence["status_code"] = status_code
@@ -1122,6 +1214,31 @@ def _dispatch(log: EventLog, manifest: dict[str, Any]) -> None:
     handler(log, plan)
 
 
+def _planned_status(manifest: dict[str, Any]) -> dict[str, Any]:
+    plan = manifest.get("plan") or {}
+    plan_type = str(plan.get("type") or manifest.get("scenario_id") or "")
+    planned: dict[str, Any] = {"type": plan_type, "mode": plan.get("mode")}
+    if plan_type == "http_followup":
+        planned["requests"] = len(plan.get("requests") or [])
+        burst = plan.get("non_standard_port_burst") or {}
+        planned["burst_attempts"] = (
+            len(burst.get("requests") or []) if burst.get("enabled") else 0
+        )
+    elif plan_type == "port_sweep":
+        planned["probes"] = len(plan.get("probes") or [])
+    elif plan_type == "dns_tunnel":
+        planned["queries"] = len(plan.get("queries") or [])
+    elif plan_type == "sql_injection":
+        planned["requests"] = len(plan.get("requests") or [])
+    elif plan_type == "ssh_failure":
+        planned["attempts"] = len(plan.get("attempts") or [])
+    elif plan_type == "host_behavior_check":
+        planned["commands"] = len(plan.get("commands") or [])
+    elif plan_type == "rare_protocol_activity":
+        planned["probes"] = len(plan.get("probes") or [])
+    return planned
+
+
 def main() -> int:
     work_dir = Path(os.environ.get("DSP_BUNDLE_DIR", Path(__file__).resolve().parent))
     manifest_path = work_dir / "manifest.json"
@@ -1132,6 +1249,7 @@ def main() -> int:
     paths = manifest.get("paths") or {}
     bundle_path = work_dir / "events.jsonl"
     summary_path = work_dir / "traffic_summary.json"
+    status_path = work_dir / "remote_status.json"
     # Preserve remote convention for diagnostics only.
     _ = paths.get("bundle")
 
@@ -1142,15 +1260,29 @@ def main() -> int:
         manifest["skip_reason"] = f"missing_remote_commands:{','.join(missing)}"
         manifest["missing_commands"] = missing
 
+    status = RemoteStatusWriter(
+        status_path,
+        scenario_id=str(manifest["scenario_id"]),
+        planned=_planned_status(manifest),
+    )
     log = EventLog(
         run_id=str(manifest["run_id"]),
         scenario_id=str(manifest["scenario_id"]),
         scenario_version=str(manifest.get("scenario_version") or "1.0.0"),
         schema_version=str(manifest.get("schema_version") or "1.0.0"),
+        bundle_path=bundle_path,
+        status_writer=status,
     )
-    _dispatch(log, manifest)
+    status.update(phase="running")
+    try:
+        _dispatch(log, manifest)
+    except Exception as exc:
+        status.update(phase="failed", error=str(exc))
+        log.write_bundle(bundle_path)
+        raise
     log.write_bundle(bundle_path)
     log.write_traffic_summary(summary_path, target_net=manifest.get("target_net"))
+    status.update(phase="completed", attempted={"events": len(log.events)})
     print(json.dumps({"exit_code": 0, "bundle": str(bundle_path), "events": len(log.events)}))
     return 0
 
