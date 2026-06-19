@@ -6,6 +6,7 @@ RELEASE_BRANCH="${RELEASE_BRANCH:-${DSP_RELEASE_BRANCH:-release/v1.4.0-rc}}"
 REPO_URL="${DSP_REPO_URL:-https://github.com/RickLee-kr/xdr-poc-script.git}"
 DSP_REPO_DIR="${DSP_REPO_DIR:-/home/aella/xdr-poc-script}"
 DSP_NO_LAUNCH="${DSP_NO_LAUNCH:-0}"
+DSP_PYTHON_BIN=""
 
 log() {
   printf '[install-dsp] %s\n' "$*"
@@ -21,19 +22,47 @@ require_cmd() {
   command -v "$name" >/dev/null 2>&1 || die "missing required command: ${name}"
 }
 
+die_python311_required() {
+  printf '[install-dsp] ERROR: DSP requires Python 3.11 or newer.\n' >&2
+  printf '[install-dsp] Install Python 3.11+ and venv support, then rerun the installer.\n' >&2
+  printf '[install-dsp] On Ubuntu 22.04:\n' >&2
+  printf '  sudo apt update\n' >&2
+  printf '  sudo apt install -y python3.11 python3.11-venv python3.11-dev\n' >&2
+  exit 1
+}
+
+resolve_python311() {
+  local candidate bin
+  for candidate in python3.13 python3.12 python3.11 python3; do
+    bin="$(command -v "${candidate}" 2>/dev/null || true)"
+    if [[ -z "${bin}" ]]; then
+      continue
+    fi
+    if ! "${bin}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+      continue
+    fi
+    if ! "${bin}" -c 'import venv' 2>/dev/null; then
+      continue
+    fi
+    printf '%s\n' "${bin}"
+    return 0
+  done
+  return 1
+}
+
+select_python311() {
+  local bin
+  if ! bin="$(resolve_python311)"; then
+    die_python311_required
+  fi
+  DSP_PYTHON_BIN="${bin}"
+  log "selected python: ${DSP_PYTHON_BIN}"
+  log "selected python version: $("${DSP_PYTHON_BIN}" --version 2>&1)"
+}
+
 check_prerequisites() {
   require_cmd git
-  require_cmd python3
-
-  if ! python3 -c 'import venv' 2>/dev/null; then
-    die "python3 venv module not available — install python3-venv (e.g. apt install python3-venv)"
-  fi
-
-  if ! python3 -m pip --version >/dev/null 2>&1; then
-    log "pip not found for system python3; trying ensurepip..."
-    python3 -m ensurepip --upgrade >/dev/null 2>&1 || \
-      die "pip is not available — install python3-pip or enable ensurepip"
-  fi
+  select_python311
 }
 
 ensure_dsp_state_dir() {
@@ -61,15 +90,33 @@ clone_or_update_repo() {
   fi
 }
 
+ensure_venv() {
+  local venv_dir="${DSP_REPO_DIR}/.venv"
+
+  if [[ -d "${venv_dir}" ]]; then
+    if ! "${venv_dir}/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+      log "removing existing virtual environment (Python < 3.11): ${venv_dir}"
+      rm -rf "${venv_dir}"
+    fi
+  fi
+
+  if [[ ! -d "${venv_dir}" ]]; then
+    log "creating virtual environment: ${venv_dir}"
+    "${DSP_PYTHON_BIN}" -m venv "${venv_dir}"
+  else
+    log "using existing virtual environment: ${venv_dir}"
+  fi
+
+  if ! "${venv_dir}/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    die "virtual environment Python is older than 3.11 — remove ${venv_dir} and retry"
+  fi
+  log "venv python version: $("${venv_dir}/bin/python" --version 2>&1)"
+}
+
 setup_venv_and_package() {
   cd "${DSP_REPO_DIR}"
 
-  if [[ ! -d .venv ]]; then
-    log "creating virtual environment: ${DSP_REPO_DIR}/.venv"
-    python3 -m venv .venv
-  else
-    log "using existing virtual environment: ${DSP_REPO_DIR}/.venv"
-  fi
+  ensure_venv
 
   .venv/bin/python -m pip install --upgrade pip
   .venv/bin/pip install -e .
