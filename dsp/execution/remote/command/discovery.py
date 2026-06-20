@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import shlex
+from pathlib import Path
 from typing import Any, Callable
 
 from dsp.discovery.legacy_bash import (
@@ -15,6 +18,7 @@ from dsp.execution.remote.command.shell import (
     mock_noop_command,
     tcp_probe_batch_discovery_command,
     tcp_probe_command,
+    wrap_remote_shell_command,
 )
 from dsp.execution.webshell.event_sync.bundle_content import (
     content_preview,
@@ -30,6 +34,10 @@ REMOTE_DISCOVERY_CACHE_KEY = "_remote_discovery_targets"
 DISCOVERY_SCAN_MAX_HOSTS_KEY = "_discovery_scan_max_hosts"
 DEFAULT_REMOTE_DISCOVERY_TIMEOUT = 0.5
 DISCOVERY_PROBE_BATCH_SIZE = 32
+DISCOVERY_RUNNER_NAME = "discover_runner.py"
+DISCOVERY_RUNNER_ASSET = (
+    Path(__file__).resolve().parent / "assets" / "webshell_discovery_runner.py"
+)
 
 
 def resolve_discovery_scan_max_hosts(
@@ -289,6 +297,135 @@ def run_discovery_from_tcp_probes(
     return targets
 
 
+def _resolve_remote_discovery_dir(request: Any) -> tuple[str, str, str]:
+    metadata = dict(getattr(request, "execution_metadata", {}) or {})
+    work_dir = str(metadata.get("remote_work_dir") or "/tmp/dsp").rstrip("/")
+    run_id = str(getattr(request, "run_id", "") or "run")
+    remote_dir = f"{work_dir}/{run_id}"
+    remote_script = f"{remote_dir}/{DISCOVERY_RUNNER_NAME}"
+    remote_output = f"{remote_dir}/discovery_out.json"
+    return remote_dir, remote_script, remote_output
+
+
+def parse_deployed_discovery_output(raw: bytes) -> dict[str, Any]:
+    """Parse JSON discovery payload written by the remote discover_runner script."""
+    text = normalize_webshell_command_output(raw)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError(
+            f"deployed discovery output did not contain JSON (preview={content_preview(raw)})"
+        )
+    payload = json.loads(text[start : end + 1])
+    service_endpoints = payload.get("service_endpoints") or {}
+    normalized_endpoints: dict[str, list[tuple[str, int]]] = {}
+    for key, values in service_endpoints.items():
+        normalized_endpoints[str(key)] = [
+            (str(item[0]), int(item[1])) for item in values
+        ]
+    payload["service_endpoints"] = normalized_endpoints
+    discovery_meta = dict(payload.get("discovery_meta") or {})
+    discovery_meta.setdefault("discovery_origin", DISCOVERY_ORIGIN_WEBSHELL)
+    discovery_meta["planned_only"] = False
+    discovery_meta["discovery_method"] = "deployed_runner"
+    payload["discovery_meta"] = discovery_meta
+    payload["discovery_enabled"] = True
+    return payload
+
+
+def run_deployed_webshell_discovery(
+    provider: Any,
+    request: Any,
+    target_net: str,
+    discovery_max_hosts: int,
+) -> dict[str, Any]:
+    """Upload and execute the self-contained discovery runner on the webshell host."""
+    remote_dir, remote_script, remote_output = _resolve_remote_discovery_dir(request)
+    try:
+        provider.run_remote_command(
+            wrap_remote_shell_command(f"mkdir -p {shlex.quote(remote_dir)}"),
+            timeout_seconds=30.0,
+        )
+        provider.upload_file(DISCOVERY_RUNNER_ASSET, remote_script)
+        expected_size = DISCOVERY_RUNNER_ASSET.stat().st_size
+        size_raw = provider.run_remote_command(
+            f"wc -c < {shlex.quote(remote_script)} 2>&1",
+            timeout_seconds=30.0,
+        )
+        size_text = normalize_webshell_command_output(size_raw).split()[0:1]
+        if not size_text or not size_text[0].isdigit() or int(size_text[0]) < expected_size:
+            raise ValueError(
+                "discover_runner upload verification failed "
+                f"(expected>={expected_size}, got={normalize_webshell_command_output(size_raw)!r})"
+            )
+
+        run_pipeline = (
+            f"python3 {shlex.quote(remote_script)} "
+            f"{shlex.quote(target_net)} {int(discovery_max_hosts)} "
+            f"{shlex.quote(remote_output)} {DEFAULT_REMOTE_DISCOVERY_TIMEOUT}; "
+            f"cat {shlex.quote(remote_output)}"
+        )
+        raw = provider.run_remote_command(
+            wrap_remote_shell_command(run_pipeline),
+            timeout_seconds=max(180.0, discovery_max_hosts * 2.0),
+        )
+        return parse_deployed_discovery_output(raw)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return _failed_deployed_discovery_targets(
+            target_net,
+            discovery_max_hosts=discovery_max_hosts,
+            error=str(exc),
+            output_preview=content_preview(raw) if "raw" in locals() else None,
+            parse_failed=True,
+        )
+    except Exception as exc:
+        return _failed_deployed_discovery_targets(
+            target_net,
+            discovery_max_hosts=discovery_max_hosts,
+            error=str(exc),
+        )
+
+
+def _failed_deployed_discovery_targets(
+    target_net: str,
+    *,
+    discovery_max_hosts: int,
+    error: str,
+    output_preview: str | None = None,
+    parse_failed: bool = False,
+) -> dict[str, Any]:
+    service_hosts, service_endpoints = _empty_service_buckets()
+    discovery_meta: dict[str, Any] = {
+        "probed_hosts": discovery_max_hosts,
+        "alive_hosts": [],
+        "open_endpoints": 0,
+        "service_hosts": service_hosts,
+        "discovery_origin": DISCOVERY_ORIGIN_WEBSHELL,
+        "planned_only": False,
+        "discovery_method": "deployed_runner",
+        "deploy_error": error,
+    }
+    if parse_failed:
+        discovery_meta["parse_failed"] = True
+    if output_preview is not None:
+        discovery_meta["output_preview"] = output_preview
+    return {
+        "target_net": target_net,
+        "hosts": [],
+        "service_hosts": service_hosts,
+        "service_endpoints": {
+            key: list(value) for key, value in service_endpoints.items()
+        },
+        "discovery_enabled": True,
+        "discovery_meta": discovery_meta,
+    }
+
+
+def _discovery_transport_failed(targets: dict[str, Any]) -> bool:
+    meta = targets.get("discovery_meta") or {}
+    return bool(meta.get("parse_failed") or meta.get("deploy_error"))
+
+
 def get_cached_remote_discovery(
     scenario_params: dict[str, Any],
     target_net: str,
@@ -341,13 +478,25 @@ def run_webshell_host_discovery(
             max_hosts=discovery_max_hosts,
         )
 
-    targets = run_discovery_from_tcp_probes(
+    targets = run_deployed_webshell_discovery(
         provider,
+        request,
         target_net,
-        probe_specs,
-        run_id=str(getattr(request, "run_id", "") or ""),
-        on_probe_batch=on_probe_batch,
+        discovery_max_hosts,
     )
+    if _discovery_transport_failed(targets):
+        fallback = run_discovery_from_tcp_probes(
+            provider,
+            target_net,
+            probe_specs,
+            run_id=str(getattr(request, "run_id", "") or ""),
+            on_probe_batch=on_probe_batch,
+        )
+        fallback_meta = dict(fallback.get("discovery_meta") or {})
+        fallback_meta["discovery_fallback"] = "tcp_probe_batch_sh"
+        fallback["discovery_meta"] = fallback_meta
+        targets = fallback
+
     cache_remote_discovery(ctx.config.scenario_params, targets)
     return targets
 
