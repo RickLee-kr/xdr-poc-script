@@ -6,12 +6,11 @@ import base64
 import os
 import random
 import re
-from typing import TYPE_CHECKING, Iterator
+from typing import Iterator
 
+from dsp.engine.host_selection import select_hosts_for_capability
+from dsp.engine.scenario_engine import TargetSet
 from dsp.protocols.base import DnsProtocolError
-
-if TYPE_CHECKING:
-    from dsp.engine.scenario_engine import TargetSet
 
 CHUNK_SIZE_DEFAULT = 30
 PAYLOAD_MB_DEFAULT = 2.0
@@ -114,20 +113,20 @@ def select_tunnel_targets(
     *,
     max_hosts: int = 2,
 ) -> list[str]:
-    """
-    Select live discovery hosts for DNS tunnel traffic.
-
-    Uses alive hosts from discovery — not dns_hosts / port-53 service buckets.
-    """
+    """Select DNS tunnel targets from discovery dns_hosts bucket."""
     if config.get("targets"):
         return [str(t) for t in config["targets"]][:max_hosts]
 
-    if targets.discovery_enabled:
-        alive = targets.discovery_meta.get("alive_hosts")
-        if isinstance(alive, list) and alive:
-            return [str(h) for h in alive][:max_hosts]
+    dns_hosts = select_hosts_for_capability(
+        targets,
+        config,
+        capability="dns_hosts",
+        max_hosts=max_hosts,
+    )
+    if dns_hosts:
+        return dns_hosts
 
-    if targets.hosts:
+    if not targets.discovery_enabled and targets.hosts:
         return [str(h) for h in targets.hosts][:max_hosts]
 
-    return ["10.10.10.20"]
+    return []

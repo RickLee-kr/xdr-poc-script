@@ -81,6 +81,8 @@ class BundleScenarioRunner:
             script_local,
             script_remote,
         )
+        for remote_path, local_path in package.remote_files[2:]:
+            upload_remote_file_verified(provider, local_path, remote_path)
         self._write_upload_diagnostics(
             diag_dir,
             manifest_upload=manifest_upload,

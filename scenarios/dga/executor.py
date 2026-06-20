@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from dsp.engine.host_selection import select_hosts_for_capability
 from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.dns import DnsClient, build_dns_events
@@ -24,11 +25,17 @@ from dsp.protocols.dns.dga_events import (
 
 
 def select_dga_resolver(targets: TargetSet, config: dict) -> str:
-    """Select DNS resolver target without discovery or validation."""
+    """Select DNS resolver from discovery dns_hosts bucket."""
     if config.get("resolver"):
         return str(config["resolver"])
-    if targets.hosts:
-        return targets.hosts[0]
+    dns_hosts = select_hosts_for_capability(
+        targets,
+        config,
+        capability="dns_hosts",
+        max_hosts=1,
+    )
+    if dns_hosts:
+        return dns_hosts[0]
     return "10.10.10.20"
 
 

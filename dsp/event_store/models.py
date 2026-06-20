@@ -32,6 +32,7 @@ class RunStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    FAILED = "failed"
     ABORTED = "aborted"
     CONFIG_ERROR = "config_error"
 

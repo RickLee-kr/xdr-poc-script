@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from dsp.engine.host_selection import select_hosts_for_capability
 from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.ldap import (
@@ -26,12 +27,13 @@ def select_ldap_hosts(
     *,
     max_hosts: int = MAX_HOSTS_DEFAULT,
 ) -> list[str]:
-    """Select up to max_hosts targets without discovery."""
-    if config.get("hosts"):
-        return [str(h) for h in config["hosts"]][:max_hosts]
-    if targets.hosts:
-        return list(targets.hosts)[:max_hosts]
-    return ["10.10.10.30"]
+    """Select LDAP targets from discovery ldap_hosts bucket."""
+    return select_hosts_for_capability(
+        targets,
+        config,
+        capability="ldap_hosts",
+        max_hosts=max_hosts,
+    )
 
 
 def _resolve_ports(config: dict) -> tuple[int, ...]:

@@ -11,6 +11,7 @@ from typing import Any
 
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 _RUNNER_ASSET = _ASSETS_DIR / "run_scenario.py"
+_DISCOVERY_ASSET = _ASSETS_DIR / "remote_discovery.py"
 
 
 @dataclass(frozen=True)
@@ -37,9 +38,15 @@ def pack_scenario_bundle(manifest: dict[str, Any]) -> ScenarioBundlePackage:
     shutil.copyfile(_RUNNER_ASSET, runner_path)
     runner_path.chmod(0o755)
 
+    discovery_path = local_dir / "remote_discovery.py"
+    if not _DISCOVERY_ASSET.is_file():
+        raise FileNotFoundError(f"remote discovery asset not found: {_DISCOVERY_ASSET}")
+    shutil.copyfile(_DISCOVERY_ASSET, discovery_path)
+
     remote_files = (
         (f"{remote_run_dir}/manifest.json", manifest_path),
         (f"{remote_run_dir}/run_scenario.py", runner_path),
+        (f"{remote_run_dir}/remote_discovery.py", discovery_path),
     )
     return ScenarioBundlePackage(
         local_dir=local_dir,

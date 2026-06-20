@@ -16,6 +16,7 @@ from dsp.protocols.http.target_probe import (
     selection_reason_for,
 )
 from dsp.protocols.http.urls import HTTP_DETECTION_PORTS, HTTP_PORT_PRIORITY
+from dsp.runtime.http_endpoint_selection import select_discovered_http_endpoint_tuples
 from dsp.runtime.scenario_plan import (
     DISCOVERED_HTTP_SERVICE_REASON,
     DISCOVERED_HTTPS_SERVICE_REASON,
@@ -301,29 +302,21 @@ def _discovered_http_endpoint_tuples(
 ) -> list[tuple[str, int]]:
     """Pick one HTTP endpoint per discovered host from discovery metadata."""
     if config.get("hosts"):
-        http_hosts = [str(h) for h in config["hosts"]][:max_hosts]
+        http_hosts = [str(h) for h in config["hosts"]]
     else:
-        http_hosts = list(targets.hosts_for_capability("http_targets"))[:max_hosts]
-    if not http_hosts:
+        http_hosts = list(targets.hosts_for_capability("http_targets"))
+    if not http_hosts and not config.get("hosts"):
         return []
 
     discovered = _filter_http_detection_endpoints(
         _dedupe_endpoints(targets.endpoints_for_capability("http_targets"))
     )
-    discovered_ports_by_host: dict[str, set[int]] = {}
-    for host, port in discovered:
-        discovered_ports_by_host.setdefault(host, set()).add(port)
-
-    rank = {port: idx for idx, port in enumerate(HTTP_PLAIN_PORTS)}
-    endpoints: list[tuple[str, int]] = []
-    for host in sorted(http_hosts, key=lambda h: tuple(int(p) for p in h.split("."))):
-        ports = discovered_ports_by_host.get(host)
-        if ports:
-            port = min(ports, key=lambda p: (rank.get(p, len(HTTP_PLAIN_PORTS)), p))
-        else:
-            port = HTTP_PLAIN_PORTS[0]
-        endpoints.append((host, port))
-    return endpoints[:max_hosts]
+    return select_discovered_http_endpoint_tuples(
+        http_hosts=http_hosts,
+        http_endpoints=discovered,
+        max_hosts=max_hosts,
+        explicit_hosts=[str(h) for h in config["hosts"]] if config.get("hosts") else None,
+    )
 
 
 def _dsp_probe_failure_summary(probe_summaries: list[dict[str, int | str | bool]]) -> str:
@@ -421,12 +414,20 @@ def resolve_http_attack_endpoint_selection(
     dry_run: bool = False,
     timeout: float = 10.0,
 ) -> HttpFollowupSelection:
-    """Select HTTP attack targets — discovery first; webshell host only as fallback."""
+    """Select HTTP attack targets using discovery-first rules."""
     explicit_phase1 = bool(config.get(PHASE1_WEBSHELL_ATTACK_KEY))
     webshell_ep = _webshell_execution_endpoint(config)
     has_discovered_http = bool(targets.hosts_for_capability("http_targets"))
 
-    if not explicit_phase1 and has_discovered_http:
+    if explicit_phase1 and webshell_ep is not None:
+        return selection_from_initial_compromise(
+            webshell_ep,
+            dry_run=dry_run,
+            timeout=timeout,
+            selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+        )
+
+    if has_discovered_http:
         selection = probe_and_select_http_followup_endpoints(
             targets,
             config,
@@ -442,22 +443,7 @@ def resolve_http_attack_endpoint_selection(
                 selected_http_target_reason=_attack_target_reason_for_discovery(selection),
                 https_targets_skipped=selection.https_targets_skipped,
             )
-        if webshell_ep is not None:
-            return selection_from_discovered_http_hosts_unverified(
-                targets,
-                config,
-                probed=selection.probed,
-                max_hosts=max_hosts,
-            )
         return selection
-
-    if explicit_phase1 and webshell_ep is not None:
-        return selection_from_initial_compromise(
-            webshell_ep,
-            dry_run=dry_run,
-            timeout=timeout,
-            selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
-        )
 
     if webshell_ep is not None and not has_discovered_http:
         return selection_from_initial_compromise(

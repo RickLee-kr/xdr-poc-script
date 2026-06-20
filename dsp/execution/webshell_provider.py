@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from dsp.engine.orchestrator import run_scenario
 from dsp.engine.scenario_engine import RunContext, ScenarioSummary, TargetSet
 from dsp.execution.base import ExecutionProvider
 from dsp.execution.exceptions import WebshellExecutionConfigError
@@ -15,7 +14,6 @@ from dsp.execution.providers.runtime.command import (
     CommandRequest,
     CommandResult,
 )
-from dsp.execution.providers.runtime.command.command_exceptions import CommandTransportError
 from dsp.execution.providers.runtime.runtime_models import RuntimeArtifact
 from dsp.execution.providers.runtime.transport import TransportRuntimeConfiguration
 from dsp.execution.providers.webshell.common.generic_provider import (
@@ -27,7 +25,6 @@ from dsp.execution.webshell.transport.base import WebshellTransport
 from dsp.execution.webshell.transport.real_http_transport import RealHttpTransport
 from dsp.execution.remote.bundle.models import REMOTE_EXECUTION_MODE_BUNDLE
 from dsp.execution.remote.bundle.runner import BundleScenarioRunner
-from dsp.execution.remote.exceptions import RemoteArtifactUploadError
 from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.plugins.models import PluginRecord
 
@@ -136,15 +133,7 @@ class WebshellExecutionProvider(ExecutionProvider):
             )
 
         if not self._connected:
-            try:
-                self._family_provider.connect()
-            except Exception as exc:
-                if context.dry_run:
-                    context.execution_metadata["delivery_fallback_local"] = True
-                    context.execution_metadata["delivery_fallback_reason"] = str(exc)
-                    self._connected = True
-                    return
-                raise
+            self._family_provider.connect()
             self._connected = True
 
         context.execution_metadata.update(
@@ -168,11 +157,6 @@ class WebshellExecutionProvider(ExecutionProvider):
         snapshot_dir: Path | None = None,
     ) -> ScenarioSummary | None:
         """Deliver scenario execution remotely via webshell command transport."""
-        if context.execution_metadata.get("delivery_fallback_local"):
-            summary = run_scenario(record, ctx, targets, snapshot_dir=snapshot_dir)
-            context.execution_metadata["remote_execution_mode"] = "local_dry_run_fallback"
-            return summary
-
         params = ctx.config.scenario_params.get(record.id, {})
         request = ScenarioExecutionRequest(
             scenario_id=record.id,
@@ -183,22 +167,13 @@ class WebshellExecutionProvider(ExecutionProvider):
             dry_run=context.dry_run,
         )
         runner = BundleScenarioRunner()
-        try:
-            result = runner.run(
-                request,
-                self,
-                targets=targets,
-                record=record,
-                diagnostics_dir=snapshot_dir,
-            )
-        except (CommandTransportError, RemoteArtifactUploadError) as exc:
-            if not context.dry_run:
-                raise
-            context.execution_metadata["delivery_fallback_local"] = True
-            context.execution_metadata["delivery_fallback_reason"] = str(exc)
-            summary = run_scenario(record, ctx, targets, snapshot_dir=snapshot_dir)
-            context.execution_metadata["remote_execution_mode"] = "local_dry_run_fallback"
-            return summary
+        result = runner.run(
+            request,
+            self,
+            targets=targets,
+            record=record,
+            diagnostics_dir=snapshot_dir,
+        )
         context.execution_metadata["remote_scenario_result"] = result.to_dict()
         context.execution_metadata["remote_execution_id"] = result.remote_execution_id
         context.execution_metadata["remote_execution_mode"] = REMOTE_EXECUTION_MODE_BUNDLE

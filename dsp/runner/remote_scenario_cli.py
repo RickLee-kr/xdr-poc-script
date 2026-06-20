@@ -65,7 +65,11 @@ def execute_remote_scenario(request: ScenarioExecutionRequest) -> dict[str, Any]
         config=config,
         dry_run=request.dry_run,
     )
-    targets = resolve_targets(request.target_net)
+    targets = resolve_targets(
+        request.target_net,
+        discovery=not request.dry_run,
+        dry_run=request.dry_run,
+    )
 
     try:
         summary = run_scenario(record, ctx, targets)

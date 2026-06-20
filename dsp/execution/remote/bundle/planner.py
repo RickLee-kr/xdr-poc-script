@@ -6,6 +6,7 @@ import base64
 from typing import Any
 
 from dsp import EVENT_SCHEMA_VERSION
+from dsp.discovery.legacy_bash import DISCOVERY_MAX_HOSTS, FAST_SAFE_DISCOVERY_PORTS
 from dsp.engine.host_selection import resolve_http_endpoint_selection, select_hosts_for_capability
 from dsp.engine.scenario_engine import TargetSet
 from dsp.execution.remote.bundle.models import BUNDLE_SCENARIOS, RemoteScenarioSkip
@@ -114,9 +115,39 @@ def build_skip_manifest(
     }
 
 
+def _uses_remote_discovery(request: ScenarioExecutionRequest) -> bool:
+    """Webshell bundle scenarios discover target_net on the remote host."""
+    return request.execution_metadata.get("traffic_origin_host") == "remote"
+
+
+def _plan_remote_discovery_execute(
+    request: ScenarioExecutionRequest,
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    params = dict(request.scenario_params)
+    max_hosts = int(params.get("max_hosts", DISCOVERY_MAX_HOSTS))
+    return {
+        "type": "remote_discovery_execute",
+        "scenario_id": request.scenario_id,
+        "params": params,
+        "discovery": {
+            "target_net": request.target_net,
+            "max_hosts": max_hosts,
+            "ports": list(FAST_SAFE_DISCOVERY_PORTS),
+            "origin": "webshell_host",
+        },
+        "mode": "mock" if dry_run else "live",
+    }
+
+
 def _build_plan(request: ScenarioExecutionRequest, targets: TargetSet) -> dict[str, Any]:
     params = dict(request.scenario_params)
     scenario_id = request.scenario_id
+    if _uses_remote_discovery(request):
+        if scenario_id == "host_behavior_check":
+            return _plan_host_behavior_check(request, params, dry_run=request.dry_run)
+        return _plan_remote_discovery_execute(request, dry_run=request.dry_run)
     if scenario_id == "port_sweep":
         return _plan_port_sweep(targets, params, dry_run=request.dry_run)
     if scenario_id == "dns_tunnel":

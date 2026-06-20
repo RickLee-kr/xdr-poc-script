@@ -71,7 +71,12 @@ def test_expand_target_net_custom_first_host():
 def test_run_manager_event_targets_match_target_net(tmp_runs_dir, scenario_id: str, mock_curl_http):
     manager = RunManager(runs_dir=tmp_runs_dir)
     scenario_params = {
-        "dns_tunnel": {"max_chunks": 2, "max_hosts": 1, "timeout": 0.05},
+        "dns_tunnel": {
+            "targets": ["221.139.249.1"],
+            "max_chunks": 2,
+            "max_hosts": 1,
+            "timeout": 0.05,
+        },
         "http_followup": {
             "endpoints": [["221.139.249.110", 8080]],
             "max_hosts": 1,
@@ -113,7 +118,12 @@ def test_run_manager_metadata_and_events_consistent(tmp_runs_dir):
         target_net=CUSTOM_TARGET_NET,
         dry_run=False,
         scenario_params={
-            "dns_tunnel": {"max_chunks": 2, "max_hosts": 1, "timeout": 0.05},
+            "dns_tunnel": {
+            "targets": ["221.139.249.1"],
+            "max_chunks": 2,
+            "max_hosts": 1,
+            "timeout": 0.05,
+        },
             "http_followup": {"max_hosts": 1, "max_per_host": 1, "max_total": 1, "timeout": 1.0},
             "port_sweep": {"max_hosts": 1, "max_ports": 2, "timeout": 1.0},
         },

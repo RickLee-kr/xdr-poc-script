@@ -15,8 +15,11 @@ FAST_SAFE_DISCOVERY_PORTS: tuple[int, ...] = (
     22,
     53,
     80,
+    88,
+    389,
     443,
     445,
+    636,
     8080,
     8443,
     8888,
@@ -35,6 +38,9 @@ PORT_CAPABILITY_MAP: dict[int, str] = {
     9090: "http_targets",
     22: "ssh_hosts",
     53: "dns_hosts",
+    88: "kerberos_hosts",
+    389: "ldap_hosts",
+    636: "ldap_hosts",
     445: "smb_hosts",
 }
 
@@ -106,6 +112,8 @@ def discover_services(
     service_hosts: dict[str, list[str]] = {
         "ssh_hosts": [],
         "dns_hosts": [],
+        "kerberos_hosts": [],
+        "ldap_hosts": [],
         "http_targets": [],
         "https_targets": [],
         "smb_hosts": [],
@@ -113,6 +121,8 @@ def discover_services(
     service_endpoints: dict[str, list[HttpEndpoint]] = {
         "ssh_hosts": [],
         "dns_hosts": [],
+        "kerberos_hosts": [],
+        "ldap_hosts": [],
         "http_targets": [],
         "https_targets": [],
         "smb_hosts": [],

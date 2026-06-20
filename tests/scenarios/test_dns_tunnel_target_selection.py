@@ -29,23 +29,19 @@ def _targets(*, alive: list[str], dns_hosts: list[str] | None = None) -> TargetS
     )
 
 
-def test_select_tunnel_targets_uses_alive_hosts_not_dns_hosts() -> None:
+def test_select_tunnel_targets_prefers_dns_hosts_bucket() -> None:
     targets = _targets(alive=["10.10.10.97", "10.10.10.98"], dns_hosts=["10.10.10.20"])
     selected = select_tunnel_targets(targets, {}, max_hosts=2)
-    assert selected == ["10.10.10.97", "10.10.10.98"]
-    assert "10.10.10.20" not in selected
+    assert selected == ["10.10.10.20"]
 
 
-def test_select_tunnel_targets_runs_without_discovered_port_53() -> None:
+def test_select_tunnel_targets_without_dns_hosts_returns_empty() -> None:
     targets = _targets(alive=["10.10.10.50", "10.10.10.51"], dns_hosts=[])
-    assert select_tunnel_targets(targets, {}, max_hosts=2) == [
-        "10.10.10.50",
-        "10.10.10.51",
-    ]
+    assert select_tunnel_targets(targets, {}, max_hosts=2) == []
 
 
 def test_local_and_webshell_dns_tunnel_plans_match() -> None:
-    targets = _targets(alive=["10.10.10.97", "10.10.10.98"])
+    targets = _targets(alive=["10.10.10.97", "10.10.10.98"], dns_hosts=["10.10.10.97", "10.10.10.98"])
     params = {
         "payload_mb": 0.0001,
         "max_chunks": 3,
@@ -80,7 +76,7 @@ def test_live_executor_sends_udp_for_every_planned_query(tmp_path) -> None:
         config=MagicMock(scenario_params={"dns_tunnel": {}}),
         dry_run=False,
     )
-    targets = _targets(alive=["10.10.10.97"])
+    targets = _targets(alive=["10.10.10.97"], dns_hosts=["10.10.10.97"])
 
     executor_path = Path(__file__).resolve().parents[2] / "scenarios" / "dns_tunnel" / "executor.py"
     spec = importlib.util.spec_from_file_location("dns_tunnel_executor", executor_path)
@@ -127,7 +123,7 @@ def test_no_response_does_not_suppress_tunnel_query_sent(tmp_path) -> None:
         config=MagicMock(scenario_params={"dns_tunnel": {}}),
         dry_run=False,
     )
-    targets = _targets(alive=["10.10.10.97"])
+    targets = _targets(alive=["10.10.10.97"], dns_hosts=["10.10.10.97"])
 
     executor_path = Path(__file__).resolve().parents[2] / "scenarios" / "dns_tunnel" / "executor.py"
     spec = importlib.util.spec_from_file_location("dns_tunnel_executor_err", executor_path)

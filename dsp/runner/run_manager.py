@@ -28,12 +28,15 @@ from dsp.runtime.scenario_plan import (
     WEBSHELL_EXECUTION_KEY,
     apply_webshell_initial_compromise_plan,
 )
+from dsp.runtime.webshell_phase1 import run_webshell_phase1_attack
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
+from dsp.execution.providers.runtime.command.command_exceptions import CommandTransportError
 from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
+from dsp.execution.remote.exceptions import RemoteArtifactUploadError
 from dsp.execution.remote.paths import resolve_remote_bundle_path
 from dsp.execution.webshell_provider import WebshellExecutionProvider
-from dsp.event_store import EventQuery, EventStore, Run, RunStatus, ValidationDecision
+from dsp.event_store import Event, EventQuery, EventStore, Run, RunStatus, ValidationDecision
 from dsp.manual_verification import (
     ManualVerificationPackageGenerator,
     ManualVerificationRequest,
@@ -50,6 +53,51 @@ from dsp.validation import ValidationEngine
 SUPPORTED_EXECUTION_PROVIDERS = frozenset({"local", "webshell"})
 SUPPORTED_WEBSHELL_FAMILIES = frozenset({"jsp", "php", "aspx"})
 DEFAULT_REMOTE_WORK_DIR = "/tmp/dsp"
+WEBSHELL_CONNECT_FAILED_REASON = "webshell_connect_failed"
+WEBSHELL_TRANSPORT_FAILED_REASON = "webshell_transport_failed"
+
+
+def _append_scenario_skipped(
+    store: EventStore,
+    *,
+    run_id: str,
+    scenario_id: str,
+    reason: str,
+    stage: str = "prepare",
+    error: str | None = None,
+) -> None:
+    evidence: dict[str, Any] = {"reason": reason}
+    if error is not None:
+        evidence["error"] = error
+    store.append(
+        Event(
+            run_id=run_id,
+            scenario_id=scenario_id,
+            timestamp=datetime.now(timezone.utc),
+            stage=stage,
+            event="scenario_skipped",
+            status="info",
+            source="runner",
+            evidence=evidence,
+        )
+    )
+
+
+def _record_webshell_connect_failure(
+    store: EventStore,
+    *,
+    run_id: str,
+    scenario_ids: list[str],
+    error: str,
+) -> None:
+    for sid in scenario_ids:
+        _append_scenario_skipped(
+            store,
+            run_id=run_id,
+            scenario_id=sid,
+            reason=WEBSHELL_CONNECT_FAILED_REASON,
+            error=error,
+        )
 
 
 def _latest_skip_evidence(
@@ -392,7 +440,9 @@ class RunManager:
             def discovery_progress(payload: dict[str, int]) -> None:
                 emitter.emit("discovery_progress", payload)
 
-        if emitter is not None and not dry_run:
+        is_webshell = execution_provider == "webshell" and bool(webshell_url)
+
+        if emitter is not None and not dry_run and not is_webshell:
             candidate_hosts = len(
                 expand_target_net_hosts(target_net, max_hosts=max_hosts or DISCOVERY_MAX_HOSTS)
             )
@@ -408,12 +458,12 @@ class RunManager:
         targets = resolve_targets(
             target_net,
             max_hosts=max_hosts or 254,
-            discovery=not dry_run,
+            discovery=not dry_run and not is_webshell,
             dry_run=dry_run,
-            on_discovery_progress=discovery_progress,
+            on_discovery_progress=discovery_progress if not is_webshell else None,
         )
 
-        if execution_provider == "webshell" and webshell_url:
+        if is_webshell:
             apply_webshell_initial_compromise_plan(
                 config.scenario_params,
                 scenario_ids,
@@ -424,57 +474,64 @@ class RunManager:
                     "webshell_family"
                 ] = webshell_family
 
-        cache_http_endpoint_selection(
-            config.scenario_params,
-            scenario_ids=scenario_ids,
-            targets=targets,
-            dry_run=dry_run,
-        )
-        http_probe_selection = print_http_endpoint_probe_diagnostics(
-            config.scenario_params,
-            scenario_ids,
-            discovered_http_hosts=targets.hosts_for_capability("http_targets"),
-            webshell_execution=config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
-            if execution_provider == "webshell"
-            else None,
-            attack_target_net=target_net,
-        )
-        if http_probe_selection is not None:
-            probe_payload = http_target_probe_payload(
-                http_probe_selection,
+        if not is_webshell:
+            cache_http_endpoint_selection(
+                config.scenario_params,
+                scenario_ids=scenario_ids,
+                targets=targets,
+                dry_run=dry_run,
+            )
+            http_probe_selection = print_http_endpoint_probe_diagnostics(
+                config.scenario_params,
+                scenario_ids,
                 discovered_http_hosts=targets.hosts_for_capability("http_targets"),
-                webshell_execution=config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
-                if execution_provider == "webshell"
-                else None,
+                webshell_execution=None,
                 attack_target_net=target_net,
             )
-            (run_dir / "http_target_probe.json").write_text(
-                json.dumps(probe_payload, indent=2),
-                encoding="utf-8",
-            )
-            if emitter is not None:
-                emitter.emit("http_probe_diagnostics", probe_payload)
+            if http_probe_selection is not None:
+                probe_payload = http_target_probe_payload(
+                    http_probe_selection,
+                    discovered_http_hosts=targets.hosts_for_capability("http_targets"),
+                    webshell_execution=None,
+                    attack_target_net=target_net,
+                )
+                (run_dir / "http_target_probe.json").write_text(
+                    json.dumps(probe_payload, indent=2),
+                    encoding="utf-8",
+                )
+                if emitter is not None:
+                    emitter.emit("http_probe_diagnostics", probe_payload)
 
         if emitter is not None:
-            if dry_run:
+            if dry_run and not is_webshell:
                 emitter.emit("discovery_started", {"target_net": target_net})
-            emitter.emit(
-                "discovery_completed",
-                {
-                    "hosts_found": len(targets.hosts),
-                    "probed_hosts": targets.discovery_meta.get("probed_hosts", 0),
-                    "alive_hosts": targets.discovery_meta.get("alive_hosts", []),
-                    "open_endpoints": targets.discovery_meta.get("open_endpoints", 0),
-                    "service_hosts": targets.discovery_meta.get("service_hosts", {}),
-                },
-            )
+            if not is_webshell:
+                emitter.emit(
+                    "discovery_completed",
+                    {
+                        "hosts_found": len(targets.hosts),
+                        "probed_hosts": targets.discovery_meta.get("probed_hosts", 0),
+                        "alive_hosts": targets.discovery_meta.get("alive_hosts", []),
+                        "open_endpoints": targets.discovery_meta.get("open_endpoints", 0),
+                        "service_hosts": targets.discovery_meta.get("service_hosts", {}),
+                    },
+                )
+            elif is_webshell:
+                emitter.emit(
+                    "discovery_deferred",
+                    {
+                        "target_net": target_net,
+                        "discovery_origin": "webshell_host",
+                        "message": "target_net discovery runs on webshell host",
+                    },
+                )
             selected = resolve_selected_targets_by_protocol(
                 scenario_ids,
                 targets,
                 config.scenario_params,
-            )
+            ) if not is_webshell else {}
             targets_payload: dict[str, Any] = {"groups": selected}
-            if execution_provider == "webshell" and webshell_url:
+            if is_webshell:
                 ws_ctx = config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
                 if isinstance(ws_ctx, dict):
                     targets_payload["execution_host"] = {
@@ -506,7 +563,59 @@ class RunManager:
                 run_id,
             )
 
-        provider.prepare(exec_ctx)
+        if is_webshell:
+            phase1 = run_webshell_phase1_attack(webshell_url, dry_run=dry_run)
+            exec_ctx.execution_metadata["phase1_webshell_attack"] = phase1.to_dict()
+            if emitter is not None:
+                emitter.emit("phase1_webshell_attack_completed", phase1.to_dict())
+            (run_dir / "phase1_webshell_attack.json").write_text(
+                json.dumps(phase1.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+
+        try:
+            provider.prepare(exec_ctx)
+        except Exception as exc:
+            provider.cleanup(exec_ctx)
+            if not is_webshell:
+                raise
+            _record_webshell_connect_failure(
+                store,
+                run_id=run_id,
+                scenario_ids=scenario_ids,
+                error=str(exc),
+            )
+            run.status = RunStatus.FAILED
+            run.ended_at = datetime.now(timezone.utc)
+            run.config_snapshot["webshell_connect_failure"] = str(exc)
+            if emitter is not None:
+                emitter.emit(
+                    "webshell_connect_failed",
+                    {"error": str(exc), "reason": WEBSHELL_CONNECT_FAILED_REASON},
+                )
+            validator = ValidationEngine(store, self.registry)
+            results = validator.validate_run(run_id, scenario_ids)
+            validator.write_validation_json(run_dir / "validation.json", results)
+            store.export_jsonl(run_dir / "events.jsonl")
+            store.close_run()
+            self._write_run_json(run_dir / "run.json", run)
+            exit_code = compute_exit_code(results)
+            duration_sec = (datetime.now(timezone.utc) - run_started_at).total_seconds()
+            if emitter is not None:
+                emitter.emit(
+                    "run_completed",
+                    {
+                        "duration_sec": duration_sec,
+                        "event_count": store.count(EventQuery(run_id=run_id)),
+                        "summaries": {},
+                        "run_dir": str(run_dir),
+                        "validation_warnings": format_validation_warnings(results),
+                        "webshell_connect_failed": True,
+                    },
+                )
+            store.close()
+            return run, run_dir, exit_code
+
         collector = RemoteEventCollector() if execution_provider == "webshell" else None
 
         summaries: dict[str, dict] = {}
@@ -529,18 +638,32 @@ class RunManager:
                                 targets,
                                 params,
                                 profile=operational_profile,
+                                webshell_mode=is_webshell,
                             ),
                             "run_dir": str(run_dir),
                         },
                     )
                     emitter.on_scenario_started(sid)
-                summary = provider.execute(
-                    exec_ctx,
-                    record,
-                    ctx,
-                    targets,
-                    snapshot_dir=run_dir,
-                )
+                try:
+                    summary = provider.execute(
+                        exec_ctx,
+                        record,
+                        ctx,
+                        targets,
+                        snapshot_dir=run_dir,
+                    )
+                except (CommandTransportError, RemoteArtifactUploadError) as exc:
+                    if not is_webshell:
+                        raise
+                    _append_scenario_skipped(
+                        store,
+                        run_id=run_id,
+                        scenario_id=sid,
+                        reason=WEBSHELL_TRANSPORT_FAILED_REASON,
+                        stage="executor",
+                        error=str(exc),
+                    )
+                    summary = None
                 if summary:
                     summaries[sid] = {
                         "scenario_id": summary.scenario_id,
@@ -579,7 +702,7 @@ class RunManager:
                         )
 
                 if execution_provider == "webshell" and collector is not None:
-                    if exec_ctx.execution_metadata.get("delivery_fallback_local"):
+                    if _scenario_executor_skipped(store, run_id, sid):
                         continue
                     assert isinstance(provider, WebshellExecutionProvider)
                     remote_execution_id = exec_ctx.execution_metadata.get(

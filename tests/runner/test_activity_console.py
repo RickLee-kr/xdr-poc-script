@@ -39,9 +39,11 @@ def test_selected_targets_output() -> None:
             "http_targets": ["221.139.249.110"],
             "https_targets": ["221.139.249.113"],
             "dns_hosts": ["221.139.249.1"],
+            "ldap_hosts": ["221.139.249.102"],
         },
         service_endpoints={
             "http_targets": [("221.139.249.110", 80)],
+            "ldap_hosts": [("221.139.249.102", 389)],
         },
     )
     scenario_ids = ["port_sweep", "dns_tunnel", "http_followup", "ldap_enumeration"]

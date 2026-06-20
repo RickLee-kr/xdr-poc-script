@@ -66,6 +66,7 @@ def test_packager_writes_manifest_and_runner(tmp_path: Path) -> None:
     package = pack_scenario_bundle(manifest)
     assert (package.local_dir / "manifest.json").is_file()
     assert (package.local_dir / "run_scenario.py").is_file()
+    assert (package.local_dir / "remote_discovery.py").is_file()
     assert package.remote_files[0][0] == "/tmp/dsp/run01/manifest.json"
 
 

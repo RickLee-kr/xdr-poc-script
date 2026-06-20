@@ -10,7 +10,7 @@ from dsp.engine.host_selection import (
     resolve_http_endpoint_selection,
 )
 from dsp.engine.scenario_engine import TargetSet
-from dsp.execution.remote.bundle.planner import _plan_http_followup, _plan_sql_injection
+from dsp.execution.remote.bundle.assets.remote_discovery import build_plan_from_discovery
 from dsp.runtime.operational_profiles import (
     DISCOVERY_FIRST_SCENARIO_ORDER,
     HOST_BEHAVIOR_CHECK_SCENARIO_ID,
@@ -92,7 +92,7 @@ def test_profiles_preserve_discovery_first_ordering(profile: str) -> None:
 
 
 def test_webshell_http_followup_targets_discovered_hosts_when_available() -> None:
-    """Webshell host is execution-only; discovered HTTP hosts are attack targets."""
+    """Follow-up HTTP targets come from remote discovery on the webshell host."""
     webshell_url = "http://10.10.10.50:8080/shell.jsp"
     params = build_operational_scenario_params(
         "low",
@@ -111,12 +111,24 @@ def test_webshell_http_followup_targets_discovered_hosts_when_available() -> Non
     assert selection.selected
     assert selection.selected[0].host == "10.10.10.97"
 
-    remote_plan = _plan_http_followup(targets, params["http_followup"], dry_run=True)
+    remote_plan = build_plan_from_discovery(
+        "http_followup",
+        {
+            "target_net": targets.target_net,
+            "hosts": targets.hosts,
+            "service_hosts": targets.service_hosts,
+            "service_endpoints": {
+                key: list(value) for key, value in targets.service_endpoints.items()
+            },
+        },
+        params["http_followup"],
+        dry_run=True,
+    )
     assert "10.10.10.97" in remote_plan["requests"][0]["url"]
 
 
 def test_webshell_sql_injection_targets_discovered_hosts_when_available() -> None:
-    """Webshell host is execution-only; discovered HTTP hosts are SQLi targets."""
+    """Follow-up SQLi targets come from remote discovery on the webshell host."""
     webshell_url = "http://10.10.10.50:8080/shell.jsp"
     params = build_operational_scenario_params(
         "normal",
@@ -134,7 +146,19 @@ def test_webshell_sql_injection_targets_discovered_hosts_when_available() -> Non
     )
     assert selection.selected[0].host == "10.10.10.97"
 
-    remote_plan = _plan_sql_injection(targets, params["sql_injection"], dry_run=True)
+    remote_plan = build_plan_from_discovery(
+        "sql_injection",
+        {
+            "target_net": targets.target_net,
+            "hosts": targets.hosts,
+            "service_hosts": targets.service_hosts,
+            "service_endpoints": {
+                key: list(value) for key, value in targets.service_endpoints.items()
+            },
+        },
+        params["sql_injection"],
+        dry_run=True,
+    )
     assert remote_plan["requests"]
     assert "10.10.10.97" in remote_plan["requests"][0]["url"]
 

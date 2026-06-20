@@ -19,6 +19,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from remote_discovery import resolve_remote_discovery_plan
+except ImportError:  # pragma: no cover - local unit tests without bundle layout
+    resolve_remote_discovery_plan = None
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -1208,6 +1213,27 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
 def _dispatch(log: EventLog, manifest: dict[str, Any]) -> None:
     plan = manifest.get("plan") or {}
     plan_type = plan.get("type")
+    if plan_type == "remote_discovery_execute":
+        if resolve_remote_discovery_plan is None:
+            _write_skip(log, manifest, "remote_discovery_module_missing", [])
+            return
+        log.append(
+            event="remote_discovery_started",
+            status="info",
+            evidence={
+                "target_net": (plan.get("discovery") or {}).get("target_net"),
+                "discovery_origin": "webshell_host",
+            },
+        )
+        resolved_plan = resolve_remote_discovery_plan(plan)
+        discovery_result = resolved_plan.pop("discovery_result", None)
+        log.append(
+            event="remote_discovery_completed",
+            status="info",
+            evidence={"discovery_result": discovery_result or {}},
+        )
+        plan = resolved_plan
+        plan_type = plan.get("type")
     if manifest.get("skipped"):
         _write_skip(
             log,
@@ -1239,7 +1265,10 @@ def _planned_status(manifest: dict[str, Any]) -> dict[str, Any]:
     plan = manifest.get("plan") or {}
     plan_type = str(plan.get("type") or manifest.get("scenario_id") or "")
     planned: dict[str, Any] = {"type": plan_type, "mode": plan.get("mode")}
-    if plan_type == "http_followup":
+    if plan_type == "remote_discovery_execute":
+        planned["discovery_origin"] = "webshell_host"
+        planned["target_net"] = (plan.get("discovery") or {}).get("target_net")
+    elif plan_type == "http_followup":
         planned["requests"] = len(plan.get("requests") or [])
         burst = plan.get("non_standard_port_burst") or {}
         planned["burst_attempts"] = (

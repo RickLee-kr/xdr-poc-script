@@ -100,8 +100,21 @@ def scenario_start_metadata(
     params: dict[str, Any],
     *,
     profile: str | None = None,
+    webshell_mode: bool = False,
 ) -> dict[str, Any]:
     """Build metadata lines for scenario STARTED progress output."""
+    if webshell_mode:
+        meta: dict[str, Any] = {
+            "discovery_origin": "webshell_host",
+            "target_net": targets.target_net,
+            "selection_deferred": True,
+        }
+        if scenario_id in ("http_followup", "sql_injection"):
+            meta["remote_discovery"] = "remote_discovery_execute"
+        if scenario_id == "port_sweep":
+            meta["selection_reason"] = "alive_hosts_from_remote_discovery"
+        return meta
+
     hosts = resolve_scenario_targets(scenario_id, targets, params)
     meta: dict[str, Any] = {"targets": len(hosts)}
     if scenario_id == "port_sweep":
