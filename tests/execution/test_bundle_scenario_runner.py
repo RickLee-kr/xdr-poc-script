@@ -14,6 +14,7 @@ from dsp.execution.providers.runtime.command import CommandExecutionPolicy
 from dsp.execution.providers.runtime.transport import TransportRuntimeConfiguration
 from dsp.execution.providers.webshell.jsp import JspWebshellProvider
 from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
+from dsp.execution.remote.command.models import REMOTE_EXECUTION_MODE_COMMAND
 from dsp.execution.remote.bundle.models import BUNDLE_SCENARIOS, REMOTE_EXECUTION_MODE_BUNDLE
 from dsp.execution.remote.bundle.packager import pack_scenario_bundle
 from dsp.execution.remote.bundle.planner import build_manifest
@@ -70,7 +71,7 @@ def test_packager_writes_manifest_and_runner(tmp_path: Path) -> None:
     assert package.remote_files[0][0] == "/tmp/dsp/run01/manifest.json"
 
 
-def test_webshell_host_without_dsp_remote_scenario_runs_port_sweep(
+def test_webshell_live_path_uses_command_mode_without_runtime_upload(
     tmp_path: Path,
 ) -> None:
     server = WebshellTestServer(storage_dir=tmp_path / "server")
@@ -80,7 +81,7 @@ def test_webshell_host_without_dsp_remote_scenario_runs_port_sweep(
         record = loader.discover_and_load().get("port_sweep")
         assert record is not None
         provider = _connected_provider(server)
-        run_id = "bundle_port_sweep"
+        run_id = "cmd_port_sweep"
         store = EventStore(tmp_path / "events.db")
         store.open_run(run_id)
         exec_ctx = ExecutionContext(
@@ -89,7 +90,10 @@ def test_webshell_host_without_dsp_remote_scenario_runs_port_sweep(
             dry_run=True,
             provider_type="webshell",
             scenario_id="port_sweep",
-            execution_metadata={"remote_work_dir": "/tmp/dsp"},
+            execution_metadata={
+                "remote_work_dir": "/tmp/dsp",
+                "traffic_origin_host": "remote",
+            },
         )
         run_ctx = RunContext(
             run_id=run_id,
@@ -105,31 +109,23 @@ def test_webshell_host_without_dsp_remote_scenario_runs_port_sweep(
         provider.prepare(exec_ctx)
         provider.execute(exec_ctx, record, run_ctx, targets)
 
-        assert exec_ctx.execution_metadata["remote_execution_mode"] == REMOTE_EXECUTION_MODE_BUNDLE
-        assert server.upload_calls, "bundle files were not uploaded"
-        assert any("run_scenario.py" in call for call in server.upload_calls)
-        assert not any(call.startswith("dsp-remote-scenario ") for call in server.command_calls)
-        assert any(call.startswith("python3 ") for call in server.command_calls)
+        assert exec_ctx.execution_metadata["remote_execution_mode"] == REMOTE_EXECUTION_MODE_COMMAND
+        assert not any("run_scenario.py" in call for call in server.upload_calls)
+        assert not any("manifest.json" in call for call in server.upload_calls)
+        assert server.command_calls, "webshell commands were not dispatched"
 
-        bundle_path = remote_bundle_path_for_run(run_id)
-        collection = RemoteEventCollector().collect(
-            RemoteEventCollectionRequest(
-                remote_execution_id=run_id,
-                remote_bundle_path=bundle_path,
-            ),
-            provider,
-            store,
-        )
         provider.cleanup(exec_ctx)
-        assert collection.events_imported >= 3
-        bundle = load_jsonl_bundle(collection.local_bundle_path)
-        assert bundle.metadata.scenario_id == "port_sweep"
-        assert any(event["event"] == "port_sweep_started" for event in bundle.events)
+        assert store.count(
+            EventQuery(run_id=run_id, scenario_id="port_sweep", event="port_sweep_started")
+        ) >= 1
+        assert store.count(
+            EventQuery(run_id=run_id, scenario_id="port_sweep", event="webshell_command_dispatched")
+        ) >= 1
     finally:
         server.stop()
 
 
-def test_webshell_bundle_host_behavior_check_generates_events(tmp_path: Path) -> None:
+def test_webshell_command_mode_host_behavior_check_generates_events(tmp_path: Path) -> None:
     server = WebshellTestServer(storage_dir=tmp_path / "server")
     url = server.start()
     try:
@@ -137,7 +133,7 @@ def test_webshell_bundle_host_behavior_check_generates_events(tmp_path: Path) ->
         record = loader.discover_and_load().get("host_behavior_check")
         assert record is not None
         provider = _connected_provider(server)
-        run_id = "bundle_host_behavior"
+        run_id = "cmd_host_behavior"
         store = EventStore(tmp_path / "events.db")
         store.open_run(run_id)
         scenario_params: dict[str, dict] = {}
@@ -156,6 +152,7 @@ def test_webshell_bundle_host_behavior_check_generates_events(tmp_path: Path) ->
             execution_metadata={
                 "remote_work_dir": "/tmp/dsp",
                 "webshell_family": "jsp",
+                "traffic_origin_host": "remote",
             },
         )
         run_ctx = RunContext(
@@ -171,26 +168,12 @@ def test_webshell_bundle_host_behavior_check_generates_events(tmp_path: Path) ->
         targets = resolve_targets("127.0.0.0/30", dry_run=True)
         provider.prepare(exec_ctx)
         provider.execute(exec_ctx, record, run_ctx, targets)
-
-        bundle_path = remote_bundle_path_for_run(run_id)
-        collection = RemoteEventCollector().collect(
-            RemoteEventCollectionRequest(
-                remote_execution_id=run_id,
-                remote_bundle_path=bundle_path,
-            ),
-            provider,
-            store,
-        )
         provider.cleanup(exec_ctx)
-        bundle = load_jsonl_bundle(collection.local_bundle_path)
-        event_names = {event["event"] for event in bundle.events}
+        event_names = {event.event for event in store.list_events(run_id)}
         assert "host_behavior_check_started" in event_names
         assert "host_behavior_command_dispatched" in event_names
-        assert "eicar_file_created" in event_names
-        assert "eicar_variant_created" in event_names
-        assert "credential_artifact_enumeration" in event_names
+        assert not any("run_scenario.py" in call for call in server.upload_calls)
         assert "host_behavior_check_completed" in event_names
-        assert collection.events_imported >= 20
     finally:
         server.stop()
 
@@ -279,35 +262,33 @@ def test_bundle_runner_builds_manifest_for_supported_scenario() -> None:
     assert manifest["paths"]["bundle"] == "/tmp/dsp/plan01/events.jsonl"
 
 
-def test_webshell_provider_uses_bundle_mode_metadata(tmp_path: Path) -> None:
-    backend_calls: list[str] = []
-
-    class _Provider(WebshellExecutionProvider):
-        def execute_command(self, command, *, arguments=None, timeout_seconds=300):
-            backend_calls.append(str(command))
-            return super().execute_command(command, arguments=arguments, timeout_seconds=timeout_seconds)
-
+def test_webshell_provider_uses_command_mode_metadata(tmp_path: Path) -> None:
     server = WebshellTestServer(storage_dir=tmp_path / "server")
     server.start()
     provider = _connected_provider(server)
     loader = PluginLoader()
     record = loader.discover_and_load().get("port_sweep")
     assert record is not None
+    store = EventStore(":memory:")
+    store.open_run("meta01")
     exec_ctx = ExecutionContext(
         run_id="meta01",
         target_net="10.10.10.0/24",
         dry_run=True,
         provider_type="webshell",
-        execution_metadata={"remote_work_dir": "/tmp/dsp"},
+        execution_metadata={
+            "remote_work_dir": "/tmp/dsp",
+            "traffic_origin_host": "remote",
+        },
     )
     run_ctx = RunContext(
         run_id="meta01",
         target_net="10.10.10.0/24",
-        event_store=EventStore(":memory:"),
+        event_store=store,
         config=RunConfig(dry_run=True, scenario_params={"port_sweep": {"max_hosts": 1}}),
         dry_run=True,
     )
     provider.prepare(exec_ctx)
     provider.execute(exec_ctx, record, run_ctx, resolve_targets("10.10.10.0/24", dry_run=True))
-    assert exec_ctx.execution_metadata["remote_execution_mode"] == REMOTE_EXECUTION_MODE_BUNDLE
+    assert exec_ctx.execution_metadata["remote_execution_mode"] == REMOTE_EXECUTION_MODE_COMMAND
     server.stop()

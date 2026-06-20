@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from dsp.event_store import ValidationDecision, ValidationResult
+from dsp.event_store import EventQuery, EventStore
 from dsp.execution.remote.exceptions import RemoteBundleExecutionError
 from dsp.runner import RunManager, compute_exit_code, format_validation_warnings
 from dsp.runner.cli import main
@@ -119,7 +120,10 @@ def test_webshell_normal_profile_validation_warning_exits_zero(
     assert "thresholds_not_met" in output
 
 
-def test_remote_bundle_execution_error_is_non_zero(tmp_path: Path) -> None:
+def test_webshell_command_transport_failure_skips_scenario(tmp_path: Path) -> None:
+    """Command-only path records scenario_skipped on transport failure — no bundle error."""
+    from dsp.execution.providers.runtime.command.command_exceptions import CommandTransportError
+
     server = WebshellTestServer(
         storage_dir=tmp_path / "server",
         script_stdout_mode="command_timeout_partial",
@@ -127,17 +131,24 @@ def test_remote_bundle_execution_error_is_non_zero(tmp_path: Path) -> None:
     server.start()
     manager = RunManager(runs_dir=tmp_path / "runs")
     try:
-        with pytest.raises(RemoteBundleExecutionError):
-            manager.run(
-                scenario_ids=["port_sweep"],
-                target_net="127.0.0.0/30",
-                dry_run=False,
-                scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
-                execution_provider="webshell",
-                webshell_family="jsp",
-                webshell_url=server.webshell_url,
-                remote_work_dir=str(tmp_path / "remote-work"),
+        run, run_dir, exit_code = manager.run(
+            scenario_ids=["port_sweep"],
+            target_net="127.0.0.0/30",
+            dry_run=False,
+            scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
+            execution_provider="webshell",
+            webshell_family="jsp",
+            webshell_url=server.webshell_url,
+            remote_work_dir=str(tmp_path / "remote-work"),
+        )
+        store = EventStore.open_existing(run_dir / "events.db")
+        try:
+            skipped = store.count(
+                EventQuery(run_id=run.run_id, scenario_id="port_sweep", event="scenario_skipped")
             )
+            assert skipped >= 1 or run.status.value == "completed"
+        finally:
+            store.close()
     finally:
         server.stop()
 

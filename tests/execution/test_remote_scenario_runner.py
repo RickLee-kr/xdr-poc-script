@@ -435,6 +435,7 @@ def test_webshell_provider_execute_runs_remote_scenario(
     record = loader.discover_and_load().get("dummy")
     assert record is not None
     store = EventStore(":memory:")
+    store.open_run("remote01")
     run_ctx = RunContext(
         run_id="remote01",
         target_net="10.10.10.0/24",

@@ -291,6 +291,7 @@ def test_execute_scenario_via_remote_runner():
     record = loader.discover_and_load().get("dummy")
     assert record is not None
     store = EventStore(":memory:")
+    store.open_run("defer01")
     run_ctx = RunContext(
         run_id="defer01",
         target_net="10.10.10.0/24",
@@ -332,6 +333,7 @@ def test_webshell_provider_execute_stores_remote_execution_id():
         config=RunConfig(),
         dry_run=False,
     )
+    run_ctx.event_store.open_run("w5note01")
     exec_ctx = ExecutionContext(
         run_id="w5note01",
         target_net="10.10.10.0/24",

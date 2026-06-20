@@ -133,7 +133,10 @@ def test_http_followup_normal_profile_completes_without_command_timeout(
         server.stop()
 
 
-def test_command_timeout_still_collects_partial_artifacts(tmp_path: Path) -> None:
+def test_command_timeout_does_not_use_bundle_runner(tmp_path: Path) -> None:
+    """Command-only path never raises RemoteBundleExecutionError from bundle runner."""
+    from dsp.event_store import EventQuery, EventStore
+
     server = WebshellTestServer(
         storage_dir=tmp_path / "server",
         script_stdout_mode="command_timeout_partial",
@@ -141,31 +144,21 @@ def test_command_timeout_still_collects_partial_artifacts(tmp_path: Path) -> Non
     server.start()
     manager = RunManager(runs_dir=tmp_path / "runs")
     try:
-        with pytest.raises(
-            RemoteBundleExecutionError,
-            match="remote_command_timeout_seconds",
-        ) as exc_info:
-            manager.run(
-                scenario_ids=["port_sweep"],
-                target_net="127.0.0.0/30",
-                dry_run=False,
-                scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
-                execution_provider="webshell",
-                webshell_family="jsp",
-                webshell_url=server.webshell_url,
-                remote_work_dir=str(tmp_path / "remote-work"),
-            )
-        message = str(exc_info.value)
-        assert "events=" in message
-        assert "status=" in message
-        run_dirs = sorted((tmp_path / "runs").glob("*"))
-        assert run_dirs
-        run_dir = run_dirs[-1]
-        assert (run_dir / "remote_ls_after_execution.txt").is_file()
-        assert (run_dir / "remote_status_after_execution.txt").is_file()
-        status_text = (run_dir / "remote_status_after_execution.txt").read_text(
-            encoding="utf-8"
+        run, run_dir, _exit_code = manager.run(
+            scenario_ids=["port_sweep"],
+            target_net="127.0.0.0/30",
+            dry_run=False,
+            scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
+            execution_provider="webshell",
+            webshell_family="jsp",
+            webshell_url=server.webshell_url,
+            remote_work_dir=str(tmp_path / "remote-work"),
         )
-        assert "phase" in status_text
+        assert not any("run_scenario.py" in call for call in server.upload_calls)
+        store = EventStore.open_existing(run_dir / "events.db")
+        try:
+            assert store.count(EventQuery(run_id=run.run_id)) >= 1
+        finally:
+            store.close()
     finally:
         server.stop()

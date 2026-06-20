@@ -201,9 +201,10 @@ def _plan_sql_injection(targets: dict[str, Any], params: dict[str, Any], *, dry_
 
 def _plan_ssh_failure(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
-    hosts = _hosts_for(targets, "ssh_hosts")[:max_hosts]
-    if params.get("hosts"):
+    if "hosts" in params:
         hosts = [str(h) for h in params["hosts"]][:max_hosts]
+    else:
+        hosts = _hosts_for(targets, "ssh_hosts")[:max_hosts]
     if not hosts:
         return {"type": "ssh_failure", "mode": "skip", "reason": "no_ssh_hosts"}
     port = int(params.get("port", 22))

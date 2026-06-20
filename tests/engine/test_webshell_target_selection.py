@@ -257,7 +257,7 @@ def test_webshell_attack_chain_order(tmp_path: Path) -> None:
 
             manager = RunManager(runs_dir=tmp_path / "runs")
             with patch(
-                "dsp.execution.remote.bundle.runner.BundleScenarioRunner.run",
+                "dsp.execution.remote.command.runner.CommandScenarioRunner.run",
                 return_value=MagicMock(to_dict=lambda: {"remote_execution_id": "r1"}),
             ):
                 with patch("dsp.runner.run_manager.RemoteEventCollector", return_value=_mock_collector()):

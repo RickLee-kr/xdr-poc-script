@@ -133,6 +133,7 @@ def test_command_transport_error_dry_run_does_not_call_run_scenario() -> None:
     from dsp.engine import RunConfig, RunContext
 
     store = EventStore(":memory:")
+    store.open_run("transport-fail")
     run_ctx = RunContext(
         run_id="transport-fail",
         target_net="172.16.50.0/24",
@@ -182,7 +183,7 @@ def test_command_transport_error_dry_run_run_manager_skips_scenario(tmp_path: Pa
     with patch("dsp.engine.orchestrator.run_scenario") as mock_run_scenario:
         with patch.object(RunManager, "_create_execution_provider", return_value=provider):
             with patch(
-                "dsp.execution.remote.bundle.runner.BundleScenarioRunner.run",
+                "dsp.execution.remote.command.runner.CommandScenarioRunner.run",
                 side_effect=CommandTransportError("delivery failed"),
             ):
                 run, run_dir, _exit_code = manager.run(
@@ -237,7 +238,7 @@ def test_remote_artifact_upload_error_does_not_call_run_scenario() -> None:
 
     with patch("dsp.engine.orchestrator.run_scenario") as mock_run_scenario:
         with patch(
-            "dsp.execution.remote.bundle.runner.BundleScenarioRunner.run",
+            "dsp.execution.remote.command.runner.CommandScenarioRunner.run",
             side_effect=RemoteArtifactUploadError("upload failed"),
         ):
             with pytest.raises(RemoteArtifactUploadError):

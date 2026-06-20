@@ -23,8 +23,8 @@ from dsp.execution.providers.webshell.provider_factory import create_webshell_pr
 from dsp.execution.webshell_config import WebshellExecutionConfig
 from dsp.execution.webshell.transport.base import WebshellTransport
 from dsp.execution.webshell.transport.real_http_transport import RealHttpTransport
-from dsp.execution.remote.bundle.models import REMOTE_EXECUTION_MODE_BUNDLE
-from dsp.execution.remote.bundle.runner import BundleScenarioRunner
+from dsp.execution.remote.command.models import REMOTE_EXECUTION_MODE_COMMAND
+from dsp.execution.remote.command.runner import CommandScenarioRunner
 from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.plugins.models import PluginRecord
 
@@ -143,7 +143,7 @@ class WebshellExecutionProvider(ExecutionProvider):
                 "webshell_family": self.webshell_family,
                 "webshell_url": self._config.webshell_url,
                 "transport_type": self._config.transport_type,
-                "remote_execution_mode": REMOTE_EXECUTION_MODE_BUNDLE,
+                "remote_execution_mode": REMOTE_EXECUTION_MODE_COMMAND,
             }
         )
 
@@ -156,7 +156,7 @@ class WebshellExecutionProvider(ExecutionProvider):
         *,
         snapshot_dir: Path | None = None,
     ) -> ScenarioSummary | None:
-        """Deliver scenario execution remotely via webshell command transport."""
+        """Dispatch scenario commands through webshell endpoint — command-only, no runtime upload."""
         params = ctx.config.scenario_params.get(record.id, {})
         request = ScenarioExecutionRequest(
             scenario_id=record.id,
@@ -166,17 +166,23 @@ class WebshellExecutionProvider(ExecutionProvider):
             target_net=context.target_net,
             dry_run=context.dry_run,
         )
-        runner = BundleScenarioRunner()
+        runner = CommandScenarioRunner()
         result = runner.run(
             request,
             self,
             targets=targets,
             record=record,
-            diagnostics_dir=snapshot_dir,
+            ctx=ctx,
         )
         context.execution_metadata["remote_scenario_result"] = result.to_dict()
         context.execution_metadata["remote_execution_id"] = result.remote_execution_id
-        context.execution_metadata["remote_execution_mode"] = REMOTE_EXECUTION_MODE_BUNDLE
+        context.execution_metadata["remote_execution_mode"] = REMOTE_EXECUTION_MODE_COMMAND
+        context.execution_metadata["scenario_skipped"] = bool(
+            request.execution_metadata.get("scenario_skipped")
+        )
+        context.execution_metadata["commands_dispatched"] = request.execution_metadata.get(
+            "commands_dispatched", 0
+        )
         return None
 
     def execute_command(

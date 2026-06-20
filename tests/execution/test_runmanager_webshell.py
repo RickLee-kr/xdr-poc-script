@@ -46,10 +46,12 @@ def test_run_manager_webshell_path_produces_full_artifacts(
     assert run.status.value == "completed"
     assert exit_code == 0
     assert webshell_server.command_calls, "remote scenario command was not delivered"
-    assert any("run_scenario.py" in call for call in webshell_server.upload_calls)
+    assert not any("run_scenario.py" in call for call in webshell_server.upload_calls)
+    assert not any("manifest.json" in call for call in webshell_server.upload_calls)
+    assert not any("remote_discovery.py" in call for call in webshell_server.upload_calls)
 
     remote_bundle_path = remote_bundle_path_for_run(run.run_id)
-    assert remote_bundle_path in webshell_server.download_calls
+    assert remote_bundle_path not in webshell_server.download_calls
 
     assert (run_dir / "events.db").exists()
     assert (run_dir / "validation.json").exists()
@@ -66,7 +68,7 @@ def test_run_manager_webshell_path_produces_full_artifacts(
             EventQuery(
                 run_id=run.run_id,
                 scenario_id="port_sweep",
-                event="port_probe_sent",
+                event="webshell_command_dispatched",
             )
         )
         assert synthetic_count >= 1

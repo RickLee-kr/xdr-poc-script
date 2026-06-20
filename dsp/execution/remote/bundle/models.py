@@ -17,6 +17,7 @@ BUNDLE_SCENARIOS = frozenset(
     }
 )
 
+# Deprecated: bundle mode uploads manifest/run_scenario.py — not used on webshell live path.
 REMOTE_EXECUTION_MODE_BUNDLE = "bundle"
 REMOTE_EXECUTION_MODE_CLI = "cli"
 

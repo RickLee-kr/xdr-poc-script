@@ -33,6 +33,7 @@ from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.providers.runtime.command.command_exceptions import CommandTransportError
 from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
+from dsp.execution.remote.command.models import REMOTE_EXECUTION_MODE_COMMAND
 from dsp.execution.remote.exceptions import RemoteArtifactUploadError
 from dsp.execution.remote.paths import resolve_remote_bundle_path
 from dsp.execution.webshell_provider import WebshellExecutionProvider
@@ -672,7 +673,11 @@ class RunManager:
                         "notes": summary.notes,
                     }
                 if emitter is not None:
-                    if _scenario_executor_skipped(store, run_id, sid):
+                    skipped = (
+                        _scenario_executor_skipped(store, run_id, sid)
+                        or bool(exec_ctx.execution_metadata.get("scenario_skipped"))
+                    )
+                    if skipped:
                         skip_evidence = _latest_skip_evidence(store, run_id, sid)
                         emitter.on_scenario_completed()
                         emitter.emit(
@@ -701,8 +706,15 @@ class RunManager:
                             },
                         )
 
-                if execution_provider == "webshell" and collector is not None:
+                remote_mode = exec_ctx.execution_metadata.get("remote_execution_mode")
+                if (
+                    execution_provider == "webshell"
+                    and collector is not None
+                    and remote_mode != REMOTE_EXECUTION_MODE_COMMAND
+                ):
                     if _scenario_executor_skipped(store, run_id, sid):
+                        continue
+                    if exec_ctx.execution_metadata.get("scenario_skipped"):
                         continue
                     assert isinstance(provider, WebshellExecutionProvider)
                     remote_execution_id = exec_ctx.execution_metadata.get(
