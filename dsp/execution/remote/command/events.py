@@ -144,6 +144,7 @@ def append_discovery_events(
     target_net: str,
     probe_specs: list[dict[str, Any]],
     dispatch_status: str,
+    discovery_result: dict[str, Any] | None = None,
 ) -> None:
     append_event(
         store,
@@ -193,16 +194,25 @@ def append_discovery_events(
                 "origin": DISCOVERY_ORIGIN_WEBSHELL,
             },
         )
+    completed_evidence: dict[str, Any] = {
+        "target_net": target_net,
+        "discovery_origin": DISCOVERY_ORIGIN_WEBSHELL,
+        "probes_dispatched": len(probe_specs),
+        "planned_only": False,
+    }
+    if discovery_result is not None:
+        completed_evidence.update(
+            {
+                "alive_hosts": discovery_result.get("alive_hosts", []),
+                "open_endpoints": discovery_result.get("open_endpoints", 0),
+                "probed_hosts": discovery_result.get("probed_hosts", len(probe_specs)),
+            }
+        )
     append_event(
         store,
         run_id=run_id,
         scenario_id=scenario_id,
         event="remote_discovery_completed",
         status="info",
-        evidence={
-            "target_net": target_net,
-            "discovery_origin": DISCOVERY_ORIGIN_WEBSHELL,
-            "probes_dispatched": len(probe_specs),
-            "planned_only": True,
-        },
+        evidence=completed_evidence,
     )

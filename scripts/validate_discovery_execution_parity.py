@@ -88,6 +88,17 @@ def _report_profile(profile: str, provider: str) -> dict:
     }
 
 
+def _http_plan_hosts(url_map: dict[str, list[str]]) -> dict[str, list[str]]:
+    hosts: dict[str, list[str]] = {}
+    for sid, urls in url_map.items():
+        extracted: list[str] = []
+        for url in urls:
+            host = url.split("://", 1)[1].split(":", 1)[0].split("/", 1)[0]
+            extracted.append(host)
+        hosts[sid] = extracted
+    return hosts
+
+
 def main() -> int:
     reports = []
     for profile in ("low", "normal", "high"):
@@ -100,9 +111,10 @@ def main() -> int:
         assert loc["scenario_order"] == ws["scenario_order"]
         if "port_sweep" in loc["scenario_order"]:
             assert loc["port_sweep_hosts"] == ws["port_sweep_hosts"]
-        assert "10.10.10.50:8080" in str(ws["http_plan_urls"])
         if loc["http_plan_urls"]:
+            assert _http_plan_hosts(loc["http_plan_urls"]) == _http_plan_hosts(ws["http_plan_urls"])
             assert "10.10.10.97" in str(loc["http_plan_urls"])
+            assert "10.10.10.97" in str(ws["http_plan_urls"])
     return 0
 
 

@@ -9,8 +9,9 @@ from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.execution.remote.bundle.planner import _uses_remote_discovery
 from dsp.execution.remote.command.discovery import (
     build_discovery_probe_specs,
-    build_planned_discovery_targets,
+    get_cached_remote_discovery,
     probe_commands_for_specs,
+    run_webshell_host_discovery,
 )
 from dsp.execution.remote.command.events import (
     append_discovery_events,
@@ -119,13 +120,17 @@ class CommandScenarioRunner:
         target_net = str(request.target_net or "")
         specs = build_discovery_probe_specs(target_net, max_hosts=max_hosts)
         mock = request.dry_run
-        commands = probe_commands_for_specs(specs, mock=mock)
+        cached = get_cached_remote_discovery(ctx.config.scenario_params, target_net)
+        if cached is not None:
+            return cached
 
         dispatch_status = "mock" if mock else "completed"
-        if not mock:
+        if mock:
+            commands = probe_commands_for_specs(specs, mock=True)
             for command in commands:
                 provider.execute_command(command)
 
+        targets = run_webshell_host_discovery(provider, ctx, request, specs)
         append_discovery_events(
             ctx.event_store,
             run_id=str(request.run_id),
@@ -133,8 +138,9 @@ class CommandScenarioRunner:
             target_net=target_net,
             probe_specs=specs,
             dispatch_status=dispatch_status,
+            discovery_result=targets.get("discovery_meta"),
         )
-        return build_planned_discovery_targets(target_net, params, max_hosts=max_hosts)
+        return targets
 
     @staticmethod
     def _validate_provider(provider: object) -> None:

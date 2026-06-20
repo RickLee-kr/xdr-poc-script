@@ -419,14 +419,6 @@ def resolve_http_attack_endpoint_selection(
     webshell_ep = _webshell_execution_endpoint(config)
     has_discovered_http = bool(targets.hosts_for_capability("http_targets"))
 
-    if explicit_phase1 and webshell_ep is not None:
-        return selection_from_initial_compromise(
-            webshell_ep,
-            dry_run=dry_run,
-            timeout=timeout,
-            selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
-        )
-
     if has_discovered_http:
         selection = probe_and_select_http_followup_endpoints(
             targets,
@@ -444,6 +436,14 @@ def resolve_http_attack_endpoint_selection(
                 https_targets_skipped=selection.https_targets_skipped,
             )
         return selection
+
+    if explicit_phase1 and webshell_ep is not None:
+        return selection_from_initial_compromise(
+            webshell_ep,
+            dry_run=dry_run,
+            timeout=timeout,
+            selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
+        )
 
     if webshell_ep is not None and not has_discovered_http:
         return selection_from_initial_compromise(
@@ -474,9 +474,6 @@ def resolve_http_endpoint_selection(
     cached = config.get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
     if cached:
         return selection_from_cache(cached)  # type: ignore[arg-type]
-    ic = _initial_compromise_endpoint(config)
-    if ic is not None and bool(config.get(PHASE1_WEBSHELL_ATTACK_KEY)):
-        return selection_from_initial_compromise(ic, dry_run=dry_run, timeout=timeout)
     return resolve_http_attack_endpoint_selection(
         targets,
         config,
