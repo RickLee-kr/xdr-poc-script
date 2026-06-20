@@ -6,8 +6,11 @@ import json
 from unittest.mock import MagicMock, patch
 
 from dsp.execution.remote.command.discovery import (
+    DISCOVERY_HOST_CHUNK_SIZE,
     DISCOVERY_MAX_HOSTS,
     DISCOVERY_SCAN_MAX_HOSTS_KEY,
+    _discovery_host_chunk_plan,
+    _merge_discovery_chunk_targets,
     build_discovery_probe_specs,
     build_discovery_targets_from_open_endpoints,
     build_mock_discovery_targets,
@@ -17,6 +20,49 @@ from dsp.execution.remote.command.discovery import (
     run_deployed_webshell_discovery,
     run_webshell_host_discovery,
 )
+
+
+def test_discovery_host_chunk_plan_splits_full_subnet() -> None:
+    plan = _discovery_host_chunk_plan(DISCOVERY_MAX_HOSTS)
+    assert sum(limit for _, limit in plan) == DISCOVERY_MAX_HOSTS
+    assert all(limit <= DISCOVERY_HOST_CHUNK_SIZE for _, limit in plan)
+    assert plan[0] == (0, DISCOVERY_HOST_CHUNK_SIZE)
+
+
+def test_merge_discovery_chunk_targets_combines_alive_hosts() -> None:
+    chunks = [
+        {
+            "hosts": ["10.10.10.1"],
+            "service_hosts": {"http_targets": ["10.10.10.1"]},
+            "service_endpoints": {"http_targets": [("10.10.10.1", 80)]},
+            "discovery_meta": {
+                "probed_hosts": 40,
+                "alive_hosts": ["10.10.10.1"],
+                "open_endpoints": 1,
+            },
+        },
+        {
+            "hosts": ["10.10.10.50"],
+            "service_hosts": {"ssh_hosts": ["10.10.10.50"]},
+            "service_endpoints": {"ssh_hosts": [("10.10.10.50", 22)]},
+            "discovery_meta": {
+                "probed_hosts": 40,
+                "alive_hosts": ["10.10.10.50"],
+                "open_endpoints": 1,
+            },
+        },
+    ]
+    merged = _merge_discovery_chunk_targets(
+        chunks,
+        target_net="10.10.10.0/24",
+        discovery_max_hosts=DISCOVERY_MAX_HOSTS,
+        upload_method="multipart",
+    )
+    assert merged["hosts"] == ["10.10.10.1", "10.10.10.50"]
+    assert merged["service_hosts"]["http_targets"] == ["10.10.10.1"]
+    assert merged["service_hosts"]["ssh_hosts"] == ["10.10.10.50"]
+    assert merged["discovery_meta"]["discovery_chunks"] == 2
+    assert merged["discovery_meta"]["open_endpoints"] == 2
 
 
 def test_mock_discovery_does_not_assign_services_without_probe_results() -> None:

@@ -36,6 +36,8 @@ DISCOVERY_SCAN_MAX_HOSTS_KEY = "_discovery_scan_max_hosts"
 DEFAULT_REMOTE_DISCOVERY_TIMEOUT = 0.5
 DISCOVERY_PROBE_BATCH_SIZE = 32
 DISCOVERY_RUNNER_NAME = "discover_runner.py"
+DISCOVERY_HOST_CHUNK_SIZE = 40
+DISCOVERY_PORTS_PER_HOST = len(FAST_SAFE_DISCOVERY_PORTS)
 DISCOVERY_RUNNER_ASSET = (
     Path(__file__).resolve().parent / "assets" / "webshell_discovery_runner.py"
 )
@@ -317,17 +319,44 @@ def _remote_python_command(python_args: str) -> str:
     )
 
 
+def _discovery_host_chunk_plan(
+    total_hosts: int,
+    *,
+    chunk_size: int = DISCOVERY_HOST_CHUNK_SIZE,
+) -> list[tuple[int, int]]:
+    if total_hosts <= 0:
+        return []
+    size = max(1, int(chunk_size))
+    plan: list[tuple[int, int]] = []
+    offset = 0
+    while offset < total_hosts:
+        limit = min(size, total_hosts - offset)
+        plan.append((offset, limit))
+        offset += limit
+    return plan
+
+
+def _chunk_command_timeout(chunk_hosts: int) -> float:
+    probe_count = max(1, int(chunk_hosts)) * DISCOVERY_PORTS_PER_HOST
+    batches = (probe_count + DISCOVERY_PROBE_BATCH_SIZE - 1) // DISCOVERY_PROBE_BATCH_SIZE
+    estimated = batches * DEFAULT_REMOTE_DISCOVERY_TIMEOUT * 1.25 + 15.0
+    return max(45.0, estimated)
+
+
 def _build_discovery_execute_shell(
     remote_script: str,
     target_net: str,
-    discovery_max_hosts: int,
+    chunk_hosts: int,
     remote_output: str,
     remote_stderr: str,
+    *,
+    host_offset: int = 0,
 ) -> str:
     pipeline = (
         f"{_remote_python_command(shlex.quote(remote_script))} "
-        f"{shlex.quote(target_net)} {int(discovery_max_hosts)} "
+        f"{shlex.quote(target_net)} {int(chunk_hosts)} "
         f"{shlex.quote(remote_output)} {DEFAULT_REMOTE_DISCOVERY_TIMEOUT} "
+        f"{int(host_offset)} "
         f">{shlex.quote(remote_stderr)} 2>&1; "
         f"ec=$?; "
         f"if [ -s {shlex.quote(remote_output)} ]; then cat {shlex.quote(remote_output)}; "
@@ -336,6 +365,76 @@ def _build_discovery_execute_shell(
         f"else echo DSP_DISCOVERY_EMPTY:$ec; fi"
     )
     return wrap_remote_shell_command(pipeline)
+
+
+def _parse_deployed_discovery_chunk(raw: bytes) -> dict[str, Any]:
+    text = normalize_webshell_command_output(raw)
+    if "command timeout" in text.lower():
+        raise ValueError("command timeout")
+    return parse_deployed_discovery_output(raw)
+
+
+def _merge_discovery_chunk_targets(
+    chunks: list[dict[str, Any]],
+    *,
+    target_net: str,
+    discovery_max_hosts: int,
+    upload_method: str,
+) -> dict[str, Any]:
+    service_hosts, service_endpoints = _empty_service_buckets()
+    alive: set[str] = set()
+    open_total = 0
+    probed_total = 0
+    chunk_errors: list[str] = []
+
+    for chunk in chunks:
+        meta = dict(chunk.get("discovery_meta") or {})
+        runner_error = meta.get("runner_error")
+        if runner_error:
+            chunk_errors.append(str(runner_error))
+        probed_total += int(meta.get("probed_hosts") or 0)
+        open_total += int(meta.get("open_endpoints") or 0)
+        for host in chunk.get("hosts") or []:
+            alive.add(str(host))
+        for key, hosts in (chunk.get("service_hosts") or {}).items():
+            bucket = service_hosts.setdefault(str(key), [])
+            for host in hosts:
+                host_text = str(host)
+                if host_text not in bucket:
+                    bucket.append(host_text)
+        for key, values in (chunk.get("service_endpoints") or {}).items():
+            endpoint_bucket = service_endpoints.setdefault(str(key), [])
+            for item in values:
+                endpoint = (str(item[0]), int(item[1]))
+                if endpoint not in endpoint_bucket:
+                    endpoint_bucket.append(endpoint)
+
+    _sort_service_buckets(service_hosts, service_endpoints)
+    alive_hosts = sorted(alive, key=lambda h: tuple(int(p) for p in h.split(".")))
+    discovery_meta: dict[str, Any] = {
+        "probed_hosts": probed_total,
+        "alive_hosts": alive_hosts,
+        "open_endpoints": open_total,
+        "service_hosts": service_hosts,
+        "discovery_origin": DISCOVERY_ORIGIN_WEBSHELL,
+        "planned_only": False,
+        "discovery_method": "deployed_runner",
+        "discovery_chunks": len(chunks),
+        "host_chunk_size": DISCOVERY_HOST_CHUNK_SIZE,
+        "upload_method": upload_method,
+    }
+    if chunk_errors:
+        discovery_meta["chunk_errors"] = chunk_errors
+    return {
+        "target_net": target_net,
+        "hosts": alive_hosts,
+        "service_hosts": service_hosts,
+        "service_endpoints": {
+            key: list(value) for key, value in service_endpoints.items()
+        },
+        "discovery_enabled": True,
+        "discovery_meta": discovery_meta,
+    }
 
 
 def parse_deployed_discovery_output(raw: bytes) -> dict[str, Any]:
@@ -470,20 +569,61 @@ def run_deployed_webshell_discovery(
                 f"discover_runner py_compile failed (preview={content_preview(compile_raw)})"
             )
 
-        raw = provider.run_remote_command(
-            _build_discovery_execute_shell(
-                remote_script,
-                target_net,
-                discovery_max_hosts,
-                remote_output,
-                remote_stderr,
-            ),
-            timeout_seconds=max(300.0, discovery_max_hosts * 3.0),
+        raw = b""
+        chunk_targets: list[dict[str, Any]] = []
+        chunk_plan = _discovery_host_chunk_plan(discovery_max_hosts)
+        for chunk_index, (host_offset, chunk_hosts) in enumerate(chunk_plan):
+            chunk_output = f"{remote_dir}/discovery_out_{chunk_index}.json"
+            chunk_stderr = f"{remote_dir}/discovery_err_{chunk_index}.txt"
+            raw = provider.run_remote_command(
+                _build_discovery_execute_shell(
+                    remote_script,
+                    target_net,
+                    chunk_hosts,
+                    chunk_output,
+                    chunk_stderr,
+                    host_offset=host_offset,
+                ),
+                timeout_seconds=_chunk_command_timeout(chunk_hosts),
+            )
+            try:
+                chunk_targets.append(_parse_deployed_discovery_chunk(raw))
+            except (ValueError, json.JSONDecodeError) as exc:
+                empty_hosts, empty_endpoints = _empty_service_buckets()
+                chunk_targets.append(
+                    {
+                        "hosts": [],
+                        "service_hosts": empty_hosts,
+                        "service_endpoints": {
+                            key: list(value) for key, value in empty_endpoints.items()
+                        },
+                        "discovery_meta": {
+                            "probed_hosts": chunk_hosts,
+                            "alive_hosts": [],
+                            "open_endpoints": 0,
+                            "runner_error": str(exc),
+                            "output_preview": content_preview(raw),
+                        },
+                    }
+                )
+
+        if not chunk_targets:
+            raise ValueError("no discovery host chunks planned")
+        if len(chunk_targets) == 1 and chunk_targets[0].get("discovery_meta", {}).get(
+            "runner_error"
+        ):
+            raise ValueError(str(chunk_targets[0]["discovery_meta"]["runner_error"]))
+
+        targets = _merge_discovery_chunk_targets(
+            chunk_targets,
+            target_net=target_net,
+            discovery_max_hosts=discovery_max_hosts,
+            upload_method=upload_method,
         )
-        targets = parse_deployed_discovery_output(raw)
-        discovery_meta = dict(targets.get("discovery_meta") or {})
-        discovery_meta["upload_method"] = upload_method
-        targets["discovery_meta"] = discovery_meta
+        if targets["discovery_meta"].get("chunk_errors") and not targets["hosts"]:
+            raise ValueError(
+                "; ".join(str(item) for item in targets["discovery_meta"]["chunk_errors"])
+            )
         return targets
     except (ValueError, json.JSONDecodeError) as exc:
         return _failed_deployed_discovery_targets(

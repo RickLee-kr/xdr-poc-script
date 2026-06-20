@@ -44,10 +44,19 @@ DEFAULT_PROBE_TIMEOUT = 0.5
 DEFAULT_PROBE_WORKERS = 32
 
 
-def expand_target_net_hosts(target_net: str, *, max_hosts: int = 254) -> list[str]:
+def expand_target_net_hosts(
+    target_net: str,
+    *,
+    max_hosts: int = 254,
+    host_offset: int = 0,
+) -> list[str]:
     network = ipaddress.ip_network(target_net.strip(), strict=False)
     hosts: list[str] = []
+    skipped = max(0, int(host_offset))
     for addr in network.hosts():
+        if skipped:
+            skipped -= 1
+            continue
         hosts.append(str(addr))
         if len(hosts) >= max_hosts:
             break
@@ -67,11 +76,16 @@ def discover_target_net(
     *,
     ports: tuple[int, ...] = DISCOVERY_PORTS,
     max_hosts: int = 254,
+    host_offset: int = 0,
     timeout: float = DEFAULT_PROBE_TIMEOUT,
     workers: int = DEFAULT_PROBE_WORKERS,
 ) -> dict[str, Any]:
     """Live host + service discovery from the webshell host vantage point."""
-    candidates = expand_target_net_hosts(target_net, max_hosts=max_hosts)
+    candidates = expand_target_net_hosts(
+        target_net,
+        max_hosts=max_hosts,
+        host_offset=host_offset,
+    )
     service_hosts: dict[str, list[str]] = {
         "ssh_hosts": [],
         "dns_hosts": [],
@@ -165,12 +179,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if len(args) < 3:
             raise ValueError(
-                "usage: discover_runner.py TARGET_NET MAX_HOSTS OUTPUT_JSON [TIMEOUT]"
+                "usage: discover_runner.py TARGET_NET MAX_HOSTS OUTPUT_JSON [TIMEOUT] [HOST_OFFSET]"
             )
         target_net = args[0]
         max_hosts = int(args[1])
+        output_path = args[2]
         timeout = float(args[3]) if len(args) > 3 else DEFAULT_PROBE_TIMEOUT
-        payload = discover_target_net(target_net, max_hosts=max_hosts, timeout=timeout)
+        host_offset = int(args[4]) if len(args) > 4 else 0
+        payload = discover_target_net(
+            target_net,
+            max_hosts=max_hosts,
+            host_offset=host_offset,
+            timeout=timeout,
+        )
     except Exception as exc:
         payload = _empty_payload(target_net, runner_error=str(exc))
     with open(output_path, "w", encoding="utf-8") as handle:
