@@ -202,6 +202,7 @@ def append_discovery_events(
                 "output_preview": discovery_result.get("output_preview"),
                 "deploy_error": discovery_result.get("deploy_error"),
                 "service_hosts": discovery_result.get("service_hosts"),
+                "upload_method": discovery_result.get("upload_method"),
             }
         )
     append_event(

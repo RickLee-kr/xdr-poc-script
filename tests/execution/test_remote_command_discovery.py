@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from dsp.execution.remote.command.discovery import (
     DISCOVERY_MAX_HOSTS,
-    DISCOVERY_PROBE_BATCH_SIZE,
-    DISCOVERY_RUNNER_ASSET,
     DISCOVERY_SCAN_MAX_HOSTS_KEY,
     build_discovery_probe_specs,
     build_discovery_targets_from_open_endpoints,
@@ -67,7 +65,6 @@ def test_parse_deployed_discovery_output_normalizes_service_endpoints() -> None:
 
 def test_run_deployed_webshell_discovery_uploads_runner_and_parses_json() -> None:
     provider = MagicMock()
-    provider.upload_file = MagicMock()
     discovery_json = json.dumps(
         {
             "hosts": ["10.10.10.97"],
@@ -81,12 +78,8 @@ def test_run_deployed_webshell_discovery_uploads_runner_and_parses_json() -> Non
         }
     ).encode()
 
-    runner_size = str(DISCOVERY_RUNNER_ASSET.stat().st_size).encode() + b"\n"
-
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
-        if "wc -c" in command:
-            return runner_size
-        if "discover_runner.py" in command or "discovery_out.json" in command:
+        if "discovery_out.json" in command and "cat" in command:
             return discovery_json
         return b""
 
@@ -95,20 +88,24 @@ def test_run_deployed_webshell_discovery_uploads_runner_and_parses_json() -> Non
         run_id="run123",
         execution_metadata={"remote_work_dir": "/tmp/dsp"},
     )
-    targets = run_deployed_webshell_discovery(
-        provider,
-        request,
-        "10.10.10.0/24",
-        254,
-    )
-    provider.upload_file.assert_called_once()
+    with patch(
+        "dsp.execution.remote.command.discovery._upload_discovery_runner_asset",
+        return_value="multipart",
+    ) as mock_upload:
+        targets = run_deployed_webshell_discovery(
+            provider,
+            request,
+            "10.10.10.0/24",
+            254,
+        )
+    mock_upload.assert_called_once()
     assert targets["hosts"] == ["10.10.10.97"]
     assert targets["discovery_meta"]["discovery_method"] == "deployed_runner"
+    assert targets["discovery_meta"]["upload_method"] == "multipart"
 
 
 def test_live_discovery_prefers_deployed_runner() -> None:
     provider = MagicMock()
-    provider.upload_file = MagicMock()
     discovery_json = json.dumps(
         {
             "hosts": ["10.10.10.1"],
@@ -122,12 +119,8 @@ def test_live_discovery_prefers_deployed_runner() -> None:
         }
     ).encode()
 
-    runner_size = str(DISCOVERY_RUNNER_ASSET.stat().st_size).encode() + b"\n"
-
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
-        if "wc -c" in command:
-            return runner_size
-        if "discovery_out.json" in command and "python3" in command:
+        if "discovery_out.json" in command and "cat" in command:
             return discovery_json
         if "DSP_PROBE_OPEN" in command or "dsp-probe-" in command:
             raise AssertionError(f"unexpected tcp probe fallback command: {command!r}")
@@ -139,19 +132,23 @@ def test_live_discovery_prefers_deployed_runner() -> None:
         target_net="10.10.10.0/30",
         dry_run=False,
         run_id="run123",
+        scenario_id="http_followup",
         execution_metadata={"remote_work_dir": "/tmp/dsp"},
     )
     ctx = MagicMock()
     ctx.config.scenario_params = {DISCOVERY_SCAN_MAX_HOSTS_KEY: 2}
     specs = build_discovery_probe_specs("10.10.10.0/30", max_hosts=2)
-    targets = run_webshell_host_discovery(provider, ctx, request, specs)
+    with patch(
+        "dsp.execution.remote.command.discovery._upload_discovery_runner_asset",
+        return_value="multipart",
+    ):
+        targets = run_webshell_host_discovery(provider, ctx, request, specs)
     assert targets["service_hosts"]["http_targets"] == ["10.10.10.1"]
     assert targets["discovery_meta"]["discovery_method"] == "deployed_runner"
 
 
 def test_live_discovery_without_open_ports_returns_empty_service_buckets() -> None:
     provider = MagicMock()
-    provider.upload_file = MagicMock()
     discovery_json = json.dumps(
         {
             "hosts": [],
@@ -165,12 +162,8 @@ def test_live_discovery_without_open_ports_returns_empty_service_buckets() -> No
         }
     ).encode()
 
-    runner_size = str(DISCOVERY_RUNNER_ASSET.stat().st_size).encode() + b"\n"
-
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
-        if "wc -c" in command:
-            return runner_size
-        if "discover_runner.py" in command or "discovery_out.json" in command:
+        if "discovery_out.json" in command and "cat" in command:
             return discovery_json
         return b""
 
@@ -180,12 +173,17 @@ def test_live_discovery_without_open_ports_returns_empty_service_buckets() -> No
         target_net="10.10.10.0/30",
         dry_run=False,
         run_id="run123",
+        scenario_id="http_followup",
         execution_metadata={"remote_work_dir": "/tmp/dsp"},
     )
     ctx = MagicMock()
     ctx.config.scenario_params = {DISCOVERY_SCAN_MAX_HOSTS_KEY: 2}
     specs = build_discovery_probe_specs("10.10.10.0/30", max_hosts=2)
-    targets = run_webshell_host_discovery(provider, ctx, request, specs)
+    with patch(
+        "dsp.execution.remote.command.discovery._upload_discovery_runner_asset",
+        return_value="python_base64",
+    ):
+        targets = run_webshell_host_discovery(provider, ctx, request, specs)
     assert targets["hosts"] == []
     assert not any(targets["service_hosts"].values())
     assert targets["discovery_meta"]["discovery_method"] == "deployed_runner"
@@ -204,7 +202,6 @@ def test_resolve_discovery_scan_max_hosts_honors_run_level_cap() -> None:
 
 def test_run_webshell_host_discovery_ignores_scenario_follow_up_max_hosts() -> None:
     provider = MagicMock()
-    provider.upload_file = MagicMock()
     discovery_json = json.dumps(
         {
             "hosts": [],
@@ -214,12 +211,8 @@ def test_run_webshell_host_discovery_ignores_scenario_follow_up_max_hosts() -> N
         }
     ).encode()
 
-    runner_size = str(DISCOVERY_RUNNER_ASSET.stat().st_size).encode() + b"\n"
-
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
-        if "wc -c" in command:
-            return runner_size
-        if "discover_runner.py" in command or "discovery_out.json" in command:
+        if "discovery_out.json" in command and "cat" in command:
             return discovery_json
         return b""
 
@@ -229,13 +222,18 @@ def test_run_webshell_host_discovery_ignores_scenario_follow_up_max_hosts() -> N
         target_net="10.10.10.0/24",
         dry_run=False,
         run_id="run123",
+        scenario_id="http_followup",
         execution_metadata={"remote_work_dir": "/tmp/dsp"},
     )
     ctx = MagicMock()
     ctx.config.scenario_params = {DISCOVERY_SCAN_MAX_HOSTS_KEY: DISCOVERY_MAX_HOSTS}
     specs = build_discovery_probe_specs("10.10.10.0/24", max_hosts=DISCOVERY_MAX_HOSTS)
-    run_webshell_host_discovery(provider, ctx, request, specs)
-    assert provider.upload_file.called
+    with patch(
+        "dsp.execution.remote.command.discovery._upload_discovery_runner_asset",
+        return_value="multipart",
+    ) as mock_upload:
+        run_webshell_host_discovery(provider, ctx, request, specs)
+    mock_upload.assert_called_once()
     assert provider.run_remote_command.call_count >= 2
 
 

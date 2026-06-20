@@ -146,7 +146,7 @@ class CommandScenarioRunner:
             ctx,
             request,
             specs,
-            on_probe_batch=None if mock else _record_probe_batch,
+            on_probe_batch=_record_probe_batch if mock else None,
         )
         append_discovery_events(
             ctx.event_store,

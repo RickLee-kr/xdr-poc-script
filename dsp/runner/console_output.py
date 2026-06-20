@@ -293,6 +293,21 @@ class OperationalConsole:
             self._write("")
             return
 
+        if kind == "discovery":
+            self._write("Webshell Discovery")
+            for key in (
+                "discovery_method",
+                "upload_method",
+                "alive_hosts",
+                "open_endpoints",
+                "deploy_error",
+                "output_preview",
+            ):
+                if key in data and data[key] not in (None, "", 0):
+                    self._write(f"  {key}={data[key]}")
+            self._write("")
+            return
+
         if kind == "open":
             self._write(f"[{scenario_id}] open")
             if "target" in data:
