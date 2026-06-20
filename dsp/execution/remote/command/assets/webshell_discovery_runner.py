@@ -128,19 +128,54 @@ def discover_target_net(
     }
 
 
+def _empty_payload(target_net: str, *, runner_error: str | None = None) -> dict[str, Any]:
+    service_hosts = {
+        "ssh_hosts": [],
+        "dns_hosts": [],
+        "kerberos_hosts": [],
+        "ldap_hosts": [],
+        "http_targets": [],
+        "https_targets": [],
+        "smb_hosts": [],
+    }
+    service_endpoints = {key: [] for key in service_hosts}
+    discovery_meta: dict[str, Any] = {
+        "probed_hosts": 0,
+        "alive_hosts": [],
+        "open_endpoints": 0,
+        "service_hosts": service_hosts,
+        "discovery_origin": "webshell_host",
+    }
+    if runner_error:
+        discovery_meta["runner_error"] = runner_error
+    return {
+        "target_net": target_net,
+        "hosts": [],
+        "service_hosts": service_hosts,
+        "service_endpoints": service_endpoints,
+        "discovery_enabled": True,
+        "discovery_meta": discovery_meta,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
-    if len(args) < 3:
-        print("usage: discover_runner.py TARGET_NET MAX_HOSTS OUTPUT_JSON [TIMEOUT]", file=sys.stderr)
-        return 2
-    target_net = args[0]
-    max_hosts = int(args[1])
-    output_path = args[2]
-    timeout = float(args[3]) if len(args) > 3 else DEFAULT_PROBE_TIMEOUT
-    payload = discover_target_net(target_net, max_hosts=max_hosts, timeout=timeout)
+    output_path = args[2] if len(args) > 2 else "/tmp/discovery_out.json"
+    target_net = args[0] if args else ""
+    try:
+        if len(args) < 3:
+            raise ValueError(
+                "usage: discover_runner.py TARGET_NET MAX_HOSTS OUTPUT_JSON [TIMEOUT]"
+            )
+        target_net = args[0]
+        max_hosts = int(args[1])
+        timeout = float(args[3]) if len(args) > 3 else DEFAULT_PROBE_TIMEOUT
+        payload = discover_target_net(target_net, max_hosts=max_hosts, timeout=timeout)
+    except Exception as exc:
+        payload = _empty_payload(target_net, runner_error=str(exc))
     with open(output_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle)
-    return 0
+    return 0 if not (payload.get("discovery_meta") or {}).get("runner_error") else 1
 
 
 if __name__ == "__main__":

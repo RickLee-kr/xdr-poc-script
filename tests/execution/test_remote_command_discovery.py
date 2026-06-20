@@ -79,7 +79,9 @@ def test_run_deployed_webshell_discovery_uploads_runner_and_parses_json() -> Non
     ).encode()
 
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
-        if "discovery_out.json" in command and "cat" in command:
+        if "py_compile" in command:
+            return b""
+        if "discover_runner.py" in command or "DSP_DISCOVERY" in command:
             return discovery_json
         return b""
 
@@ -120,7 +122,9 @@ def test_live_discovery_prefers_deployed_runner() -> None:
     ).encode()
 
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
-        if "discovery_out.json" in command and "cat" in command:
+        if "py_compile" in command:
+            return b""
+        if "discover_runner.py" in command:
             return discovery_json
         if "DSP_PROBE_OPEN" in command or "dsp-probe-" in command:
             raise AssertionError(f"unexpected tcp probe fallback command: {command!r}")
@@ -163,7 +167,9 @@ def test_live_discovery_without_open_ports_returns_empty_service_buckets() -> No
     ).encode()
 
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
-        if "discovery_out.json" in command and "cat" in command:
+        if "py_compile" in command:
+            return b""
+        if "discover_runner.py" in command or "DSP_DISCOVERY" in command:
             return discovery_json
         return b""
 
@@ -212,7 +218,9 @@ def test_run_webshell_host_discovery_ignores_scenario_follow_up_max_hosts() -> N
     ).encode()
 
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
-        if "discovery_out.json" in command and "cat" in command:
+        if "py_compile" in command:
+            return b""
+        if "discover_runner.py" in command or "DSP_DISCOVERY" in command:
             return discovery_json
         return b""
 

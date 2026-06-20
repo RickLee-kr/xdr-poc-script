@@ -299,19 +299,54 @@ def run_discovery_from_tcp_probes(
     return targets
 
 
-def _resolve_remote_discovery_dir(request: Any) -> tuple[str, str, str]:
+def _resolve_remote_discovery_dir(request: Any) -> tuple[str, str, str, str]:
     metadata = dict(getattr(request, "execution_metadata", {}) or {})
     work_dir = str(metadata.get("remote_work_dir") or "/tmp/dsp").rstrip("/")
     run_id = str(getattr(request, "run_id", "") or "run")
     remote_dir = f"{work_dir}/{run_id}"
     remote_script = f"{remote_dir}/{DISCOVERY_RUNNER_NAME}"
     remote_output = f"{remote_dir}/discovery_out.json"
-    return remote_dir, remote_script, remote_output
+    remote_stderr = f"{remote_dir}/discovery_err.txt"
+    return remote_dir, remote_script, remote_output, remote_stderr
+
+
+def _remote_python_command(python_args: str) -> str:
+    return (
+        "PY=python3; command -v python3 >/dev/null 2>&1 || PY=python; "
+        f"$PY {python_args}"
+    )
+
+
+def _build_discovery_execute_shell(
+    remote_script: str,
+    target_net: str,
+    discovery_max_hosts: int,
+    remote_output: str,
+    remote_stderr: str,
+) -> str:
+    pipeline = (
+        f"{_remote_python_command(shlex.quote(remote_script))} "
+        f"{shlex.quote(target_net)} {int(discovery_max_hosts)} "
+        f"{shlex.quote(remote_output)} {DEFAULT_REMOTE_DISCOVERY_TIMEOUT} "
+        f">{shlex.quote(remote_stderr)} 2>&1; "
+        f"ec=$?; "
+        f"if [ -s {shlex.quote(remote_output)} ]; then cat {shlex.quote(remote_output)}; "
+        f"elif [ -s {shlex.quote(remote_stderr)} ]; then "
+        f"echo DSP_DISCOVERY_STDERR; cat {shlex.quote(remote_stderr)}; "
+        f"else echo DSP_DISCOVERY_EMPTY:$ec; fi"
+    )
+    return wrap_remote_shell_command(pipeline)
 
 
 def parse_deployed_discovery_output(raw: bytes) -> dict[str, Any]:
     """Parse JSON discovery payload written by the remote discover_runner script."""
     text = normalize_webshell_command_output(raw)
+    if text.startswith("DSP_DISCOVERY_STDERR"):
+        raise ValueError(
+            f"remote discovery runner stderr (preview={content_preview(raw)})"
+        )
+    if text.startswith("DSP_DISCOVERY_EMPTY"):
+        raise ValueError(f"remote discovery runner produced no output ({text.strip()})")
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end <= start:
@@ -319,6 +354,10 @@ def parse_deployed_discovery_output(raw: bytes) -> dict[str, Any]:
             f"deployed discovery output did not contain JSON (preview={content_preview(raw)})"
         )
     payload = json.loads(text[start : end + 1])
+    discovery_meta = dict(payload.get("discovery_meta") or {})
+    runner_error = discovery_meta.get("runner_error")
+    if runner_error:
+        raise ValueError(f"remote discovery runner failed: {runner_error}")
     service_endpoints = payload.get("service_endpoints") or {}
     normalized_endpoints: dict[str, list[tuple[str, int]]] = {}
     for key, values in service_endpoints.items():
@@ -364,7 +403,9 @@ def _upload_discovery_runner_via_python_base64(provider: Any, remote_script: str
             "open(p,'ab').write(base64.b64decode(d.encode()))"
         )
         provider.run_remote_command(
-            wrap_remote_shell_command(f"python3 -c {shlex.quote(write_script)}"),
+            wrap_remote_shell_command(
+                _remote_python_command(f"-c {shlex.quote(write_script)}")
+            ),
             timeout_seconds=60.0,
         )
 
@@ -406,7 +447,9 @@ def run_deployed_webshell_discovery(
     discovery_max_hosts: int,
 ) -> dict[str, Any]:
     """Upload and execute the self-contained discovery runner on the webshell host."""
-    remote_dir, remote_script, remote_output = _resolve_remote_discovery_dir(request)
+    remote_dir, remote_script, remote_output, remote_stderr = _resolve_remote_discovery_dir(
+        request
+    )
     try:
         provider.run_remote_command(
             wrap_remote_shell_command(f"mkdir -p {shlex.quote(remote_dir)}"),
@@ -414,18 +457,28 @@ def run_deployed_webshell_discovery(
         )
         upload_method = _upload_discovery_runner_asset(provider, remote_script)
 
-        run_command = (
-            f"python3 {shlex.quote(remote_script)} "
-            f"{shlex.quote(target_net)} {int(discovery_max_hosts)} "
-            f"{shlex.quote(remote_output)} {DEFAULT_REMOTE_DISCOVERY_TIMEOUT}"
-        )
-        provider.run_remote_command(
-            wrap_remote_shell_command(run_command),
-            timeout_seconds=max(180.0, discovery_max_hosts * 2.0),
-        )
-        raw = provider.run_remote_command(
-            wrap_remote_shell_command(f"cat {shlex.quote(remote_output)} 2>&1"),
+        compile_raw = provider.run_remote_command(
+            wrap_remote_shell_command(
+                f"{_remote_python_command(f'-m py_compile {shlex.quote(remote_script)}')} "
+                f">{shlex.quote(remote_stderr)} 2>&1"
+            ),
             timeout_seconds=60.0,
+        )
+        compile_text = normalize_webshell_command_output(compile_raw)
+        if compile_text and "SyntaxError" in compile_text:
+            raise ValueError(
+                f"discover_runner py_compile failed (preview={content_preview(compile_raw)})"
+            )
+
+        raw = provider.run_remote_command(
+            _build_discovery_execute_shell(
+                remote_script,
+                target_net,
+                discovery_max_hosts,
+                remote_output,
+                remote_stderr,
+            ),
+            timeout_seconds=max(300.0, discovery_max_hosts * 3.0),
         )
         targets = parse_deployed_discovery_output(raw)
         discovery_meta = dict(targets.get("discovery_meta") or {})
@@ -439,12 +492,14 @@ def run_deployed_webshell_discovery(
             error=str(exc),
             output_preview=content_preview(raw) if "raw" in locals() else None,
             parse_failed=True,
+            upload_method=upload_method if "upload_method" in locals() else None,
         )
     except Exception as exc:
         return _failed_deployed_discovery_targets(
             target_net,
             discovery_max_hosts=discovery_max_hosts,
             error=str(exc),
+            upload_method=upload_method if "upload_method" in locals() else None,
         )
 
 
@@ -455,6 +510,7 @@ def _failed_deployed_discovery_targets(
     error: str,
     output_preview: str | None = None,
     parse_failed: bool = False,
+    upload_method: str | None = None,
 ) -> dict[str, Any]:
     service_hosts, service_endpoints = _empty_service_buckets()
     discovery_meta: dict[str, Any] = {
@@ -467,6 +523,8 @@ def _failed_deployed_discovery_targets(
         "discovery_method": "deployed_runner",
         "deploy_error": error,
     }
+    if upload_method is not None:
+        discovery_meta["upload_method"] = upload_method
     if parse_failed:
         discovery_meta["parse_failed"] = True
     if output_preview is not None:
