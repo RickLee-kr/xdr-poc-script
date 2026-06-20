@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.execution.remote.bundle.planner import _uses_remote_discovery
@@ -127,12 +127,27 @@ class CommandScenarioRunner:
             return cached
 
         dispatch_status = "mock" if mock else "completed"
+        batch_results: list[tuple[list[dict[str, Any]], set[tuple[str, int]]]] = []
+
+        def _record_probe_batch(
+            batch_specs: list[dict[str, Any]],
+            open_endpoints: set[tuple[str, int]],
+            _raw: bytes,
+        ) -> None:
+            batch_results.append((batch_specs, set(open_endpoints)))
+
         if mock:
             commands = probe_commands_for_specs(specs, mock=True)
             for command in commands:
                 provider.execute_command(command)
 
-        targets = run_webshell_host_discovery(provider, ctx, request, specs)
+        targets = run_webshell_host_discovery(
+            provider,
+            ctx,
+            request,
+            specs,
+            on_probe_batch=None if mock else _record_probe_batch,
+        )
         append_discovery_events(
             ctx.event_store,
             run_id=str(request.run_id),
@@ -141,6 +156,7 @@ class CommandScenarioRunner:
             probe_specs=specs,
             dispatch_status=dispatch_status,
             discovery_result=targets.get("discovery_meta"),
+            batch_results=batch_results or None,
         )
         return targets
 

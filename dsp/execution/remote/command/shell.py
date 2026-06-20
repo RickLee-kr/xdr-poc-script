@@ -22,6 +22,40 @@ def tcp_probe_command(host: str, port: int, *, timeout: float = 3.0) -> str:
     return f"python3 -c {shlex.quote(script)} 2>/dev/null || true"
 
 
+PROBE_OPEN_MARKER = "DSP_PROBE_OPEN"
+
+
+def tcp_probe_discovery_command(host: str, port: int, *, timeout: float = 0.5) -> str:
+    """TCP probe that prints a marker when the port is open (for run_remote_command)."""
+    t = max(0.1, float(timeout))
+    script = (
+        "import socket;"
+        f"socket.create_connection(({host!r},{int(port)}),timeout={t}).close();"
+        f"print({PROBE_OPEN_MARKER!r})"
+    )
+    return f"python3 -c {shlex.quote(script)}"
+
+
+def tcp_probe_batch_discovery_command(
+    probes: list[tuple[str, int]],
+    *,
+    timeout: float = 0.5,
+) -> str:
+    """Batch TCP probes — same transport primitive as follow-up command dispatch."""
+    t = max(0.1, float(timeout))
+    script = (
+        "import socket;"
+        f"probes={probes!r};t={t};m={PROBE_OPEN_MARKER!r};"
+        "for h,p in probes:"
+        " try:"
+        "  socket.create_connection((h,p),timeout=t).close();"
+        "  print(m,f'{h}:{p}')"
+        " except OSError:"
+        "  pass"
+    )
+    return f"python3 -c {shlex.quote(script)}"
+
+
 def curl_request_command(
     url: str,
     *,

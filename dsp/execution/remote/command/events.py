@@ -145,6 +145,7 @@ def append_discovery_events(
     probe_specs: list[dict[str, Any]],
     dispatch_status: str,
     discovery_result: dict[str, Any] | None = None,
+    batch_results: list[tuple[list[dict[str, Any]], set[tuple[str, int]]]] | None = None,
 ) -> None:
     append_event(
         store,
@@ -158,46 +159,36 @@ def append_discovery_events(
             "planned_probes": len(probe_specs),
         },
     )
-    for index, spec in enumerate(probe_specs, start=1):
-        host = str(spec["host"])
-        port = int(spec["port"])
-        artifact = f"{host}:{port}"
-        append_command_dispatched(
-            store,
-            run_id=run_id,
-            scenario_id=scenario_id,
-            command_category="discovery_probe",
-            target=host,
-            protocol="tcp",
-            dispatch_status=dispatch_status,
-            artifact=artifact,
-            traffic_event="port_probe_sent",
-            evidence={
-                "seq": index,
-                "host": host,
-                "port": port,
-                "capability": spec.get("capability"),
-            },
-        )
-        append_event(
-            store,
-            run_id=run_id,
-            scenario_id=scenario_id,
-            event="port_connection_failed",
-            status="sent",
-            target=host,
-            artifact=artifact,
-            evidence={
-                "host": host,
-                "port": port,
-                "outcome": "command_dispatched",
-                "origin": DISCOVERY_ORIGIN_WEBSHELL,
-            },
-        )
+    seq = 0
+    if batch_results is not None:
+        for batch_specs, open_endpoints in batch_results:
+            for spec in batch_specs:
+                seq += 1
+                _append_discovery_probe_event(
+                    store,
+                    run_id=run_id,
+                    scenario_id=scenario_id,
+                    spec=spec,
+                    seq=seq,
+                    dispatch_status=dispatch_status,
+                    open=(str(spec["host"]), int(spec["port"])) in open_endpoints,
+                )
+    elif dispatch_status == "mock":
+        for spec in probe_specs:
+            seq += 1
+            _append_discovery_probe_event(
+                store,
+                run_id=run_id,
+                scenario_id=scenario_id,
+                spec=spec,
+                seq=seq,
+                dispatch_status=dispatch_status,
+                open=False,
+            )
     completed_evidence: dict[str, Any] = {
         "target_net": target_net,
         "discovery_origin": DISCOVERY_ORIGIN_WEBSHELL,
-        "probes_dispatched": len(probe_specs),
+        "probes_dispatched": seq or len(probe_specs),
         "planned_only": False,
     }
     if discovery_result is not None:
@@ -206,6 +197,8 @@ def append_discovery_events(
                 "alive_hosts": discovery_result.get("alive_hosts", []),
                 "open_endpoints": discovery_result.get("open_endpoints", 0),
                 "probed_hosts": discovery_result.get("probed_hosts", len(probe_specs)),
+                "discovery_method": discovery_result.get("discovery_method"),
+                "probe_batches": discovery_result.get("probe_batches"),
             }
         )
     append_event(
@@ -215,4 +208,52 @@ def append_discovery_events(
         event="remote_discovery_completed",
         status="info",
         evidence=completed_evidence,
+    )
+
+
+def _append_discovery_probe_event(
+    store: EventStore,
+    *,
+    run_id: str,
+    scenario_id: str,
+    spec: dict[str, Any],
+    seq: int,
+    dispatch_status: str,
+    open: bool,
+) -> None:
+    host = str(spec["host"])
+    port = int(spec["port"])
+    artifact = f"{host}:{port}"
+    append_command_dispatched(
+        store,
+        run_id=run_id,
+        scenario_id=scenario_id,
+        command_category="discovery_probe",
+        target=host,
+        protocol="tcp",
+        dispatch_status=dispatch_status,
+        artifact=artifact,
+        traffic_event="port_probe_sent",
+        evidence={
+            "seq": seq,
+            "host": host,
+            "port": port,
+            "capability": spec.get("capability"),
+            "probe_open": open,
+        },
+    )
+    append_event(
+        store,
+        run_id=run_id,
+        scenario_id=scenario_id,
+        event="port_connection_failed" if not open else "port_probe_open",
+        status="sent",
+        target=host,
+        artifact=artifact,
+        evidence={
+            "host": host,
+            "port": port,
+            "outcome": "open" if open else "closed",
+            "origin": DISCOVERY_ORIGIN_WEBSHELL,
+        },
     )

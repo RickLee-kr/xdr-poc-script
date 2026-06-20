@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import base64
-import json
-import shlex
-from typing import Any
+from typing import Any, Callable
 
 from dsp.discovery.legacy_bash import (
     DISCOVERY_MAX_HOSTS,
     FAST_SAFE_DISCOVERY_PORTS,
-    PORT_CAPABILITY_MAP as LOCAL_PORT_CAPABILITY_MAP,
 )
 from dsp.execution.remote.command.models import DISCOVERY_ORIGIN_WEBSHELL
-from dsp.execution.remote.command.shell import mock_noop_command, tcp_probe_command
+from dsp.execution.remote.command.shell import (
+    PROBE_OPEN_MARKER,
+    mock_noop_command,
+    tcp_probe_batch_discovery_command,
+    tcp_probe_command,
+)
+from dsp.execution.webshell.event_sync.bundle_content import normalize_webshell_command_output
 from dsp.execution.remote.bundle.assets.remote_discovery import (
     DISCOVERY_PORTS,
     PORT_CAPABILITY_MAP,
@@ -23,7 +25,7 @@ from dsp.execution.remote.bundle.assets.remote_discovery import (
 REMOTE_DISCOVERY_CACHE_KEY = "_remote_discovery_targets"
 DISCOVERY_SCAN_MAX_HOSTS_KEY = "_discovery_scan_max_hosts"
 DEFAULT_REMOTE_DISCOVERY_TIMEOUT = 0.5
-DEFAULT_REMOTE_DISCOVERY_WORKERS = 32
+DISCOVERY_PROBE_BATCH_SIZE = 64
 
 
 def resolve_discovery_scan_max_hosts(
@@ -194,103 +196,79 @@ def build_planned_discovery_targets(
     )
 
 
-def build_remote_discovery_command(
+def _chunk_probe_specs(
+    probe_specs: list[dict[str, Any]],
+    batch_size: int,
+) -> list[list[dict[str, Any]]]:
+    size = max(1, int(batch_size))
+    return [
+        probe_specs[index : index + size]
+        for index in range(0, len(probe_specs), size)
+    ]
+
+
+def parse_tcp_probe_discovery_output(raw: bytes) -> set[tuple[str, int]]:
+    """Collect host:port pairs marked open by batched or single probe commands."""
+    open_endpoints: set[tuple[str, int]] = set()
+    for line in normalize_webshell_command_output(raw).splitlines():
+        stripped = line.strip()
+        if PROBE_OPEN_MARKER not in stripped:
+            continue
+        marker_index = stripped.find(PROBE_OPEN_MARKER)
+        payload = stripped[marker_index + len(PROBE_OPEN_MARKER) :].strip()
+        if not payload:
+            continue
+        host, _, port_text = payload.rpartition(":")
+        if not host or not port_text.isdigit():
+            continue
+        open_endpoints.add((host, int(port_text)))
+    return open_endpoints
+
+
+def run_discovery_from_tcp_probes(
+    provider: Any,
     target_net: str,
+    probe_specs: list[dict[str, Any]],
     *,
-    max_hosts: int = DISCOVERY_MAX_HOSTS,
-    ports: tuple[int, ...] | None = None,
     timeout: float = DEFAULT_REMOTE_DISCOVERY_TIMEOUT,
-    workers: int = DEFAULT_REMOTE_DISCOVERY_WORKERS,
-) -> str:
-    """Build a single webshell command that runs target_net discovery on the remote host."""
-    port_list = ports or FAST_SAFE_DISCOVERY_PORTS
-    port_map = {int(k): v for k, v in LOCAL_PORT_CAPABILITY_MAP.items()}
-    script = f"""import ipaddress,json,socket
-from concurrent.futures import ThreadPoolExecutor,as_completed
-TARGET_NET={target_net!r}
-MAX_HOSTS={max_hosts}
-PORTS={list(port_list)!r}
-PORT_MAP={json.dumps(port_map)!r}
-TIMEOUT={timeout}
-WORKERS={workers}
-def expand_hosts(net,max_hosts):
- n=ipaddress.ip_network(net.strip(),strict=False)
- out=[]
- for addr in n.hosts():
-  out.append(str(addr))
-  if len(out)>=max_hosts:
-   break
- return out
-def probe(host,port):
- try:
-  s=socket.create_connection((host,port),timeout=TIMEOUT)
-  s.close()
-  return True
- except OSError:
-  return False
-candidates=expand_hosts(TARGET_NET,MAX_HOSTS)
-service_hosts={{cap:[] for cap in set(PORT_MAP.values())}}
-service_endpoints={{cap:[] for cap in set(PORT_MAP.values())}}
-alive=set()
-open_endpoints=0
-tasks=[(h,p) for h in candidates for p in PORTS if p in PORT_MAP]
-with ThreadPoolExecutor(max_workers=min(WORKERS,max(1,len(tasks)))) as pool:
- futures={{pool.submit(probe,h,p):(h,p) for h,p in tasks}}
- for fut in as_completed(futures):
-  h,p=futures[fut]
-  if not fut.result():
-   continue
-  cap=PORT_MAP[p]
-  alive.add(h)
-  open_endpoints+=1
-  if h not in service_hosts[cap]:
-   service_hosts[cap].append(h)
-  service_endpoints[cap].append([h,p])
-for key in service_hosts:
- service_hosts[key]=sorted(service_hosts[key],key=lambda x:tuple(int(p) for p in x.split('.')))
-for key in service_endpoints:
- service_endpoints[key]=sorted(service_endpoints[key],key=lambda ep:(tuple(int(p) for p in ep[0].split('.')),ep[1]))
-alive_hosts=sorted(alive,key=lambda x:tuple(int(p) for p in x.split('.')))
-print(json.dumps({{
- "target_net": TARGET_NET,
- "hosts": alive_hosts,
- "service_hosts": service_hosts,
- "service_endpoints": service_endpoints,
- "discovery_enabled": True,
- "discovery_meta": {{
-  "probed_hosts": len(candidates),
-  "alive_hosts": alive_hosts,
-  "open_endpoints": open_endpoints,
-  "service_hosts": service_hosts,
-  "discovery_origin": "webshell_host",
- }},
-}}))
-"""
-    encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
-    return f"echo {shlex.quote(encoded)} | base64 -d | python3"
+    batch_size: int = DISCOVERY_PROBE_BATCH_SIZE,
+    on_probe_batch: Callable[[list[dict[str, Any]], set[tuple[str, int]], bytes], None]
+    | None = None,
+) -> dict[str, Any]:
+    """Webshell-origin discovery via batched python3 -c TCP probes (follow-up transport)."""
+    open_endpoints: set[tuple[str, int]] = set()
+    batches = _chunk_probe_specs(probe_specs, batch_size)
+    per_probe_timeout = max(0.1, float(timeout))
 
+    for batch in batches:
+        probes = [(str(spec["host"]), int(spec["port"])) for spec in batch]
+        command_timeout = max(30.0, len(probes) * (per_probe_timeout + 0.25))
+        raw = provider.run_remote_command(
+            tcp_probe_batch_discovery_command(probes, timeout=per_probe_timeout),
+            timeout_seconds=command_timeout,
+        )
+        batch_open = parse_tcp_probe_discovery_output(raw)
+        open_endpoints.update(batch_open)
+        if on_probe_batch is not None:
+            on_probe_batch(batch, batch_open, raw)
 
-def parse_remote_discovery_output(raw: bytes) -> dict[str, Any]:
-    """Parse JSON discovery payload returned by the webshell host."""
-    text = raw.decode("utf-8", errors="replace").strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("remote discovery output did not contain JSON")
-    payload = json.loads(text[start : end + 1])
-    service_endpoints = payload.get("service_endpoints") or {}
-    normalized_endpoints: dict[str, list[tuple[str, int]]] = {}
-    for key, values in service_endpoints.items():
-        normalized_endpoints[str(key)] = [
-            (str(item[0]), int(item[1])) for item in values
-        ]
-    payload["service_endpoints"] = normalized_endpoints
-    discovery_meta = dict(payload.get("discovery_meta") or {})
-    discovery_meta.setdefault("discovery_origin", DISCOVERY_ORIGIN_WEBSHELL)
-    discovery_meta["planned_only"] = False
-    payload["discovery_meta"] = discovery_meta
-    payload["discovery_enabled"] = True
-    return payload
+    candidates = sorted(
+        {str(spec["host"]) for spec in probe_specs},
+        key=lambda h: tuple(int(p) for p in h.split(".")),
+    )
+    targets = build_discovery_targets_from_open_endpoints(
+        target_net,
+        probe_specs,
+        open_endpoints,
+        candidate_hosts=candidates,
+    )
+    discovery_meta = dict(targets.get("discovery_meta") or {})
+    discovery_meta["discovery_method"] = "tcp_probe_batch"
+    discovery_meta["probe_batches"] = len(batches)
+    discovery_meta["probes_executed"] = len(probe_specs)
+    discovery_meta["open_endpoints"] = len(open_endpoints)
+    targets["discovery_meta"] = discovery_meta
+    return targets
 
 
 def get_cached_remote_discovery(
@@ -315,6 +293,9 @@ def run_webshell_host_discovery(
     ctx: Any,
     request: Any,
     probe_specs: list[dict[str, Any]],
+    *,
+    on_probe_batch: Callable[[list[dict[str, Any]], set[tuple[str, int]], bytes], None]
+    | None = None,
 ) -> dict[str, Any]:
     """Execute or reuse webshell-origin discovery and return TargetSet-compatible dict."""
     params = dict(request.scenario_params)
@@ -336,34 +317,18 @@ def run_webshell_host_discovery(
         cache_remote_discovery(ctx.config.scenario_params, targets)
         return targets
 
-    command = build_remote_discovery_command(target_net, max_hosts=discovery_max_hosts)
-    raw = provider.run_remote_command(
-        command,
-        timeout_seconds=max(60.0, discovery_max_hosts * 2.0),
-    )
-    try:
-        targets = parse_remote_discovery_output(raw)
-    except (ValueError, json.JSONDecodeError):
-        service_hosts, service_endpoints = _empty_service_buckets()
-        targets = {
-            "target_net": target_net,
-            "hosts": [],
-            "service_hosts": service_hosts,
-            "service_endpoints": {
-                key: list(value) for key, value in service_endpoints.items()
-            },
-            "discovery_enabled": True,
-            "discovery_meta": {
-                "probed_hosts": discovery_max_hosts,
-                "alive_hosts": [],
-                "open_endpoints": 0,
-                "service_hosts": service_hosts,
-                "discovery_origin": DISCOVERY_ORIGIN_WEBSHELL,
-                "planned_only": False,
-                "parse_failed": True,
-            },
-        }
+    if not probe_specs:
+        probe_specs = build_discovery_probe_specs(
+            target_net,
+            max_hosts=discovery_max_hosts,
+        )
 
+    targets = run_discovery_from_tcp_probes(
+        provider,
+        target_net,
+        probe_specs,
+        on_probe_batch=on_probe_batch,
+    )
     cache_remote_discovery(ctx.config.scenario_params, targets)
     return targets
 
