@@ -465,6 +465,14 @@ class RunManager:
         )
 
         if is_webshell:
+            from dsp.execution.remote.command.discovery import DISCOVERY_SCAN_MAX_HOSTS_KEY
+            from dsp.runtime.operational_profiles import discover_host_count
+
+            scan_cap = max_hosts if max_hosts is not None else DISCOVERY_MAX_HOSTS
+            config.scenario_params[DISCOVERY_SCAN_MAX_HOSTS_KEY] = discover_host_count(
+                target_net,
+                max_hosts=scan_cap,
+            )
             apply_webshell_initial_compromise_plan(
                 config.scenario_params,
                 scenario_ids,

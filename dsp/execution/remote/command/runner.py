@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from dsp.discovery.legacy_bash import DISCOVERY_MAX_HOSTS
 from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.execution.remote.bundle.planner import _uses_remote_discovery
 from dsp.execution.remote.command.discovery import (
     build_discovery_probe_specs,
     get_cached_remote_discovery,
     probe_commands_for_specs,
+    resolve_discovery_scan_max_hosts,
     run_webshell_host_discovery,
 )
 from dsp.execution.remote.command.events import (
@@ -115,10 +115,12 @@ class CommandScenarioRunner:
         provider: WebshellExecutionProvider,
         ctx: RunContext,
     ) -> dict:
-        params = dict(request.scenario_params)
-        max_hosts = int(params.get("max_hosts", DISCOVERY_MAX_HOSTS))
         target_net = str(request.target_net or "")
-        specs = build_discovery_probe_specs(target_net, max_hosts=max_hosts)
+        discovery_max_hosts = resolve_discovery_scan_max_hosts(
+            ctx.config.scenario_params,
+            target_net,
+        )
+        specs = build_discovery_probe_specs(target_net, max_hosts=discovery_max_hosts)
         mock = request.dry_run
         cached = get_cached_remote_discovery(ctx.config.scenario_params, target_net)
         if cached is not None:

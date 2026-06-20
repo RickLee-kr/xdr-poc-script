@@ -169,6 +169,7 @@ def test_webshell_discovery_runs_remote() -> None:
     plan = _plan_remote_discovery_execute(request, dry_run=True)
     assert plan["type"] == "remote_discovery_execute"
     assert plan["discovery"]["origin"] == "webshell_host"
+    assert plan["discovery"]["max_hosts"] == 254
 
     with patch(
         "dsp.execution.remote.bundle.assets.remote_discovery._tcp_probe",

@@ -126,14 +126,13 @@ def _plan_remote_discovery_execute(
     dry_run: bool,
 ) -> dict[str, Any]:
     params = dict(request.scenario_params)
-    max_hosts = int(params.get("max_hosts", DISCOVERY_MAX_HOSTS))
     return {
         "type": "remote_discovery_execute",
         "scenario_id": request.scenario_id,
         "params": params,
         "discovery": {
             "target_net": request.target_net,
-            "max_hosts": max_hosts,
+            "max_hosts": DISCOVERY_MAX_HOSTS,
             "ports": list(FAST_SAFE_DISCOVERY_PORTS),
             "origin": "webshell_host",
         },

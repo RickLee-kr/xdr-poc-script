@@ -21,8 +21,19 @@ from dsp.execution.remote.bundle.assets.remote_discovery import (
 )
 
 REMOTE_DISCOVERY_CACHE_KEY = "_remote_discovery_targets"
+DISCOVERY_SCAN_MAX_HOSTS_KEY = "_discovery_scan_max_hosts"
 DEFAULT_REMOTE_DISCOVERY_TIMEOUT = 0.5
 DEFAULT_REMOTE_DISCOVERY_WORKERS = 32
+
+
+def resolve_discovery_scan_max_hosts(
+    scenario_params: dict[str, Any],
+    target_net: str,
+) -> int:
+    """Hosts to probe during webshell-origin discovery (independent of follow-up caps)."""
+    configured = scenario_params.get(DISCOVERY_SCAN_MAX_HOSTS_KEY)
+    cap = int(configured) if configured is not None else DISCOVERY_MAX_HOSTS
+    return len(expand_target_net_hosts(target_net.strip(), max_hosts=cap))
 
 
 def build_discovery_probe_specs(
@@ -308,20 +319,27 @@ def run_webshell_host_discovery(
     """Execute or reuse webshell-origin discovery and return TargetSet-compatible dict."""
     params = dict(request.scenario_params)
     target_net = str(request.target_net or "")
-    max_hosts = int(params.get("max_hosts", DISCOVERY_MAX_HOSTS))
+    discovery_max_hosts = resolve_discovery_scan_max_hosts(
+        ctx.config.scenario_params,
+        target_net,
+    )
     cached = get_cached_remote_discovery(ctx.config.scenario_params, target_net)
     if cached is not None:
         return cached
 
     if request.dry_run:
-        targets = build_mock_discovery_targets(target_net, params, max_hosts=max_hosts)
+        targets = build_mock_discovery_targets(
+            target_net,
+            params,
+            max_hosts=discovery_max_hosts,
+        )
         cache_remote_discovery(ctx.config.scenario_params, targets)
         return targets
 
-    command = build_remote_discovery_command(target_net, max_hosts=max_hosts)
+    command = build_remote_discovery_command(target_net, max_hosts=discovery_max_hosts)
     raw = provider.run_remote_command(
         command,
-        timeout_seconds=max(60.0, max_hosts * 2.0),
+        timeout_seconds=max(60.0, discovery_max_hosts * 2.0),
     )
     try:
         targets = parse_remote_discovery_output(raw)
@@ -336,7 +354,7 @@ def run_webshell_host_discovery(
             },
             "discovery_enabled": True,
             "discovery_meta": {
-                "probed_hosts": max_hosts,
+                "probed_hosts": discovery_max_hosts,
                 "alive_hosts": [],
                 "open_endpoints": 0,
                 "service_hosts": service_hosts,
