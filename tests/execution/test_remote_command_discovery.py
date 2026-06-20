@@ -62,10 +62,10 @@ def test_live_discovery_uses_batched_tcp_probes() -> None:
     targets = run_webshell_host_discovery(provider, ctx, request, specs)
     assert provider.run_remote_command.called
     command = provider.run_remote_command.call_args[0][0]
-    assert command.startswith("python3 -c")
+    assert command.startswith("/bin/sh -c")
     assert "socket.create_connection" in command
     assert targets["service_hosts"]["http_targets"] == ["10.10.10.1"]
-    assert targets["discovery_meta"]["discovery_method"] == "tcp_probe_batch"
+    assert targets["discovery_meta"]["discovery_method"] == "tcp_probe_batch_sh"
     assert "parse_failed" not in targets["discovery_meta"]
 
 
@@ -83,7 +83,7 @@ def test_live_discovery_without_open_ports_returns_empty_service_buckets() -> No
     targets = run_webshell_host_discovery(provider, ctx, request, specs)
     assert targets["hosts"] == []
     assert not any(targets["service_hosts"].values())
-    assert targets["discovery_meta"]["discovery_method"] == "tcp_probe_batch"
+    assert targets["discovery_meta"]["discovery_method"] == "tcp_probe_batch_sh"
     assert "parse_failed" not in targets["discovery_meta"]
 
 

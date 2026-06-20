@@ -196,6 +196,8 @@ class WebshellTestServer:
                     f"cat: {remote_path}: No such file or directory\n".encode()
                 )
             return self._format_command_output(payload)
+        if command_line.startswith("/bin/sh -c"):
+            return self._format_command_output(self._execute_shell_command(command_line))
         if command_line.startswith("python3 -c"):
             return self._format_command_output(self._execute_python_inline(command_line))
         if command_line.startswith("python3 "):
@@ -268,6 +270,18 @@ class WebshellTestServer:
         else:
             self._write_remote_file(remote_path, chunk)
         return b""
+
+    def _execute_shell_command(self, command_line: str) -> bytes:
+        completed = subprocess.run(
+            command_line,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        return (stdout + stderr).encode()
 
     def _execute_python_inline(self, command_line: str) -> bytes:
         stripped = command_line.strip()

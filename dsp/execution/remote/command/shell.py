@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 import base64
+import re
 import shlex
 
 
 def mock_noop_command() -> str:
     """Minimal command for dry-run / mock delivery."""
     return "true"
+
+
+def wrap_remote_shell_command(command: str) -> str:
+    """Run a command through /bin/sh -c so JSP exec() receives a shell pipeline."""
+    return f"/bin/sh -c {shlex.quote(command.strip())}"
+
+
+def _sanitize_run_token(run_id: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", str(run_id or "run").strip())
+    return cleaned[:48] or "run"
+
+
+def discovery_probe_output_path(run_id: str, batch_index: int) -> str:
+    token = _sanitize_run_token(run_id)
+    return f"/tmp/.dsp-{token}-probe-{int(batch_index)}.out"
 
 
 def tcp_probe_command(host: str, port: int, *, timeout: float = 3.0) -> str:
@@ -19,41 +35,75 @@ def tcp_probe_command(host: str, port: int, *, timeout: float = 3.0) -> str:
         f"s=socket.socket();s.settimeout({t});"
         f"s.connect(({host!r},{int(port)}));s.close()"
     )
-    return f"python3 -c {shlex.quote(script)} 2>/dev/null || true"
+    return wrap_remote_shell_command(f"python3 -c {shlex.quote(script)} 2>/dev/null || true")
 
 
 PROBE_OPEN_MARKER = "DSP_PROBE_OPEN"
 
 
-def tcp_probe_discovery_command(host: str, port: int, *, timeout: float = 0.5) -> str:
-    """TCP probe that prints a marker when the port is open (for run_remote_command)."""
+def tcp_probe_discovery_command(
+    host: str,
+    port: int,
+    *,
+    timeout: float = 0.5,
+    output_path: str = "/tmp/.dsp-probe.out",
+) -> str:
+    """TCP probe that records open ports in a file, then cats it for transport capture."""
     t = max(0.1, float(timeout))
-    script = (
+    write_script = (
         "import socket;"
-        f"socket.create_connection(({host!r},{int(port)}),timeout={t}).close();"
-        f"print({PROBE_OPEN_MARKER!r})"
+        f"h={host!r};p={int(port)};t={t};m={PROBE_OPEN_MARKER!r};out={output_path!r};"
+        "lines=[];"
+        "try:"
+        " socket.create_connection((h,p),timeout=t).close();"
+        " lines.append(m);"
+        "except OSError:"
+        " pass;"
+        "open(out,'w').write(chr(10).join(lines))"
     )
-    return f"python3 -c {shlex.quote(script)}"
+    pipeline = (
+        f"rm -f {shlex.quote(output_path)}; "
+        f"python3 -c {shlex.quote(write_script)}; "
+        f"cat {shlex.quote(output_path)} 2>/dev/null"
+    )
+    return wrap_remote_shell_command(pipeline)
 
 
 def tcp_probe_batch_discovery_command(
     probes: list[tuple[str, int]],
     *,
     timeout: float = 0.5,
+    output_path: str = "/tmp/.dsp-probe.out",
+    workers: int = 32,
 ) -> str:
-    """Batch TCP probes — same transport primitive as follow-up command dispatch."""
+    """Batch TCP probes via sh -c, writing markers to a file and catting it back."""
     t = max(0.1, float(timeout))
-    script = (
+    worker_count = max(1, min(int(workers), len(probes) or 1))
+    write_script = (
         "import socket;"
-        f"probes={probes!r};t={t};m={PROBE_OPEN_MARKER!r};"
-        "for h,p in probes:"
+        "from concurrent.futures import ThreadPoolExecutor,as_completed;"
+        f"probes={probes!r};t={t};m={PROBE_OPEN_MARKER!r};out={output_path!r};w={worker_count};"
+        "def probe(tup):"
+        " h,p=tup;"
         " try:"
         "  socket.create_connection((h,p),timeout=t).close();"
-        "  print(m,f'{h}:{p}')"
+        "  return f'{m} {h}:{p}';"
         " except OSError:"
-        "  pass"
+        "  return None;"
+        "lines=[];"
+        "with ThreadPoolExecutor(max_workers=min(w,max(1,len(probes)))) as pool:"
+        " futures=[pool.submit(probe,x) for x in probes];"
+        " for fut in as_completed(futures):"
+        "  row=fut.result();"
+        "  if row: lines.append(row);"
+        "open(out,'w').write(chr(10).join(lines))"
     )
-    return f"python3 -c {shlex.quote(script)}"
+    pipeline = (
+        f"rm -f {shlex.quote(output_path)}; "
+        f"python3 -c {shlex.quote(write_script)}; "
+        f"cat {shlex.quote(output_path)} 2>/dev/null"
+    )
+    return wrap_remote_shell_command(pipeline)
 
 
 def curl_request_command(

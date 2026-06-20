@@ -11,11 +11,15 @@ from dsp.discovery.legacy_bash import (
 from dsp.execution.remote.command.models import DISCOVERY_ORIGIN_WEBSHELL
 from dsp.execution.remote.command.shell import (
     PROBE_OPEN_MARKER,
+    discovery_probe_output_path,
     mock_noop_command,
     tcp_probe_batch_discovery_command,
     tcp_probe_command,
 )
-from dsp.execution.webshell.event_sync.bundle_content import normalize_webshell_command_output
+from dsp.execution.webshell.event_sync.bundle_content import (
+    content_preview,
+    normalize_webshell_command_output,
+)
 from dsp.execution.remote.bundle.assets.remote_discovery import (
     DISCOVERY_PORTS,
     PORT_CAPABILITY_MAP,
@@ -25,7 +29,7 @@ from dsp.execution.remote.bundle.assets.remote_discovery import (
 REMOTE_DISCOVERY_CACHE_KEY = "_remote_discovery_targets"
 DISCOVERY_SCAN_MAX_HOSTS_KEY = "_discovery_scan_max_hosts"
 DEFAULT_REMOTE_DISCOVERY_TIMEOUT = 0.5
-DISCOVERY_PROBE_BATCH_SIZE = 64
+DISCOVERY_PROBE_BATCH_SIZE = 32
 
 
 def resolve_discovery_scan_max_hosts(
@@ -230,23 +234,35 @@ def run_discovery_from_tcp_probes(
     target_net: str,
     probe_specs: list[dict[str, Any]],
     *,
+    run_id: str = "",
     timeout: float = DEFAULT_REMOTE_DISCOVERY_TIMEOUT,
     batch_size: int = DISCOVERY_PROBE_BATCH_SIZE,
     on_probe_batch: Callable[[list[dict[str, Any]], set[tuple[str, int]], bytes], None]
     | None = None,
 ) -> dict[str, Any]:
-    """Webshell-origin discovery via batched python3 -c TCP probes (follow-up transport)."""
+    """Webshell-origin discovery via batched sh-wrapped TCP probes with file capture."""
     open_endpoints: set[tuple[str, int]] = set()
     batches = _chunk_probe_specs(probe_specs, batch_size)
     per_probe_timeout = max(0.1, float(timeout))
+    first_batch_preview: str | None = None
 
-    for batch in batches:
+    for batch_index, batch in enumerate(batches):
         probes = [(str(spec["host"]), int(spec["port"])) for spec in batch]
-        command_timeout = max(30.0, len(probes) * (per_probe_timeout + 0.25))
+        output_path = discovery_probe_output_path(run_id, batch_index)
+        command_timeout = max(
+            45.0,
+            len(probes) * (per_probe_timeout + 0.15) / max(1, min(32, len(probes))),
+        )
         raw = provider.run_remote_command(
-            tcp_probe_batch_discovery_command(probes, timeout=per_probe_timeout),
+            tcp_probe_batch_discovery_command(
+                probes,
+                timeout=per_probe_timeout,
+                output_path=output_path,
+            ),
             timeout_seconds=command_timeout,
         )
+        if batch_index == 0 and first_batch_preview is None:
+            first_batch_preview = content_preview(raw)
         batch_open = parse_tcp_probe_discovery_output(raw)
         open_endpoints.update(batch_open)
         if on_probe_batch is not None:
@@ -263,10 +279,12 @@ def run_discovery_from_tcp_probes(
         candidate_hosts=candidates,
     )
     discovery_meta = dict(targets.get("discovery_meta") or {})
-    discovery_meta["discovery_method"] = "tcp_probe_batch"
+    discovery_meta["discovery_method"] = "tcp_probe_batch_sh"
     discovery_meta["probe_batches"] = len(batches)
     discovery_meta["probes_executed"] = len(probe_specs)
     discovery_meta["open_endpoints"] = len(open_endpoints)
+    if not open_endpoints and first_batch_preview is not None:
+        discovery_meta["first_batch_output_preview"] = first_batch_preview
     targets["discovery_meta"] = discovery_meta
     return targets
 
@@ -327,6 +345,7 @@ def run_webshell_host_discovery(
         provider,
         target_net,
         probe_specs,
+        run_id=str(getattr(request, "run_id", "") or ""),
         on_probe_batch=on_probe_batch,
     )
     cache_remote_discovery(ctx.config.scenario_params, targets)
