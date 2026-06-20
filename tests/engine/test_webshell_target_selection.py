@@ -19,11 +19,10 @@ from dsp.execution.remote.bundle.planner import _build_plan, _plan_remote_discov
 from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.protocols.ssh.attempts import plan_ssh_attempts
 from dsp.runtime.scenario_plan import (
-    INITIAL_COMPROMISE_ENDPOINT_KEY,
-    INITIAL_COMPROMISE_SELECTION_REASON,
-    PHASE1_WEBSHELL_ATTACK_KEY,
+    WEBSHELL_EXECUTION_KEY,
     apply_webshell_initial_compromise_plan,
     parse_initial_compromise_endpoint,
+    webshell_server_endpoint,
 )
 from dsp.runtime.webshell_phase1 import run_webshell_phase1_attack
 from dsp.execution.remote.collection_models import RemoteEventCollectionResult
@@ -84,11 +83,20 @@ def _discovery_dict() -> dict:
         "hosts": ["10.10.10.97", "10.10.10.98"],
         "service_hosts": {
             "http_targets": ["10.10.10.97"],
+            "https_targets": [],
             "ssh_hosts": ["10.10.10.98"],
+            "dns_hosts": ["10.10.10.97"],
+            "ldap_hosts": ["10.10.10.98"],
+            "smb_hosts": ["10.10.10.98"],
+            "kerberos_hosts": ["10.10.10.98"],
         },
         "service_endpoints": {
             "http_targets": [("10.10.10.97", 8080)],
             "ssh_hosts": [("10.10.10.98", 22)],
+            "dns_hosts": [("10.10.10.97", 53)],
+            "ldap_hosts": [("10.10.10.98", 389)],
+            "smb_hosts": [("10.10.10.98", 445)],
+            "kerberos_hosts": [("10.10.10.98", 88)],
         },
         "discovery_enabled": True,
         "discovery_meta": {"discovery_origin": "webshell_host"},
@@ -128,27 +136,17 @@ def test_phase1_runs_before_prepare() -> None:
     assert call_order[:2] == ["phase1", "prepare"]
 
 
-def test_phase1_http_targets_webshell_host() -> None:
-    params: dict[str, dict] = {
-        "http_followup": {
-            "max_hosts": 1,
-            "timeout": 2.0,
-            PHASE1_WEBSHELL_ATTACK_KEY: True,
-        }
-    }
+def test_webshell_server_endpoint_from_user_url() -> None:
+    params: dict[str, dict] = {}
     apply_webshell_initial_compromise_plan(
         params,
-        ["http_followup"],
+        ["ssh_failure"],
         "http://10.10.10.50:8080/shell.jsp",
     )
-    selection = resolve_http_attack_endpoint_selection(
-        TargetSet(target_net="10.10.10.0/24"),
-        params["http_followup"],
-        max_hosts=1,
-        dry_run=True,
-    )
-    assert selection.selected[0].host == "10.10.10.50"
-    assert selection.selected_http_target_reason == INITIAL_COMPROMISE_SELECTION_REASON
+    endpoint = webshell_server_endpoint(params["ssh_failure"])
+    assert endpoint is not None
+    assert endpoint.host == "10.10.10.50"
+    assert endpoint.port == 8080
 
 
 def test_phase1_ssh_targets_webshell_host() -> None:
@@ -238,7 +236,7 @@ def test_webshell_attack_chain_order(tmp_path: Path) -> None:
     phase1_calls: list[str] = []
     prepare_calls: list[str] = []
 
-    def _phase1(url: str, *, dry_run: bool):
+    def _phase1(url: str, *, dry_run: bool, **kwargs):
         phase1_calls.append("phase1")
         return run_webshell_phase1_attack(url, dry_run=dry_run)
 
@@ -303,16 +301,193 @@ def test_webshell_planner_emits_remote_discovery_execute_plan() -> None:
     assert plan["scenario_id"] == "sql_injection"
 
 
-def test_host_behavior_still_receives_initial_compromise_endpoint() -> None:
+def test_host_behavior_uses_webshell_server_from_user_url() -> None:
     params: dict[str, dict] = {}
     apply_webshell_initial_compromise_plan(
         params,
         ["host_behavior_check"],
         "http://10.10.10.50:8080/shell.jsp",
     )
-    endpoint = params["host_behavior_check"][INITIAL_COMPROMISE_ENDPOINT_KEY]
-    assert endpoint["host"] == "10.10.10.50"
-    assert endpoint["port"] == 8080
+    ctx = params["host_behavior_check"][WEBSHELL_EXECUTION_KEY]
+    assert ctx["webshell_url"] == "http://10.10.10.50:8080/shell.jsp"
+    assert ctx["endpoint"]["host"] == "10.10.10.50"
+    assert ctx["endpoint"]["port"] == 8080
+
+
+def test_webshell_ssh_failure_targets_discovered_ssh_hosts() -> None:
+    params: dict[str, dict] = {}
+    apply_webshell_initial_compromise_plan(
+        params,
+        ["ssh_failure"],
+        "http://10.10.10.50:8080/shell.jsp",
+    )
+    plan = build_plan_from_discovery(
+        "ssh_failure",
+        _discovery_dict(),
+        params["ssh_failure"] | {"max_hosts": 1, "max_per_host": 3, "max_total": 3},
+        dry_run=True,
+    )
+    assert plan["attempts"]
+    assert all(item["host"] == "10.10.10.98" for item in plan["attempts"])
+    assert all("10.10.10.50" not in item["host"] for item in plan["attempts"])
+
+
+def test_webshell_ssh_failure_skipped_without_discovered_ssh() -> None:
+    targets = {
+        "target_net": "10.10.10.0/24",
+        "hosts": ["10.10.10.97"],
+        "service_hosts": {"http_targets": ["10.10.10.97"]},
+        "service_endpoints": {"http_targets": [("10.10.10.97", 8080)]},
+        "discovery_enabled": True,
+    }
+    plan = build_plan_from_discovery("ssh_failure", targets, {"max_hosts": 1}, dry_run=True)
+    assert plan["mode"] == "skip"
+    assert plan["reason"] == "no_ssh_hosts"
+
+
+@pytest.mark.parametrize(
+    "scenario_id,missing_capability",
+    [
+        ("http_followup", "http_targets"),
+        ("sql_injection", "http_targets"),
+        ("ssh_failure", "ssh_hosts"),
+        ("dga", "dns_hosts"),
+        ("ldap_enumeration", "ldap_hosts"),
+        ("smb_login_failure", "smb_hosts"),
+        ("kerberos_failure", "kerberos_hosts"),
+    ],
+)
+def test_followup_skipped_when_discovery_capability_missing(
+    scenario_id: str,
+    missing_capability: str,
+) -> None:
+    base = _discovery_dict()
+    base["service_hosts"][missing_capability] = []
+    base["service_endpoints"][missing_capability] = []
+    plan = build_plan_from_discovery(
+        scenario_id,
+        base,
+        {"max_hosts": 1, "max_total": 2, "max_per_host": 2, "phase1_count": 1, "phase2_count": 0},
+        dry_run=True,
+    )
+    assert plan.get("mode") == "skip"
+
+
+def test_port_sweep_skipped_without_alive_hosts() -> None:
+    plan = build_plan_from_discovery(
+        "port_sweep",
+        {"target_net": "10.10.10.0/24", "hosts": [], "service_hosts": {}, "service_endpoints": {}},
+        {"max_hosts": 1, "max_ports": 1},
+        dry_run=True,
+    )
+    assert plan["mode"] == "skip"
+    assert plan["reason"] == "no_alive_hosts"
+
+
+def test_dns_tunnel_uses_alive_hosts_when_no_dns_server() -> None:
+    targets = {
+        "target_net": "10.10.10.0/24",
+        "hosts": ["10.10.10.97", "10.10.10.98"],
+        "service_hosts": {"http_targets": ["10.10.10.97"]},
+        "service_endpoints": {},
+        "discovery_enabled": True,
+    }
+    plan = build_plan_from_discovery(
+        "dns_tunnel",
+        targets,
+        {"max_hosts": 2, "max_chunks": 1},
+        dry_run=True,
+    )
+    assert plan.get("mode") != "skip"
+    query_hosts = {item["target"] for item in plan["queries"]}
+    assert query_hosts == {"10.10.10.97", "10.10.10.98"}
+
+
+def test_dga_skipped_without_discovered_dns_hosts() -> None:
+    targets = {
+        "target_net": "10.10.10.0/24",
+        "hosts": ["10.10.10.97"],
+        "service_hosts": {"http_targets": ["10.10.10.97"]},
+        "service_endpoints": {},
+        "discovery_enabled": True,
+    }
+    plan = build_plan_from_discovery(
+        "dga",
+        targets,
+        {"phase1_count": 1, "phase2_count": 0},
+        dry_run=True,
+    )
+    assert plan["mode"] == "skip"
+    assert plan["reason"] == "no_dns_hosts"
+
+
+def test_webshell_sql_injection_targets_discovered_http_hosts() -> None:
+    params: dict[str, dict] = {}
+    apply_webshell_initial_compromise_plan(
+        params,
+        ["sql_injection"],
+        "http://10.10.10.50:8080/shell.jsp",
+    )
+    plan = build_plan_from_discovery(
+        "sql_injection",
+        _discovery_dict(),
+        params["sql_injection"] | {"max_hosts": 1, "max_total": 2},
+        dry_run=True,
+    )
+    assert plan["requests"]
+    assert all("10.10.10.97" in item["url"] for item in plan["requests"])
+    assert all("10.10.10.50" not in item["url"] for item in plan["requests"])
+
+
+def test_phase2_http_followup_attaches_abnormal_user_agents() -> None:
+    plan = build_plan_from_discovery(
+        "http_followup",
+        _discovery_dict(),
+        {"max_hosts": 1, "max_total": 4, "max_per_host": 4, "abnormal_ua_ratio": 1.0},
+        dry_run=True,
+    )
+    from dsp.protocols.http.user_agents import is_abnormal_user_agent
+
+    assert plan["requests"]
+    assert all(is_abnormal_user_agent(item["user_agent"]) for item in plan["requests"])
+
+
+def test_phase1_url_scan_attaches_abnormal_user_agents() -> None:
+    captured_uas: list[str] = []
+
+    class _TrackingClient:
+        def request(self, request) -> None:
+            headers = request.headers or {}
+            captured_uas.append(headers.get("User-Agent", ""))
+
+        def make_request(self, plan):
+            from dsp.protocols.types import HttpRequest
+
+            path = plan.path if not plan.query else f"{plan.path}?{plan.query}"
+            return HttpRequest(
+                url=plan.url,
+                method=plan.method,
+                host=plan.host,
+                port=plan.port,
+                path=path,
+                headers=plan.headers,
+            )
+
+    from dsp.protocols.http.user_agents import is_abnormal_user_agent
+    from dsp.runtime import webshell_phase1 as phase1_mod
+    from dsp.runtime.scenario_plan import parse_initial_compromise_endpoint
+
+    endpoint = parse_initial_compromise_endpoint("http://10.10.10.20/shell.jsp")
+    phase1_mod._run_url_scan_with_user_agents(
+        endpoint,
+        _TrackingClient(),
+        webshell_url="http://10.10.10.20/shell.jsp",
+        params={"abnormal_ua_ratio": 1.0},
+        dry_run=False,
+        timeout=2.0,
+    )
+    assert captured_uas
+    assert all(is_abnormal_user_agent(ua) for ua in captured_uas)
 
 
 def test_console_output_separates_execution_host_and_attack_target_net() -> None:
@@ -380,7 +555,6 @@ def test_phase1_module_records_webshell_host_endpoint() -> None:
 @pytest.mark.parametrize(
     "scenario_id,capability",
     [
-        ("ssh_failure", "ssh_hosts"),
         ("http_followup", "http_targets"),
         ("sql_injection", "http_targets"),
     ],

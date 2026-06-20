@@ -10,8 +10,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from dsp.protocols.http.sqli_payloads import plan_sqli_requests
-from dsp.protocols.http.urls import HTTP_PORT_PRIORITY, plan_followup_requests
+from dsp.protocols.http.urls import plan_followup_requests
+from dsp.protocols.http.user_agents import attach_followup_user_agents
+from dsp.protocols.dns.dga import (
+    EFFECTIVE_TLD_DEFAULT,
+    PHASE1_COUNT_DEFAULT,
+    PHASE2_COUNT_DEFAULT,
+    generate_nxdomain_fqdn,
+    generate_resolvable_fqdn,
+)
+from dsp.protocols.kerberos.attempts import plan_kerberos_attempts
+from dsp.protocols.ldap.attempts import plan_ldap_enumeration
+from dsp.protocols.smb.attempts import plan_smb_attempts
 from dsp.runtime.http_endpoint_selection import select_discovered_http_endpoint_tuples
+from dsp.runtime.scenario_plan import webshell_server_endpoint
 
 DISCOVERY_PORTS: tuple[int, ...] = (22, 53, 80, 88, 389, 443, 445, 636, 8080, 8443, 8888, 9000, 9090)
 PORT_CAPABILITY_MAP: dict[int, str] = {
@@ -128,14 +140,13 @@ def _hosts_for(targets: dict[str, Any], capability: str) -> list[str]:
 
 def _select_http_endpoints(targets: dict[str, Any], params: dict[str, Any]) -> list[tuple[str, int]]:
     max_hosts = int(params.get("max_hosts", 2))
-    explicit = [str(h) for h in params["hosts"]] if params.get("hosts") else None
     http_hosts = _hosts_for(targets, "http_targets")
     http_endpoints = list((targets.get("service_endpoints") or {}).get("http_targets", []))
     return select_discovered_http_endpoint_tuples(
         http_hosts=http_hosts,
         http_endpoints=http_endpoints,
         max_hosts=max_hosts,
-        explicit_hosts=explicit,
+        explicit_hosts=None,
         explicit_port=int(params.get("port", 80)),
     )
 
@@ -152,6 +163,8 @@ def _plan_http_followup(targets: dict[str, Any], params: dict[str, Any], *, dry_
         max_total=int(params.get("max_total", 20)),
         include_attack_paths=bool(params.get("include_attack_paths", True)),
     )
+    abnormal_ratio = float(params.get("abnormal_ua_ratio", 0.10))
+    enriched_plans, _ = attach_followup_user_agents(plans, abnormal_ratio=abnormal_ratio)
     return {
         "type": "http_followup",
         "mode": "mock" if dry_run else "live",
@@ -162,7 +175,7 @@ def _plan_http_followup(targets: dict[str, Any], params: dict[str, Any], *, dry_
                 "method": plan.method,
                 "user_agent": (plan.headers or {}).get("User-Agent", "Mozilla/5.0"),
             }
-            for plan in plans
+            for plan in enriched_plans
         ],
         "non_standard_port_burst": {"enabled": False},
     }
@@ -201,10 +214,7 @@ def _plan_sql_injection(targets: dict[str, Any], params: dict[str, Any], *, dry_
 
 def _plan_ssh_failure(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
-    if "hosts" in params:
-        hosts = [str(h) for h in params["hosts"]][:max_hosts]
-    else:
-        hosts = _hosts_for(targets, "ssh_hosts")[:max_hosts]
+    hosts = _hosts_for(targets, "ssh_hosts")[:max_hosts]
     if not hosts:
         return {"type": "ssh_failure", "mode": "skip", "reason": "no_ssh_hosts"}
     port = int(params.get("port", 22))
@@ -233,10 +243,8 @@ def _plan_ssh_failure(targets: dict[str, Any], params: dict[str, Any], *, dry_ru
 def _plan_port_sweep(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
     hosts = list(targets.get("hosts") or [])[:max_hosts]
-    if params.get("hosts"):
-        hosts = [str(h) for h in params["hosts"]][:max_hosts]
     if not hosts:
-        hosts = expand_target_net_hosts(str(targets.get("target_net") or "10.10.10.0/24"), max_hosts=max_hosts)
+        return {"type": "port_sweep", "mode": "skip", "reason": "no_alive_hosts"}
     ports = tuple(int(p) for p in (params.get("ports") or DEFAULT_PORTS))
     max_ports = int(params.get("max_ports", len(ports)))
     selected_ports = ports[:max_ports]
@@ -256,11 +264,11 @@ def _plan_port_sweep(targets: dict[str, Any], params: dict[str, Any], *, dry_run
 
 def _plan_dns_tunnel(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
-    hosts = _hosts_for(targets, "dns_hosts")[:max_hosts]
-    if params.get("hosts"):
-        hosts = [str(h) for h in params["hosts"]][:max_hosts]
+    dns_hosts = _hosts_for(targets, "dns_hosts")[:max_hosts]
+    alive_hosts = list(targets.get("hosts") or [])[:max_hosts]
+    hosts = dns_hosts or alive_hosts
     if not hosts:
-        return {"type": "dns_tunnel", "mode": "skip", "reason": "no_dns_hosts"}
+        return {"type": "dns_tunnel", "mode": "skip", "reason": "no_alive_hosts"}
     domain = str(params.get("domain", "dns-tunnel.com"))
     total = int(params.get("max_chunks", 3))
     queries = []
@@ -286,26 +294,156 @@ def _plan_dns_tunnel(targets: dict[str, Any], params: dict[str, Any], *, dry_run
     }
 
 
-def _plan_host_behavior_check(params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    endpoint = params.get("initial_compromise_endpoint") or {}
-    host = str(endpoint.get("host") or params.get("target_host") or "127.0.0.1")
+def _plan_dga(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    effective_tld = str(params.get("effective_tld", EFFECTIVE_TLD_DEFAULT))
+    phase1_count = int(params.get("phase1_count", PHASE1_COUNT_DEFAULT))
+    phase2_count = int(params.get("phase2_count", PHASE2_COUNT_DEFAULT))
+    dns_hosts = _hosts_for(targets, "dns_hosts")
+    if not dns_hosts:
+        return {"type": "dga", "mode": "skip", "reason": "no_dns_hosts"}
+    resolver = dns_hosts[0]
+    domains: list[dict[str, Any]] = []
+    seq = 0
+    for phase, count, generator, phase_name in (
+        (1, phase1_count, generate_nxdomain_fqdn, "nxdomain"),
+        (2, phase2_count, generate_resolvable_fqdn, "resolvable"),
+    ):
+        for _ in range(count):
+            seq += 1
+            fqdn = generator(effective_tld)
+            domains.append(
+                {
+                    "seq": seq,
+                    "phase": phase,
+                    "phase_name": phase_name,
+                    "fqdn": fqdn,
+                    "resolver": resolver,
+                }
+            )
+    if not domains:
+        return {"type": "dga", "mode": "skip", "reason": "no_domains_planned"}
     return {
-        "type": "host_behavior_check",
+        "type": "dga",
         "mode": "mock" if dry_run else "live",
-        "timeout": float(params.get("timeout", 30.0)),
-        "target_host": host,
-        "commands": list(params.get("commands") or [{"name": "whoami", "shell": "whoami"}]),
-        "credential_checks": list(params.get("credential_checks") or []),
-        "eicar": params.get("eicar"),
-        "eicar_variants": list(params.get("eicar_variants") or []),
-        "suspicious_scripts": list(params.get("suspicious_scripts") or []),
-        "persistence_artifacts": list(params.get("persistence_artifacts") or []),
-        "archives": list(params.get("archives") or []),
+        "resolver": resolver,
+        "effective_tld": effective_tld,
+        "domains": domains,
+        "timeout": float(params.get("timeout", 0.05)),
     }
 
 
+def _plan_ldap_enumeration(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    max_hosts = int(params.get("max_hosts", 2))
+    hosts = _hosts_for(targets, "ldap_hosts")[:max_hosts]
+    if not hosts:
+        return {"type": "ldap_enumeration", "mode": "skip", "reason": "no_ldap_hosts"}
+    ports = tuple(int(p) for p in (params.get("ports") or (389,)))
+    plans = plan_ldap_enumeration(
+        hosts,
+        max_hosts=max_hosts,
+        max_queries_per_host=int(params.get("max_queries_per_host", 10)),
+        ports=ports,
+        safe_mode=bool(params.get("safe_mode", True)),
+    )
+    return {
+        "type": "ldap_enumeration",
+        "mode": "mock" if dry_run else "live",
+        "timeout": float(params.get("timeout", 5.0)),
+        "actions": [
+            {
+                "host": plan.host,
+                "port": plan.port,
+                "action_type": plan.action_type,
+                "search_filter": plan.search_filter,
+            }
+            for plan in plans
+        ],
+    }
+
+
+def _plan_smb_login_failure(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    max_hosts = int(params.get("max_hosts", 2))
+    hosts = _hosts_for(targets, "smb_hosts")[:max_hosts]
+    if not hosts:
+        return {"type": "smb_login_failure", "mode": "skip", "reason": "no_smb_hosts"}
+    port = int(params.get("port", 445))
+    plans = plan_smb_attempts(
+        hosts,
+        max_hosts=max_hosts,
+        attempts_per_host=int(params.get("attempts_per_host", 10)),
+        port=port,
+        safe_mode=bool(params.get("safe_mode", True)),
+    )
+    return {
+        "type": "smb_login_failure",
+        "mode": "mock" if dry_run else "live",
+        "timeout": float(params.get("timeout", 5.0)),
+        "attempts": [
+            {
+                "host": plan.host,
+                "port": plan.port,
+                "username": plan.username,
+                "password_label": plan.password_label,
+            }
+            for plan in plans
+        ],
+    }
+
+
+def _plan_kerberos_failure(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    max_hosts = int(params.get("max_hosts", 2))
+    hosts = _hosts_for(targets, "kerberos_hosts")[:max_hosts]
+    if not hosts:
+        return {"type": "kerberos_failure", "mode": "skip", "reason": "no_kerberos_hosts"}
+    port = int(params.get("port", 88))
+    realm = str(params.get("realm", "LOCAL.REALM"))
+    plans = plan_kerberos_attempts(
+        hosts,
+        max_hosts=max_hosts,
+        attempts_per_host=int(params.get("attempts_per_host", 10)),
+        port=port,
+        realm=realm,
+        safe_mode=bool(params.get("safe_mode", True)),
+    )
+    return {
+        "type": "kerberos_failure",
+        "mode": "mock" if dry_run else "live",
+        "timeout": float(params.get("timeout", 10.0)),
+        "realm": realm,
+        "attempts": [
+            {
+                "host": plan.host,
+                "port": plan.port,
+                "username": plan.username,
+                "realm": plan.realm,
+            }
+            for plan in plans
+        ],
+    }
+
+
+def _plan_host_behavior_check(params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    from dsp.protocols.host.behavior import build_host_behavior_plan
+
+    if webshell_server_endpoint(params) is None:
+        return {
+            "type": "host_behavior_check",
+            "mode": "skip",
+            "reason": "no_webshell_url",
+        }
+    return build_host_behavior_plan(
+        params,
+        run_id=str(params.get("run_id") or "remote"),
+        dry_run=dry_run,
+        webshell_family=params.get("webshell_family"),
+    )
+
+
 def _plan_rare_protocol_activity(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    host = str(params.get("host") or (targets.get("hosts") or ["127.0.0.1"])[0])
+    alive_hosts = list(targets.get("hosts") or [])
+    if not alive_hosts:
+        return {"type": "rare_protocol_activity", "mode": "skip", "reason": "no_alive_hosts"}
+    host = alive_hosts[0]
     return {
         "type": "rare_protocol_activity",
         "mode": "mock" if dry_run else "live",
@@ -337,6 +475,10 @@ def build_plan_from_discovery(
         "ssh_failure": _plan_ssh_failure,
         "port_sweep": _plan_port_sweep,
         "dns_tunnel": _plan_dns_tunnel,
+        "dga": _plan_dga,
+        "ldap_enumeration": _plan_ldap_enumeration,
+        "smb_login_failure": _plan_smb_login_failure,
+        "kerberos_failure": _plan_kerberos_failure,
         "rare_protocol_activity": _plan_rare_protocol_activity,
     }
     if scenario_id == "host_behavior_check":

@@ -35,9 +35,12 @@ def test_select_tunnel_targets_prefers_dns_hosts_bucket() -> None:
     assert selected == ["10.10.10.20"]
 
 
-def test_select_tunnel_targets_without_dns_hosts_returns_empty() -> None:
+def test_select_tunnel_targets_falls_back_to_alive_hosts() -> None:
     targets = _targets(alive=["10.10.10.50", "10.10.10.51"], dns_hosts=[])
-    assert select_tunnel_targets(targets, {}, max_hosts=2) == []
+    assert select_tunnel_targets(targets, {}, max_hosts=2) == [
+        "10.10.10.50",
+        "10.10.10.51",
+    ]
 
 
 def test_local_and_webshell_dns_tunnel_plans_match() -> None:

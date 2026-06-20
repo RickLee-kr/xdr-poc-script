@@ -19,7 +19,7 @@ from dsp.runtime.operational_profiles import (
     scenarios_for_profile,
 )
 from dsp.runtime.scenario_plan import (
-    INITIAL_COMPROMISE_ENDPOINT_KEY,
+    WEBSHELL_EXECUTION_KEY,
     apply_webshell_initial_compromise_plan,
 )
 
@@ -80,7 +80,13 @@ def test_webshell_host_target_only() -> None:
 
 def test_aspx_family_guard_skips_linux_commands() -> None:
     params = {
-        INITIAL_COMPROMISE_ENDPOINT_KEY: {"host": "10.10.10.50", "port": 8080, "scheme": "http"},
+        WEBSHELL_EXECUTION_KEY: {
+            "webshell_url": "http://10.10.10.50:8080/shell.jsp",
+            "execution_host": "10.10.10.50",
+            "execution_port": 8080,
+            "execution_path": "/shell.jsp",
+            "endpoint": {"host": "10.10.10.50", "port": 8080, "scheme": "http"},
+        },
         "webshell_family": "aspx",
     }
     plan = build_host_behavior_plan(params, run_id="run01", dry_run=False, webshell_family="aspx")
@@ -108,16 +114,13 @@ def test_remote_planner_uses_webshell_family_from_metadata() -> None:
 
 
 def test_host_behavior_check_dry_run_generates_events_without_shell(tmp_runs_dir) -> None:
-    params = {
-        HOST_BEHAVIOR_CHECK_SCENARIO_ID: {
-            INITIAL_COMPROMISE_ENDPOINT_KEY: {
-                "host": "10.10.10.50",
-                "port": 8080,
-                "scheme": "http",
-            },
-            "webshell_family": "jsp",
-        }
-    }
+    params: dict[str, dict] = {}
+    apply_webshell_initial_compromise_plan(
+        params,
+        [HOST_BEHAVIOR_CHECK_SCENARIO_ID],
+        "http://10.10.10.50:8080/shell.jsp",
+    )
+    params[HOST_BEHAVIOR_CHECK_SCENARIO_ID]["webshell_family"] = "jsp"
     with patch("subprocess.run") as run_mock:
         manager = RunManager(runs_dir=tmp_runs_dir)
         run, run_dir, exit_code = manager.run(
@@ -164,16 +167,13 @@ def test_host_behavior_check_dry_run_generates_events_without_shell(tmp_runs_dir
 
 
 def test_host_behavior_check_live_dispatches_shell_commands(tmp_runs_dir) -> None:
-    params = {
-        HOST_BEHAVIOR_CHECK_SCENARIO_ID: {
-            INITIAL_COMPROMISE_ENDPOINT_KEY: {
-                "host": "10.10.10.50",
-                "port": 8080,
-                "scheme": "http",
-            },
-            "webshell_family": "jsp",
-        }
-    }
+    params: dict[str, dict] = {}
+    apply_webshell_initial_compromise_plan(
+        params,
+        [HOST_BEHAVIOR_CHECK_SCENARIO_ID],
+        "http://10.10.10.50:8080/shell.jsp",
+    )
+    params[HOST_BEHAVIOR_CHECK_SCENARIO_ID]["webshell_family"] = "jsp"
     completed = MagicMock(returncode=0, stdout=b"", stderr=b"")
     with patch("subprocess.run", return_value=completed) as run_mock:
         manager = RunManager(runs_dir=tmp_runs_dir)

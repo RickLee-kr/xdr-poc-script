@@ -21,10 +21,8 @@ from dsp.runtime.scenario_plan import (
     DISCOVERED_HTTP_SERVICE_REASON,
     DISCOVERED_HTTPS_SERVICE_REASON,
     DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST,
-    FALLBACK_NO_DISCOVERED_HTTP_REASON,
     INITIAL_COMPROMISE_ENDPOINT_KEY,
     INITIAL_COMPROMISE_SELECTION_REASON,
-    PHASE1_WEBSHELL_ATTACK_KEY,
     WEBSHELL_EXECUTION_KEY,
 )
 
@@ -415,51 +413,22 @@ def resolve_http_attack_endpoint_selection(
     timeout: float = 10.0,
 ) -> HttpFollowupSelection:
     """Select HTTP attack targets using discovery-first rules."""
-    explicit_phase1 = bool(config.get(PHASE1_WEBSHELL_ATTACK_KEY))
-    webshell_ep = _webshell_execution_endpoint(config)
-    has_discovered_http = bool(targets.hosts_for_capability("http_targets"))
-
-    if has_discovered_http:
-        selection = probe_and_select_http_followup_endpoints(
-            targets,
-            config,
-            max_hosts=max_hosts,
-            dry_run=dry_run,
-            timeout=timeout,
-        )
-        if selection.selected:
-            return HttpFollowupSelection(
-                probed=selection.probed,
-                selected=selection.selected,
-                skip_reason=selection.skip_reason,
-                selected_http_target_reason=_attack_target_reason_for_discovery(selection),
-                https_targets_skipped=selection.https_targets_skipped,
-            )
-        return selection
-
-    if explicit_phase1 and webshell_ep is not None:
-        return selection_from_initial_compromise(
-            webshell_ep,
-            dry_run=dry_run,
-            timeout=timeout,
-            selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
-        )
-
-    if webshell_ep is not None and not has_discovered_http:
-        return selection_from_initial_compromise(
-            webshell_ep,
-            dry_run=dry_run,
-            timeout=timeout,
-            selection_reason=FALLBACK_NO_DISCOVERED_HTTP_REASON,
-        )
-
-    return probe_and_select_http_followup_endpoints(
+    selection = probe_and_select_http_followup_endpoints(
         targets,
         config,
         max_hosts=max_hosts,
         dry_run=dry_run,
         timeout=timeout,
     )
+    if selection.selected:
+        return HttpFollowupSelection(
+            probed=selection.probed,
+            selected=selection.selected,
+            skip_reason=selection.skip_reason,
+            selected_http_target_reason=_attack_target_reason_for_discovery(selection),
+            https_targets_skipped=selection.https_targets_skipped,
+        )
+    return selection
 
 
 def resolve_http_endpoint_selection(

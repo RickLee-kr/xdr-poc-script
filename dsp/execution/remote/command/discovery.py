@@ -17,7 +17,6 @@ from dsp.execution.remote.command.shell import mock_noop_command, tcp_probe_comm
 from dsp.execution.remote.bundle.assets.remote_discovery import (
     DISCOVERY_PORTS,
     PORT_CAPABILITY_MAP,
-    discover_target_net,
     expand_target_net_hosts,
 )
 
@@ -143,12 +142,10 @@ def build_mock_discovery_targets(
     Dry-run discovery buckets — never assume services are open.
 
     Candidate hosts remain available for port_sweep; service-specific follow-ups
-    require explicit ``params.hosts`` or real live discovery output.
+    require real live discovery output.
     """
     port_list = ports or DISCOVERY_PORTS
     candidates = expand_target_net_hosts(target_net, max_hosts=max_hosts)
-    if params.get("hosts"):
-        candidates = [str(h) for h in params["hosts"]][:max_hosts]
 
     service_hosts, service_endpoints = _empty_service_buckets()
     return {
@@ -329,11 +326,25 @@ def run_webshell_host_discovery(
     try:
         targets = parse_remote_discovery_output(raw)
     except (ValueError, json.JSONDecodeError):
-        targets = discover_target_net(target_net, max_hosts=max_hosts)
-        targets["discovery_meta"] = dict(targets.get("discovery_meta") or {})
-        targets["discovery_meta"]["discovery_origin"] = DISCOVERY_ORIGIN_WEBSHELL
-        targets["discovery_meta"]["planned_only"] = False
-        targets["discovery_meta"]["fallback"] = "local_discover_target_net"
+        service_hosts, service_endpoints = _empty_service_buckets()
+        targets = {
+            "target_net": target_net,
+            "hosts": [],
+            "service_hosts": service_hosts,
+            "service_endpoints": {
+                key: list(value) for key, value in service_endpoints.items()
+            },
+            "discovery_enabled": True,
+            "discovery_meta": {
+                "probed_hosts": max_hosts,
+                "alive_hosts": [],
+                "open_endpoints": 0,
+                "service_hosts": service_hosts,
+                "discovery_origin": DISCOVERY_ORIGIN_WEBSHELL,
+                "planned_only": False,
+                "parse_failed": True,
+            },
+        }
 
     cache_remote_discovery(ctx.config.scenario_params, targets)
     return targets

@@ -565,7 +565,11 @@ class RunManager:
             )
 
         if is_webshell:
-            phase1 = run_webshell_phase1_attack(webshell_url, dry_run=dry_run)
+            phase1 = run_webshell_phase1_attack(
+                webshell_url,
+                scenario_params=config.scenario_params,
+                dry_run=dry_run,
+            )
             exec_ctx.execution_metadata["phase1_webshell_attack"] = phase1.to_dict()
             if emitter is not None:
                 emitter.emit("phase1_webshell_attack_completed", phase1.to_dict())

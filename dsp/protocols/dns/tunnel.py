@@ -113,7 +113,7 @@ def select_tunnel_targets(
     *,
     max_hosts: int = 2,
 ) -> list[str]:
-    """Select DNS tunnel targets from discovery dns_hosts bucket."""
+    """Select DNS tunnel query targets — prefer dns_hosts, else any alive host."""
     if config.get("targets"):
         return [str(t) for t in config["targets"]][:max_hosts]
 
@@ -126,7 +126,8 @@ def select_tunnel_targets(
     if dns_hosts:
         return dns_hosts
 
-    if not targets.discovery_enabled and targets.hosts:
-        return [str(h) for h in targets.hosts][:max_hosts]
+    alive_hosts = [str(h) for h in targets.hosts][:max_hosts]
+    if alive_hosts:
+        return alive_hosts
 
     return []

@@ -42,6 +42,7 @@ from dsp.protocols.ldap.attempts import plan_ldap_enumeration
 from dsp.protocols.smb.attempts import plan_smb_attempts
 from dsp.engine.host_selection import resolve_http_endpoint_selection, select_hosts_for_capability
 from dsp.runtime.http_endpoint_selection import select_discovered_http_endpoint_tuples
+from dsp.runtime.scenario_plan import webshell_server_endpoint
 
 
 def targets_dict_to_target_set(data: dict[str, Any]) -> TargetSet:
@@ -87,13 +88,15 @@ def build_command_plan(
         return _plan_host_behavior_check(request, params, dry_run=dry_run)
 
     if _uses_remote_discovery(request):
-        plan = build_plan_from_discovery(scenario_id, targets_dict, params, dry_run=dry_run)
-        if plan.get("type") != "skip" and plan.get("mode") != "skip":
-            return plan
-        extended = _extended_plan(scenario_id, targets_dict, params, dry_run=dry_run)
-        if extended is not None:
-            return extended
-        return plan
+        if scenario_id == "host_behavior_check":
+            if webshell_server_endpoint(params) is None:
+                return {
+                    "type": scenario_id,
+                    "mode": "skip",
+                    "reason": "no_webshell_url",
+                }
+            return build_plan_from_discovery(scenario_id, {}, params, dry_run=dry_run)
+        return build_plan_from_discovery(scenario_id, targets_dict, params, dry_run=dry_run)
 
     builders = {
         "port_sweep": lambda: _plan_port_sweep(target_set, params, dry_run=dry_run),
@@ -182,7 +185,7 @@ def _plan_dns_tunnel(targets: dict[str, Any], params: dict[str, Any], *, dry_run
     max_hosts = int(tuned.get("max_hosts", 2))
     hosts = select_tunnel_targets(target_set, tuned, max_hosts=max_hosts)
     if not hosts:
-        return {"type": "dns_tunnel", "mode": "skip", "reason": "no_dns_hosts"}
+        return {"type": "dns_tunnel", "mode": "skip", "reason": "no_alive_hosts"}
     total = plan_chunk_count(payload_mb, chunk_size)
     max_chunks = tuned.get("max_chunks")
     if max_chunks is not None:
@@ -223,7 +226,7 @@ def _plan_dga(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool)
     elif dns_hosts:
         resolver = dns_hosts[0]
     else:
-        resolver = "10.10.10.20"
+        return {"type": "dga", "mode": "skip", "reason": "no_dns_hosts"}
     domains: list[dict[str, Any]] = []
     seq = 0
     for phase, count, generator, phase_name in (
@@ -257,8 +260,6 @@ def _plan_dga(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool)
 def _plan_ldap_enumeration(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
     hosts = _hosts_for(targets, "ldap_hosts")[:max_hosts]
-    if params.get("hosts"):
-        hosts = [str(h) for h in params["hosts"]][:max_hosts]
     if not hosts:
         return {"type": "ldap_enumeration", "mode": "skip", "reason": "no_ldap_hosts"}
     ports = tuple(int(p) for p in (params.get("ports") or (389,)))
@@ -288,8 +289,6 @@ def _plan_ldap_enumeration(targets: dict[str, Any], params: dict[str, Any], *, d
 def _plan_smb_login_failure(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
     hosts = _hosts_for(targets, "smb_hosts")[:max_hosts]
-    if params.get("hosts"):
-        hosts = [str(h) for h in params["hosts"]][:max_hosts]
     if not hosts:
         return {"type": "smb_login_failure", "mode": "skip", "reason": "no_smb_hosts"}
     port = int(params.get("port", 445))
@@ -319,8 +318,6 @@ def _plan_smb_login_failure(targets: dict[str, Any], params: dict[str, Any], *, 
 def _plan_kerberos_failure(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
     hosts = _hosts_for(targets, "kerberos_hosts")[:max_hosts]
-    if params.get("hosts"):
-        hosts = [str(h) for h in params["hosts"]][:max_hosts]
     if not hosts:
         return {"type": "kerberos_failure", "mode": "skip", "reason": "no_kerberos_hosts"}
     port = int(params.get("port", 88))

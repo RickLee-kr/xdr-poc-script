@@ -30,3 +30,24 @@ def test_discovery_targets_only_include_open_endpoints() -> None:
     assert targets["service_hosts"]["http_targets"] == ["10.10.10.1"]
     assert targets["service_hosts"]["ssh_hosts"] == ["10.10.10.2"]
     assert ("10.10.10.1", 443) not in targets["service_endpoints"]["https_targets"]
+
+
+def test_discovery_parse_failure_returns_empty_targets() -> None:
+    from unittest.mock import MagicMock
+
+    from dsp.execution.remote.command.discovery import run_webshell_host_discovery
+
+    provider = MagicMock()
+    provider.run_remote_command.return_value = b"not-json"
+    request = MagicMock(
+        scenario_params={"max_hosts": 4},
+        target_net="10.10.10.0/24",
+        dry_run=False,
+    )
+    ctx = MagicMock()
+    ctx.config.scenario_params = {}
+    targets = run_webshell_host_discovery(provider, ctx, request, [])
+    assert targets["hosts"] == []
+    assert not any(targets["service_hosts"].values())
+    assert targets["discovery_meta"].get("parse_failed") is True
+    assert "fallback" not in targets["discovery_meta"]

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from dsp.runtime.scenario_plan import INITIAL_COMPROMISE_ENDPOINT_KEY
-
 EICAR_TEST_STRING = (
     r"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 )
@@ -75,14 +73,11 @@ def _tmp_path(run_id: str, name: str) -> str:
 
 
 def resolve_webshell_target_host(params: dict[str, Any]) -> str | None:
-    """Return the webshell compromise host when injected by scenario_plan."""
-    endpoint = params.get(INITIAL_COMPROMISE_ENDPOINT_KEY)
-    if isinstance(endpoint, dict) and endpoint.get("host"):
-        return str(endpoint["host"])
-    explicit = params.get("target_host")
-    if explicit:
-        return str(explicit)
-    return None
+    """Return the webshell server host from the user-provided webshell URL."""
+    from dsp.runtime.scenario_plan import webshell_server_endpoint
+
+    endpoint = webshell_server_endpoint(params)
+    return endpoint.host if endpoint else None
 
 
 def _build_eicar_variants(run_id: str) -> list[dict[str, Any]]:

@@ -12,15 +12,14 @@ from dsp.protocols.http.urls import HTTP_DETECTION_PORTS
 from dsp.protocols.recon import DEFAULT_PORTS, MAX_PORTS_DEFAULT, plan_port_sweep
 
 INITIAL_COMPROMISE_ENDPOINT_KEY = "initial_compromise_endpoint"
-INITIAL_COMPROMISE_SELECTION_REASON = "initial_compromise_host_explicit_phase1"
+INITIAL_COMPROMISE_SELECTION_REASON = "initial_compromise_host"
 WEBSHELL_EXECUTION_KEY = "_webshell_execution"
-PHASE1_WEBSHELL_ATTACK_KEY = "phase1_webshell_attack"
+WEBSHELL_SERVER_ATTACK_SCENARIOS = frozenset({"host_behavior_check"})
 DISCOVERED_HTTP_SERVICE_REASON = "discovered_http_service"
 DISCOVERED_HTTPS_SERVICE_REASON = "discovered_https_service"
 DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST = (
     "discovered_http_service_unverified_from_dsp_host"
 )
-FALLBACK_NO_DISCOVERED_HTTP_REASON = "fallback_no_discovered_http"
 
 
 @dataclass(frozen=True)
@@ -47,6 +46,16 @@ class PortSweepPlanView:
     max_hosts: int
     max_ports: int
 
+def webshell_server_endpoint(params: dict[str, Any]) -> InitialCompromiseEndpoint | None:
+    """Return the user-provided webshell server endpoint — no discovery or fallback."""
+    ctx = params.get(WEBSHELL_EXECUTION_KEY)
+    if not isinstance(ctx, dict):
+        return None
+    url = ctx.get("webshell_url")
+    if not url:
+        return None
+    return parse_initial_compromise_endpoint(str(url))
+
 
 def parse_initial_compromise_endpoint(webshell_url: str) -> InitialCompromiseEndpoint:
     """Derive Phase A compromise target host:port from a webshell URL."""
@@ -71,7 +80,7 @@ def apply_webshell_initial_compromise_plan(
     scenario_ids: list[str],
     webshell_url: str,
 ) -> InitialCompromiseEndpoint:
-    """Record webshell execution host and Phase-1 targets for host-behavior scenarios."""
+    """Record the user-provided webshell server as the execution and attack target."""
     endpoint = parse_initial_compromise_endpoint(webshell_url)
     payload = endpoint.to_dict()
     parsed = urlparse(webshell_url)
@@ -85,9 +94,6 @@ def apply_webshell_initial_compromise_plan(
     scenario_params[WEBSHELL_EXECUTION_KEY] = execution_context
     for sid in scenario_ids:
         scenario_params.setdefault(sid, {})[WEBSHELL_EXECUTION_KEY] = execution_context
-    for sid in ("host_behavior_check", "rare_protocol_activity"):
-        if sid in scenario_ids:
-            scenario_params.setdefault(sid, {})[INITIAL_COMPROMISE_ENDPOINT_KEY] = payload
     return endpoint
 
 

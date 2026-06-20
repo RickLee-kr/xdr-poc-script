@@ -19,6 +19,7 @@ from dsp.runtime.operational_profiles import (
 )
 from dsp.runtime.scenario_plan import (
     INITIAL_COMPROMISE_ENDPOINT_KEY,
+    WEBSHELL_EXECUTION_KEY,
     apply_webshell_initial_compromise_plan,
     build_port_sweep_plan_view,
     parse_initial_compromise_endpoint,
@@ -127,8 +128,8 @@ def test_webshell_http_followup_targets_discovered_hosts_when_available() -> Non
     assert "10.10.10.97" in remote_plan["requests"][0]["url"]
 
 
-def test_webshell_sql_injection_targets_discovered_hosts_when_available() -> None:
-    """Follow-up SQLi targets come from remote discovery on the webshell host."""
+def test_webshell_sql_injection_targets_discovered_http_hosts() -> None:
+    """Phase 2 SQLi follows discovered HTTP endpoints, not the webshell server."""
     webshell_url = "http://10.10.10.50:8080/shell.jsp"
     params = build_operational_scenario_params(
         "normal",
@@ -137,14 +138,6 @@ def test_webshell_sql_injection_targets_discovered_hosts_when_available() -> Non
     )
     params = _apply_webshell_http_plan(params, ["sql_injection"], webshell_url)
     targets = _discovery_targets()
-
-    selection = resolve_http_endpoint_selection(
-        targets,
-        params["sql_injection"],
-        max_hosts=2,
-        dry_run=True,
-    )
-    assert selection.selected[0].host == "10.10.10.97"
 
     remote_plan = build_plan_from_discovery(
         "sql_injection",
@@ -160,7 +153,8 @@ def test_webshell_sql_injection_targets_discovered_hosts_when_available() -> Non
         dry_run=True,
     )
     assert remote_plan["requests"]
-    assert "10.10.10.97" in remote_plan["requests"][0]["url"]
+    assert all("10.10.10.97" in item["url"] for item in remote_plan["requests"])
+    assert all("10.10.10.50" not in item["url"] for item in remote_plan["requests"])
 
 
 def test_discovery_drives_http_followup_without_webshell_override() -> None:
@@ -191,7 +185,7 @@ def test_discovery_drives_http_followup_without_webshell_override() -> None:
 
     meta = scenario_start_metadata("http_followup", targets, params["http_followup"])
     assert "10.10.10.97:8080" in meta["selected_targets"][0]
-    assert INITIAL_COMPROMISE_ENDPOINT_KEY not in params["http_followup"]
+    assert WEBSHELL_EXECUTION_KEY not in params["http_followup"]
 
 
 def test_local_and_webshell_port_sweep_plan_parity() -> None:

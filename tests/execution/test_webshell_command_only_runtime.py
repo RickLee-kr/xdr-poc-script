@@ -20,6 +20,7 @@ from dsp.execution.remote.command.models import (
     FORBIDDEN_REMOTE_ARTIFACTS,
     REMOTE_EXECUTION_MODE_COMMAND,
 )
+from dsp.execution.remote.command.discovery import REMOTE_DISCOVERY_CACHE_KEY
 from dsp.execution.remote.command.runner import CommandScenarioRunner
 from dsp.execution.webshell.transport import RealHttpTransport, RetryPolicy
 from dsp.execution.webshell_config import WebshellExecutionConfig as WsConfig
@@ -27,6 +28,35 @@ from dsp.plugins import PluginLoader
 from dsp.runner import RunManager
 from dsp.runtime.scenario_plan import apply_webshell_initial_compromise_plan
 from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
+
+
+def _lab_discovery_cache() -> dict:
+    return {
+        "target_net": "10.10.10.0/24",
+        "hosts": ["10.10.10.97", "10.10.10.98", "10.10.10.20"],
+        "service_hosts": {
+            "http_targets": ["10.10.10.97"],
+            "ssh_hosts": ["10.10.10.98"],
+            "dns_hosts": ["10.10.10.20"],
+            "ldap_hosts": ["10.10.10.97"],
+            "smb_hosts": ["10.10.10.97"],
+            "kerberos_hosts": ["10.10.10.97"],
+        },
+        "service_endpoints": {
+            "http_targets": [("10.10.10.97", 80)],
+            "ssh_hosts": [("10.10.10.98", 22)],
+            "dns_hosts": [("10.10.10.20", 53)],
+            "ldap_hosts": [("10.10.10.97", 389)],
+            "smb_hosts": [("10.10.10.97", 445)],
+            "kerberos_hosts": [("10.10.10.97", 88)],
+        },
+        "discovery_enabled": True,
+        "discovery_meta": {"discovery_origin": "webshell_host", "open_endpoints": 6},
+    }
+
+
+def _seed_discovery(scenario_params: dict[str, dict]) -> None:
+    scenario_params[REMOTE_DISCOVERY_CACHE_KEY] = _lab_discovery_cache()
 
 
 def _connected_provider(server: WebshellTestServer) -> WebshellExecutionProvider:
@@ -111,7 +141,10 @@ class TestNoRuntimeUpload:
                 event_store=store,
                 config=RunConfig(
                     dry_run=True,
-                    scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 1}},
+                    scenario_params={
+                        "port_sweep": {"max_hosts": 1, "max_ports": 1},
+                        REMOTE_DISCOVERY_CACHE_KEY: _lab_discovery_cache(),
+                    },
                 ),
                 dry_run=True,
             )
@@ -129,14 +162,14 @@ class TestNoRuntimeUpload:
 @pytest.mark.parametrize(
     "scenario_id,params",
     [
-        ("http_followup", {"max_hosts": 1, "hosts": ["10.10.10.97"]}),
-        ("sql_injection", {"max_hosts": 1, "hosts": ["10.10.10.97"]}),
-        ("ssh_failure", {"max_hosts": 1, "hosts": ["10.10.10.98"]}),
-        ("dns_tunnel", {"max_hosts": 1, "hosts": ["10.10.10.20"], "max_chunks": 1}),
-        ("dga", {"phase1_count": 1, "phase2_count": 0, "resolver": "10.10.10.20"}),
-        ("ldap_enumeration", {"max_hosts": 1, "hosts": ["10.10.10.97"]}),
-        ("smb_login_failure", {"max_hosts": 1, "hosts": ["10.10.10.97"]}),
-        ("kerberos_failure", {"max_hosts": 1, "hosts": ["10.10.10.97"]}),
+        ("http_followup", {"max_hosts": 1}),
+        ("sql_injection", {"max_hosts": 1}),
+        ("ssh_failure", {"max_hosts": 1, "max_per_host": 2, "max_total": 2}),
+        ("dns_tunnel", {"max_hosts": 1, "max_chunks": 1}),
+        ("dga", {"phase1_count": 1, "phase2_count": 0}),
+        ("ldap_enumeration", {"max_hosts": 1}),
+        ("smb_login_failure", {"max_hosts": 1}),
+        ("kerberos_failure", {"max_hosts": 1}),
         ("port_sweep", {"max_hosts": 1, "max_ports": 1}),
     ],
 )
@@ -156,6 +189,7 @@ def test_scenario_dispatches_webshell_commands(
         store = EventStore(tmp_path / "events.db")
         store.open_run(run_id)
         scenario_params: dict[str, dict] = {scenario_id: dict(params)}
+        _seed_discovery(scenario_params)
         apply_webshell_initial_compromise_plan(
             scenario_params,
             [scenario_id],
@@ -199,7 +233,7 @@ def test_discovery_origin_is_webshell_host(tmp_path: Path) -> None:
         run_id = "cmd_discovery"
         store = EventStore(tmp_path / "events.db")
         store.open_run(run_id)
-        params: dict[str, dict] = {"http_followup": {"max_hosts": 1, "hosts": ["10.10.10.97"]}}
+        params: dict[str, dict] = {"http_followup": {"max_hosts": 1}}
         apply_webshell_initial_compromise_plan(params, ["http_followup"], server.webshell_url)
         exec_ctx = ExecutionContext(
             run_id=run_id,

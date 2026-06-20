@@ -252,7 +252,7 @@ def test_phase1_url_scan_includes_webshell_execution_path() -> None:
     assert "/WEB-INF/web.xml" in paths
 
 
-def test_phase1_followup_includes_execution_path() -> None:
+def test_phase1_url_scan_targets_webshell_execution_path() -> None:
     captured_paths: list[str] = []
 
     class _TrackingClient:
@@ -269,20 +269,27 @@ def test_phase1_followup_includes_execution_path() -> None:
                 host=plan.host,
                 port=plan.port,
                 path=path,
+                headers=plan.headers,
             )
 
-    endpoint = run_webshell_phase1_attack(
+    result = run_webshell_phase1_attack(
         "http://10.10.10.20/custom.jsp",
         dry_run=True,
     )
-    assert endpoint.execution_path == "/custom.jsp"
+    assert result.execution_path == "/custom.jsp"
 
     from dsp.runtime.scenario_plan import parse_initial_compromise_endpoint
-
-    parsed = parse_initial_compromise_endpoint("http://10.10.10.20/custom.jsp")
     from dsp.runtime import webshell_phase1 as phase1_mod
 
-    phase1_mod._run_http_followup(parsed, _TrackingClient(), execution_path="/custom.jsp")
+    parsed = parse_initial_compromise_endpoint("http://10.10.10.20/custom.jsp")
+    phase1_mod._run_url_scan_with_user_agents(
+        parsed,
+        _TrackingClient(),
+        webshell_url="http://10.10.10.20/custom.jsp",
+        params={"abnormal_ua_ratio": 0.0},
+        dry_run=False,
+        timeout=2.0,
+    )
     assert "/custom.jsp" in captured_paths
 
 

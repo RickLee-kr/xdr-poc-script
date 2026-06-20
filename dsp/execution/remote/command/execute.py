@@ -698,7 +698,10 @@ def _execute_host_behavior_check(
     store = ctx.event_store
     run_id = str(request.run_id)
     scenario_id = request.scenario_id
-    target = str(plan.get("target_host") or "127.0.0.1")
+    target = plan.get("target_host")
+    if not target:
+        return 0
+    target = str(target)
     commands = plan.get("commands") or []
     timeout = float(plan.get("timeout", 30.0))
     mock = plan.get("mode") == "mock"
