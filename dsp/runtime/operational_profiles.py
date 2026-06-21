@@ -15,32 +15,29 @@ SUPPORTED_OPERATIONAL_PROFILES = frozenset({"low", "normal", "high"})
 
 HOST_BEHAVIOR_CHECK_SCENARIO_ID = "host_behavior_check"
 
-# Optional scenarios excluded from profile runs unless explicitly enabled.
-OPTIONAL_SCENARIO_IDS: frozenset[str] = frozenset({HOST_BEHAVIOR_CHECK_SCENARIO_ID})
-
 _PROFILE_ALIASES: dict[str, str] = {
     "balanced": "normal",
     "burst": "high",
 }
 
-# Discovery-first execution order (Charter § Scenario Execution Model):
-# service discovery → service-specific follow-up → internal recon (port_sweep).
+# Target-net execution order (after upfront discovery TCP prefetch):
+# Phase 1 webshell-host telemetry → port_sweep → service follow-ups → dns_tunnel last.
 DISCOVERY_FIRST_SCENARIO_ORDER: tuple[str, ...] = (
+    HOST_BEHAVIOR_CHECK_SCENARIO_ID,
+    "port_sweep",
     "http_followup",
     "sql_injection",
-    HOST_BEHAVIOR_CHECK_SCENARIO_ID,
     "ssh_failure",
     "ldap_enumeration",
     "smb_login_failure",
     "kerberos_failure",
-    "dns_tunnel",
     "dga",
     "rare_protocol_activity",
-    "port_sweep",
+    "dns_tunnel",
 )
 
 _PROFILE_SCENARIOS: dict[str, tuple[str, ...]] = {
-    "low": ("http_followup", "dns_tunnel", "port_sweep"),
+    "low": ("port_sweep", "http_followup", "dns_tunnel"),
     "normal": DISCOVERY_FIRST_SCENARIO_ORDER,
     "high": DISCOVERY_FIRST_SCENARIO_ORDER,
 }
@@ -79,47 +76,39 @@ def parse_operational_profile(name: str) -> str:
     return normalized
 
 
-def scenarios_for_profile(
-    profile_name: str,
-    *,
-    include_optional: frozenset[str] = frozenset(),
-) -> list[str]:
+def scenarios_for_profile(profile_name: str) -> list[str]:
     """Return ordered scenario IDs for an operational profile."""
     profile = parse_operational_profile(profile_name)
-    return [
-        sid
-        for sid in _PROFILE_SCENARIOS[profile]
-        if sid not in OPTIONAL_SCENARIO_IDS or sid in include_optional
-    ]
+    return list(_PROFILE_SCENARIOS[profile])
 
 
 def resolve_runnable_scenarios(
     profile_name: str,
     active_ids: Sequence[str],
-    *,
-    include_optional: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Filter profile scenarios to registry-active IDs, preserving order."""
     active = set(active_ids)
-    return [
-        sid
-        for sid in scenarios_for_profile(profile_name, include_optional=include_optional)
-        if sid in active
-    ]
+    return [sid for sid in scenarios_for_profile(profile_name) if sid in active]
+
+
+def ensure_webshell_phase1_scenarios(
+    scenario_ids: Sequence[str],
+    *,
+    active_ids: Sequence[str],
+) -> list[str]:
+    """Ensure Phase 1 host behavior check is scheduled for webshell attack-chain runs."""
+    active = set(active_ids)
+    if HOST_BEHAVIOR_CHECK_SCENARIO_ID not in active:
+        return list(scenario_ids)
+    if HOST_BEHAVIOR_CHECK_SCENARIO_ID in scenario_ids:
+        return list(scenario_ids)
+    return insert_host_behavior_check(scenario_ids)
 
 
 def insert_host_behavior_check(scenario_ids: Sequence[str]) -> list[str]:
-    """Insert host_behavior_check after sql_injection when enabling the optional step."""
+    """Insert host_behavior_check before target-net scenarios (Phase 1 webshell host)."""
     ordered = list(scenario_ids)
     if HOST_BEHAVIOR_CHECK_SCENARIO_ID in ordered:
-        return ordered
-    if "sql_injection" in ordered:
-        idx = ordered.index("sql_injection") + 1
-        ordered.insert(idx, HOST_BEHAVIOR_CHECK_SCENARIO_ID)
-        return ordered
-    if "http_followup" in ordered:
-        idx = ordered.index("http_followup") + 1
-        ordered.insert(idx, HOST_BEHAVIOR_CHECK_SCENARIO_ID)
         return ordered
     return [HOST_BEHAVIOR_CHECK_SCENARIO_ID, *ordered]
 

@@ -169,6 +169,16 @@ class OperationalConsole:
             if data.get("attack_target_net"):
                 self._write(f"Attack Target Net: {data['attack_target_net']}")
                 self._write("")
+            alive_hosts = data.get("alive_hosts") or []
+            open_endpoints = data.get("open_endpoints")
+            if alive_hosts or open_endpoints is not None:
+                if open_endpoints is not None:
+                    self._write(f"Open Endpoints: {open_endpoints}")
+                if alive_hosts:
+                    preview = ", ".join(str(h) for h in alive_hosts[:8])
+                    suffix = "..." if len(alive_hosts) > 8 else ""
+                    self._write(f"Alive Hosts: {preview}{suffix}")
+                self._write("")
             self._write("Attack Targets:")
             if not groups:
                 self._write("  (none)")

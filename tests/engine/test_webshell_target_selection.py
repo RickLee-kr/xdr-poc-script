@@ -404,6 +404,29 @@ def test_dns_tunnel_uses_alive_hosts_when_no_dns_server() -> None:
     assert query_hosts == {"10.10.10.97", "10.10.10.98"}
 
 
+def test_dns_tunnel_ignores_dns_hosts_when_present() -> None:
+    targets = {
+        "target_net": "10.10.10.0/24",
+        "hosts": ["10.10.10.97", "10.10.10.98"],
+        "service_hosts": {
+            "http_targets": ["10.10.10.97"],
+            "dns_hosts": ["10.10.10.20"],
+        },
+        "service_endpoints": {"dns_hosts": [("10.10.10.20", 53)]},
+        "discovery_enabled": True,
+    }
+    plan = build_plan_from_discovery(
+        "dns_tunnel",
+        targets,
+        {"max_hosts": 2, "max_chunks": 1},
+        dry_run=True,
+    )
+    assert plan.get("mode") != "skip"
+    query_hosts = {item["target"] for item in plan["queries"]}
+    assert query_hosts == {"10.10.10.97", "10.10.10.98"}
+    assert "10.10.10.20" not in query_hosts
+
+
 def test_dga_skipped_without_discovered_dns_hosts() -> None:
     targets = {
         "target_net": "10.10.10.0/24",
@@ -486,6 +509,8 @@ def test_phase1_url_scan_attaches_abnormal_user_agents() -> None:
         params={"abnormal_ua_ratio": 1.0},
         dry_run=False,
         timeout=2.0,
+        events=None,
+        mode="live",
     )
     assert captured_uas
     assert all(is_abnormal_user_agent(ua) for ua in captured_uas)

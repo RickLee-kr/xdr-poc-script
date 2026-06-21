@@ -138,7 +138,23 @@ def _hosts_for(targets: dict[str, Any], capability: str) -> list[str]:
     return list((targets.get("service_hosts") or {}).get(capability, []))
 
 
-def _select_http_endpoints(targets: dict[str, Any], params: dict[str, Any]) -> list[tuple[str, int]]:
+def _select_http_endpoints(
+    targets: dict[str, Any],
+    params: dict[str, Any],
+    *,
+    dry_run: bool = False,
+) -> list[tuple[str, int]]:
+    from dsp.engine.host_selection import (
+        HTTP_ENDPOINT_SELECTION_CACHE_KEY,
+        selection_from_cache,
+    )
+
+    cached = params.get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
+    if cached:
+        selection = selection_from_cache(cached)  # type: ignore[arg-type]
+        if selection.selected:
+            return [(ep.host, ep.port) for ep in selection.selected]
+
     max_hosts = int(params.get("max_hosts", 2))
     http_hosts = _hosts_for(targets, "http_targets")
     http_endpoints = list((targets.get("service_endpoints") or {}).get("http_targets", []))
@@ -152,7 +168,7 @@ def _select_http_endpoints(targets: dict[str, Any], params: dict[str, Any]) -> l
 
 
 def _plan_http_followup(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    endpoints = _select_http_endpoints(targets, params)
+    endpoints = _select_http_endpoints(targets, params, dry_run=dry_run)
     if not endpoints:
         return {"type": "http_followup", "mode": "skip", "reason": "no_http_endpoints"}
     max_hosts = int(params.get("max_hosts", 2))
@@ -182,7 +198,7 @@ def _plan_http_followup(targets: dict[str, Any], params: dict[str, Any], *, dry_
 
 
 def _plan_sql_injection(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    endpoints = _select_http_endpoints(targets, params)
+    endpoints = _select_http_endpoints(targets, params, dry_run=dry_run)
     if not endpoints:
         return {"type": "sql_injection", "mode": "skip", "reason": "no_http_endpoints"}
     max_hosts = int(params.get("max_hosts", 2))
@@ -262,11 +278,27 @@ def _plan_port_sweep(targets: dict[str, Any], params: dict[str, Any], *, dry_run
     }
 
 
+def _targets_to_target_set(targets: dict[str, Any]) -> Any:
+    from dsp.engine.scenario_engine import TargetSet
+
+    return TargetSet(
+        target_net=str(targets.get("target_net") or ""),
+        hosts=list(targets.get("hosts") or []),
+        service_hosts=dict(targets.get("service_hosts") or {}),
+        service_endpoints={
+            key: [tuple(item) for item in value]
+            for key, value in (targets.get("service_endpoints") or {}).items()
+        },
+        discovery_enabled=bool(targets.get("discovery_enabled", True)),
+        discovery_meta=dict(targets.get("discovery_meta") or {}),
+    )
+
+
 def _plan_dns_tunnel(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    from dsp.protocols.dns.tunnel import select_tunnel_targets
+
     max_hosts = int(params.get("max_hosts", 2))
-    dns_hosts = _hosts_for(targets, "dns_hosts")[:max_hosts]
-    alive_hosts = list(targets.get("hosts") or [])[:max_hosts]
-    hosts = dns_hosts or alive_hosts
+    hosts = select_tunnel_targets(_targets_to_target_set(targets), params, max_hosts=max_hosts)
     if not hosts:
         return {"type": "dns_tunnel", "mode": "skip", "reason": "no_alive_hosts"}
     domain = str(params.get("domain", "dns-tunnel.com"))
@@ -440,23 +472,25 @@ def _plan_host_behavior_check(params: dict[str, Any], *, dry_run: bool) -> dict[
 
 
 def _plan_rare_protocol_activity(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    alive_hosts = list(targets.get("hosts") or [])
-    if not alive_hosts:
-        return {"type": "rare_protocol_activity", "mode": "skip", "reason": "no_alive_hosts"}
-    host = alive_hosts[0]
+    from dsp.protocols.rare.attempts import plan_rare_protocol_activity
+
+    plans = plan_rare_protocol_activity(_targets_to_target_set(targets), params)
+    if not plans:
+        return {"type": "rare_protocol_activity", "mode": "skip", "reason": "no_probe_plans"}
     return {
         "type": "rare_protocol_activity",
         "mode": "mock" if dry_run else "live",
         "timeout": float(params.get("timeout", 3.0)),
         "probes": [
             {
-                "protocol": "rtsp",
-                "host": host,
-                "port": int(params.get("port", 554)),
-                "transport": "tcp",
-                "artifact": f"rtsp://{host}:554/",
-                "rtp_packets": 0,
+                "protocol": plan.protocol,
+                "host": plan.host,
+                "port": plan.port,
+                "transport": plan.transport,
+                "artifact": plan.artifact,
+                "rtp_packets": plan.rtp_packets,
             }
+            for plan in plans
         ],
     }
 

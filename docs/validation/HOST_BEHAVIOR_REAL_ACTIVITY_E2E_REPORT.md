@@ -137,7 +137,7 @@ All events list `target: "10.10.10.20"` (webshell compromise host parsed from `-
 | Did not target internal network | **PASS** | No `host_behavior_*` events reference hosts other than `10.10.10.20`. Discovery probed `10.10.10.0/24` separately; `host_behavior_check` did not fan out commands to discovered hosts. |
 | Runs after webshell host attack and before internal recon | **PASS** (design + placement) | `DISCOVERY_FIRST_SCENARIO_ORDER` in `dsp/runtime/operational_profiles.py`: `http_followup` → `sql_injection` → **`host_behavior_check`** → `ssh_failure` / `ldap_enumeration` / `smb_login_failure` / `kerberos_failure` / `dns_tunnel` / `dga` → `port_sweep`. `host_behavior_check` is injected after `sql_injection` via `initial_compromise_endpoint` from `webshell_url`. |
 
-**Note:** This validation executed `host_behavior_check` as a **standalone** scenario (not a full profile run). Ordering is confirmed from the canonical profile definition and `apply_webshell_initial_compromise_plan()` wiring; no multi-scenario run was required for this gate.
+**Note:** This validation executed `host_behavior_check` as a **standalone** scenario (not a full profile run). Charter v1.2 treats it as **mandatory Phase 1** on every webshell attack-chain run; ordering is confirmed from `DISCOVERY_FIRST_SCENARIO_ORDER` and `apply_webshell_initial_compromise_plan()` wiring.
 
 ---
 

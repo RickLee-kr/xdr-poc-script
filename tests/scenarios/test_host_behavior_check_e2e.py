@@ -14,6 +14,7 @@ from dsp.runner import RunManager
 from dsp.runtime.operational_profiles import (
     DISCOVERY_FIRST_SCENARIO_ORDER,
     HOST_BEHAVIOR_CHECK_SCENARIO_ID,
+    ensure_webshell_phase1_scenarios,
     insert_host_behavior_check,
     resolve_runnable_scenarios,
     scenarios_for_profile,
@@ -24,41 +25,41 @@ from dsp.runtime.scenario_plan import (
 )
 
 
-def test_host_behavior_check_not_in_profile_by_default() -> None:
+def test_normal_profile_includes_host_behavior_check() -> None:
     normal = scenarios_for_profile("normal")
-    assert HOST_BEHAVIOR_CHECK_SCENARIO_ID not in normal
+    assert normal == list(DISCOVERY_FIRST_SCENARIO_ORDER)
+    assert normal.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID) == 0
+    assert normal.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID) < normal.index("port_sweep")
+    assert normal.index("port_sweep") < normal.index("ssh_failure")
 
 
-def test_enable_host_behavior_check_inserts_after_sql_injection() -> None:
+def test_insert_host_behavior_check_prepends_before_target_net_scenarios() -> None:
     ordered = insert_host_behavior_check(
         ["http_followup", "sql_injection", "port_sweep"]
     )
-    assert ordered.index("sql_injection") + 1 == ordered.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID)
-    assert ordered.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID) < ordered.index("port_sweep")
+    assert ordered.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID) == 0
+    assert ordered.index("port_sweep") > ordered.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID)
 
 
-def test_discovery_first_order_includes_host_behavior_check_when_optional_enabled() -> None:
-    include = frozenset({HOST_BEHAVIOR_CHECK_SCENARIO_ID})
-    normal = scenarios_for_profile("normal", include_optional=include)
-    assert normal == list(DISCOVERY_FIRST_SCENARIO_ORDER)
-    assert normal.index("sql_injection") + 1 == normal.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID)
-    assert normal.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID) < normal.index("ssh_failure")
+def test_ensure_webshell_phase1_scenarios_injects_host_behavior() -> None:
+    active = ["http_followup", "sql_injection", "port_sweep", HOST_BEHAVIOR_CHECK_SCENARIO_ID]
+    ordered = ensure_webshell_phase1_scenarios(
+        ["http_followup", "sql_injection", "port_sweep"],
+        active_ids=active,
+    )
+    assert ordered.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID) == 0
 
 
-def test_resolve_runnable_includes_host_behavior_when_enabled() -> None:
+def test_resolve_runnable_includes_host_behavior_in_normal_profile() -> None:
     active = [
         "http_followup",
         "sql_injection",
         HOST_BEHAVIOR_CHECK_SCENARIO_ID,
         "port_sweep",
     ]
-    resolved = resolve_runnable_scenarios(
-        "normal",
-        active,
-        include_optional=frozenset({HOST_BEHAVIOR_CHECK_SCENARIO_ID}),
-    )
+    resolved = resolve_runnable_scenarios("normal", active)
     assert HOST_BEHAVIOR_CHECK_SCENARIO_ID in resolved
-    assert resolved.index("sql_injection") < resolved.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID)
+    assert resolved.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID) == 0
 
 
 def test_webshell_host_target_only() -> None:

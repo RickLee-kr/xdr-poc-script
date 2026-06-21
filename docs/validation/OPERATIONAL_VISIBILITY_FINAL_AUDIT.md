@@ -46,7 +46,7 @@ Operators saw operational success in console/reconciliation but a failing exit c
 
 ### Problem #4 — Host Behavior Summary absent on normal profile
 
-**Finding:** **By design.** `host_behavior_check` is in `OPTIONAL_SCENARIO_IDS` and excluded from profile runs unless `--enable-host-behavior-check` is passed (`dsp/runtime/operational_profiles.py`). Normal profile runs 10 scenarios without host behavior; no Host Behavior Summary is expected.
+**Finding:** `host_behavior_check` is **required** for Phase 1 webshell attack-chain runs per `PRODUCT-CHARTER-v1.2-Final.md` and is included in the normal/high operational profiles by default.
 
 ---
 
@@ -143,7 +143,7 @@ Nested under `reconciliations.http_followup`:
 
 | Question | Answer |
 |----------|--------|
-| Normal profile includes `host_behavior_check`? | **No** — optional; requires `--enable-host-behavior-check` |
+| Normal profile includes `host_behavior_check`? | **Yes** — Phase 1 required, included in normal/high profiles |
 | Summary missing = bug? | **No** — scenario not in run plan |
 | When included | `Host Behavior Summary` in report + `host_behavior_summary` in OV JSON (verified in prior JSP/PHP runs) |
 

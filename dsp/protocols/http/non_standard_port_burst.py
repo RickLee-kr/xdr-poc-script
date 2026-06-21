@@ -182,3 +182,17 @@ def burst_connection_success(result_outcome: str, status_code: int | None) -> bo
     if result_outcome == "response" and status_code is not None:
         return int(status_code) < 500
     return False
+
+
+def plan_webshell_host_non_standard_port_burst(
+    host: str,
+    port: int,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Plan burst traffic against the webshell host only (Phase 1 from webshell origin)."""
+    targets = TargetSet(
+        target_net="",
+        hosts=[host],
+        service_endpoints={"http_targets": [(host, port)]},
+    )
+    return plan_non_standard_port_burst(targets, [host], params)

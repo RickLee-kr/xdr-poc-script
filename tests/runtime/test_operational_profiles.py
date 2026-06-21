@@ -27,33 +27,40 @@ def test_parse_operational_profile_accepts_legacy_aliases() -> None:
 
 def test_low_profile_scenario_coverage() -> None:
     assert scenarios_for_profile("low") == [
+        "port_sweep",
         "http_followup",
         "dns_tunnel",
-        "port_sweep",
     ]
 
 
-def test_normal_profile_excludes_optional_host_behavior_check() -> None:
+def test_normal_profile_includes_host_behavior_check() -> None:
     scenarios = scenarios_for_profile("normal")
-    assert HOST_BEHAVIOR_CHECK_SCENARIO_ID not in scenarios
+    assert HOST_BEHAVIOR_CHECK_SCENARIO_ID in scenarios
+    assert scenarios.index(HOST_BEHAVIOR_CHECK_SCENARIO_ID) == 0
 
 
-def test_normal_profile_discovery_first_order() -> None:
+def test_normal_profile_target_net_execution_order() -> None:
     scenarios = scenarios_for_profile("normal")
+    assert scenarios.index("port_sweep") < scenarios.index("http_followup")
     assert scenarios.index("http_followup") < scenarios.index("sql_injection")
     assert scenarios.index("sql_injection") < scenarios.index("ssh_failure")
     assert scenarios.index("ldap_enumeration") < scenarios.index("smb_login_failure")
     assert scenarios.index("smb_login_failure") < scenarios.index("kerberos_failure")
-    assert scenarios.index("kerberos_failure") < scenarios.index("dns_tunnel")
-    assert scenarios.index("dns_tunnel") < scenarios.index("dga")
-    assert scenarios.index("dga") < scenarios.index("port_sweep")
+    assert scenarios.index("kerberos_failure") < scenarios.index("dga")
+    assert scenarios.index("dga") < scenarios.index("dns_tunnel")
+    assert scenarios[-1] == "dns_tunnel"
+
+
+def test_normal_profile_discovery_first_order() -> None:
+    test_normal_profile_target_net_execution_order()
 
 
 def test_normal_profile_includes_auth_and_protocol_scenarios() -> None:
     scenarios = scenarios_for_profile("normal")
     assert "ldap_enumeration" in scenarios
     assert "kerberos_failure" in scenarios
-    assert scenarios.index("port_sweep") > scenarios.index("http_followup")
+    assert scenarios.index("port_sweep") < scenarios.index("http_followup")
+    assert scenarios.index("dns_tunnel") == len(scenarios) - 1
 
 
 def test_high_profile_matches_normal_coverage() -> None:

@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.execution.remote.bundle.planner import _uses_remote_discovery
 from dsp.execution.remote.command.discovery import (
-    build_discovery_probe_specs,
     get_cached_remote_discovery,
-    probe_commands_for_specs,
-    resolve_discovery_scan_max_hosts,
-    run_webshell_host_discovery,
+    prefetch_webshell_target_net_discovery,
 )
 from dsp.execution.remote.command.events import (
-    append_discovery_events,
     append_scenario_lifecycle,
     append_scenario_skipped,
 )
@@ -116,49 +112,19 @@ class CommandScenarioRunner:
         ctx: RunContext,
     ) -> dict:
         target_net = str(request.target_net or "")
-        discovery_max_hosts = resolve_discovery_scan_max_hosts(
-            ctx.config.scenario_params,
-            target_net,
-        )
-        specs = build_discovery_probe_specs(target_net, max_hosts=discovery_max_hosts)
-        mock = request.dry_run
         cached = get_cached_remote_discovery(ctx.config.scenario_params, target_net)
         if cached is not None:
             return cached
 
-        dispatch_status = "mock" if mock else "completed"
-        batch_results: list[tuple[list[dict[str, Any]], set[tuple[str, int]]]] = []
-
-        def _record_probe_batch(
-            batch_specs: list[dict[str, Any]],
-            open_endpoints: set[tuple[str, int]],
-            _raw: bytes,
-        ) -> None:
-            batch_results.append((batch_specs, set(open_endpoints)))
-
-        if mock:
-            commands = probe_commands_for_specs(specs, mock=True)
-            for command in commands:
-                provider.execute_command(command)
-
-        targets = run_webshell_host_discovery(
+        return prefetch_webshell_target_net_discovery(
             provider,
             ctx,
-            request,
-            specs,
-            on_probe_batch=_record_probe_batch if mock else None,
-        )
-        append_discovery_events(
-            ctx.event_store,
             run_id=str(request.run_id),
-            scenario_id=request.scenario_id,
             target_net=target_net,
-            probe_specs=specs,
-            dispatch_status=dispatch_status,
-            discovery_result=targets.get("discovery_meta"),
-            batch_results=batch_results or None,
+            dry_run=request.dry_run,
+            execution_metadata=dict(request.execution_metadata),
+            event_store=ctx.event_store,
         )
-        return targets
 
     @staticmethod
     def _validate_provider(provider: object) -> None:

@@ -61,7 +61,6 @@ defaults:
   effective_tld: "xdr.ooo"
   phase1_count: 500
   phase2_count: 30
-  resolver: "10.10.10.20"
 
 safety:
   max_events: 20000

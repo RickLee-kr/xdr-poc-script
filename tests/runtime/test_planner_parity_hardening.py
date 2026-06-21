@@ -140,7 +140,7 @@ def test_smb_discovery_bucket_selection() -> None:
     assert select_smb_hosts(targets, {}, max_hosts=2) == ["10.10.10.42"]
 
 
-def test_dns_tunnel_prefers_dns_hosts_bucket() -> None:
+def test_dns_tunnel_uses_alive_hosts_only() -> None:
     targets = TargetSet(
         target_net="10.10.10.0/24",
         hosts=["10.10.10.97", "10.10.10.98"],
@@ -148,7 +148,18 @@ def test_dns_tunnel_prefers_dns_hosts_bucket() -> None:
         discovery_enabled=True,
         discovery_meta={"alive_hosts": ["10.10.10.97", "10.10.10.98"]},
     )
-    assert select_tunnel_targets(targets, {}, max_hosts=2) == ["10.10.10.20"]
+    assert select_tunnel_targets(targets, {}, max_hosts=2) == ["10.10.10.97", "10.10.10.98"]
+
+
+def test_dga_resolver_returns_none_without_dns_hosts() -> None:
+    targets = TargetSet(
+        target_net="10.10.10.0/24",
+        hosts=["10.10.10.97", "10.10.10.98"],
+        service_hosts={"http_targets": ["10.10.10.97"]},
+        discovery_enabled=True,
+        discovery_meta={"alive_hosts": ["10.10.10.97", "10.10.10.98"]},
+    )
+    assert select_dga_resolver(targets, {}) is None
 
 
 def test_dga_resolver_uses_dns_hosts_bucket() -> None:
@@ -186,3 +197,28 @@ def test_webshell_scenario_start_metadata_defers_target_selection() -> None:
         max_hosts=1,
     )
     assert endpoints == [("10.10.10.5", 80)]
+
+
+def test_rare_protocol_plan_parity_between_local_and_remote() -> None:
+    from dsp.execution.remote.bundle.assets.remote_discovery import build_plan_from_discovery
+    from dsp.execution.remote.bundle.planner import _plan_rare_protocol_activity
+
+    targets = _target_set()
+    params = {"timeout": 3.0, "rtp_burst_count": 2}
+    local = _plan_rare_protocol_activity(targets, params, dry_run=True)
+    remote = build_plan_from_discovery(
+        "rare_protocol_activity",
+        _discovery_dict(),
+        params,
+        dry_run=True,
+    )
+    local_probes = {
+        (p["protocol"], p["host"], p["port"], p["transport"])
+        for p in local["probes"]
+    }
+    remote_probes = {
+        (p["protocol"], p["host"], p["port"], p["transport"])
+        for p in remote["probes"]
+    }
+    assert local_probes == remote_probes
+    assert len(local_probes) >= 4

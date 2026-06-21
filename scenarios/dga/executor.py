@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 from dsp.engine.host_selection import select_hosts_for_capability
+from dsp.event_store import Event
 from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.runner.activity_reporter import ActivityReporter
 from dsp.protocols.dns import DnsClient, build_dns_events
@@ -24,8 +26,8 @@ from dsp.protocols.dns.dga_events import (
 )
 
 
-def select_dga_resolver(targets: TargetSet, config: dict) -> str:
-    """Select DNS resolver from discovery dns_hosts bucket."""
+def select_dga_resolver(targets: TargetSet, config: dict) -> str | None:
+    """Select DNS resolver from discovery dns_hosts bucket (discovery-only)."""
     if config.get("resolver"):
         return str(config["resolver"])
     dns_hosts = select_hosts_for_capability(
@@ -36,7 +38,7 @@ def select_dga_resolver(targets: TargetSet, config: dict) -> str:
     )
     if dns_hosts:
         return dns_hosts[0]
-    return "10.10.10.20"
+    return None
 
 
 def run(
@@ -52,6 +54,25 @@ def run(
     phase2_count = int(params.get("phase2_count", PHASE2_COUNT_DEFAULT))
     resolver = select_dga_resolver(targets, params)
     source = "dry_run" if ctx.dry_run else "local"
+    if resolver is None:
+        ctx.event_store.append(
+            Event(
+                run_id=ctx.run_id,
+                scenario_id=scenario_id,
+                timestamp=datetime.now(timezone.utc),
+                stage="executor",
+                event="dga_skipped",
+                status="info",
+                source=source,
+                evidence={
+                    "reason": "skipped_no_open_service: no dns_hosts from discovery",
+                    "skipped_no_open_service": True,
+                    "no_dns_hosts": True,
+                },
+            )
+        )
+        return
+
     mode = "mock" if ctx.dry_run else "live"
     client = DnsClient(mode=mode, timeout=0.05)
 

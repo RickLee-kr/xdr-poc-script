@@ -16,6 +16,7 @@ from dsp.protocols.http.non_standard_port_burst import (
     DEFAULT_BURST_MIN,
     NON_STANDARD_BURST_CANDIDATES,
     plan_non_standard_port_burst,
+    plan_webshell_host_non_standard_port_burst,
     resolve_burst_attempt_count,
     select_non_standard_burst_targets,
 )
@@ -34,6 +35,21 @@ def _targets_with_http() -> TargetSet:
             "https_targets": [("10.10.10.20", 8443)],
         },
     )
+
+
+def test_plan_webshell_host_non_standard_port_burst_targets_webshell_host_only() -> None:
+    plan = plan_webshell_host_non_standard_port_burst(
+        "10.10.10.20",
+        8080,
+        {
+            "non_standard_burst_min": 3,
+            "non_standard_burst_max": 3,
+        },
+    )
+    assert plan["enabled"] is True
+    assert plan["attempts_planned"] == 3
+    assert all(item["host"] == "10.10.10.20" for item in plan["requests"])
+    assert all(item["port"] != 8080 for item in plan["requests"])
 
 
 def test_select_non_standard_burst_targets_prefers_discovered() -> None:

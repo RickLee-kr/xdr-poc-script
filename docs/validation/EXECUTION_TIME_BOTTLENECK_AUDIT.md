@@ -12,7 +12,7 @@
 | Metric | Value |
 |--------|-------|
 | Total wall time | **4m 55s (295s)** |
-| Scenarios executed | 10 (normal profile, host behavior optional/excluded) |
+| Scenarios executed | 10 (normal profile; `host_behavior_check` required per Charter v1.2 Phase 1 — may be absent in legacy runs) |
 | Primary bottleneck | **kerberos_failure** — 68% of total time (pre-fix) |
 
 Post-fix Kerberos fire-and-forget: **20 attempts complete in <1s** (measured locally after patch).

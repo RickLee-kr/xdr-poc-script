@@ -66,7 +66,10 @@ def resolve_scenario_targets(
     selector = getattr(module, func_name)
     if is_list:
         return [str(h) for h in selector(targets, params, max_hosts=max_hosts)]
-    return [str(selector(targets, params))]
+    result = selector(targets, params)
+    if result is None:
+        return []
+    return [str(result)]
 
 
 def resolve_selected_targets_by_protocol(
@@ -131,6 +134,17 @@ def _discovered_targets_for_scenario(
 ) -> list[str]:
     max_hosts = int(params.get("max_hosts", 2))
     if scenario_id in ("http_followup", "sql_injection"):
+        from dsp.engine.host_selection import (
+            HTTP_ENDPOINT_SELECTION_CACHE_KEY,
+            format_selected_target_labels,
+            selection_from_cache,
+        )
+
+        cached = params.get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
+        if cached:
+            selection = selection_from_cache(cached)  # type: ignore[arg-type]
+            if selection.selected:
+                return format_selected_target_labels(selection.selected)
         http_eps = list(targets.service_endpoints.get("http_targets") or [])
         https_eps = list(targets.service_endpoints.get("https_targets") or [])
         labels = [f"{host}:{port}" for host, port in (http_eps + https_eps)[:max_hosts]]
@@ -141,11 +155,11 @@ def _discovered_targets_for_scenario(
         dns_hosts = list(targets.service_hosts.get("dns_hosts") or [])
         if dns_hosts:
             return [str(dns_hosts[0])]
-        if params.get("resolver"):
-            return [str(params["resolver"])]
         return []
     if scenario_id == "dns_tunnel":
-        return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
+        from dsp.protocols.dns.tunnel import select_tunnel_targets
+
+        return select_tunnel_targets(targets, params, max_hosts=max_hosts)
     capability_map = {
         "ssh_failure": "ssh_hosts",
         "ldap_enumeration": "ldap_hosts",
@@ -158,7 +172,22 @@ def _discovered_targets_for_scenario(
     if scenario_id == "port_sweep":
         return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
     if scenario_id == "rare_protocol_activity":
-        return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
+        from dsp.protocols.rare.attempts import plan_rare_protocol_activity
+
+        plans = plan_rare_protocol_activity(targets, params)
+        if not plans:
+            return []
+        seen: set[str] = set()
+        hosts: list[str] = []
+        for plan in plans:
+            host = str(plan.host)
+            if host in seen:
+                continue
+            seen.add(host)
+            hosts.append(host)
+            if len(hosts) >= max_hosts:
+                break
+        return hosts
     return resolve_scenario_targets(scenario_id, targets, params)
 
 

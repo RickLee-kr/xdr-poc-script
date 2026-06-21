@@ -28,12 +28,17 @@ from dsp.runtime.scenario_plan import (
     WEBSHELL_EXECUTION_KEY,
     apply_webshell_initial_compromise_plan,
 )
-from dsp.runtime.webshell_phase1 import run_webshell_phase1_attack
+from dsp.runtime.webshell_phase1 import (
+    run_webshell_phase1_attack,
+    run_webshell_phase1_non_standard_port_burst,
+)
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.providers.runtime.command.command_exceptions import CommandTransportError
 from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
+from dsp.execution.remote.command.discovery import prefetch_webshell_target_net_discovery
 from dsp.execution.remote.command.models import REMOTE_EXECUTION_MODE_COMMAND
+from dsp.execution.remote.command.planner import targets_dict_to_target_set
 from dsp.execution.remote.exceptions import RemoteArtifactUploadError
 from dsp.execution.remote.paths import resolve_remote_bundle_path
 from dsp.execution.webshell_provider import WebshellExecutionProvider
@@ -468,7 +473,22 @@ class RunManager:
 
         if is_webshell:
             from dsp.execution.remote.command.discovery import DISCOVERY_SCAN_MAX_HOSTS_KEY
-            from dsp.runtime.operational_profiles import discover_host_count
+            from dsp.runtime.operational_profiles import (
+                HOST_BEHAVIOR_CHECK_SCENARIO_ID,
+                discover_host_count,
+                ensure_webshell_phase1_scenarios,
+            )
+            from dsp.runtime.traffic_profiles import (
+                parse_traffic_profile,
+                scenario_params_for_profile,
+            )
+
+            scenario_ids = ensure_webshell_phase1_scenarios(
+                scenario_ids,
+                active_ids=self.registry.active_ids(),
+            )
+            run.requested_scenarios = list(scenario_ids)
+            ctx.scenario_ids = list(scenario_ids)
 
             scan_cap = max_hosts if max_hosts is not None else DISCOVERY_MAX_HOSTS
             config.scenario_params[DISCOVERY_SCAN_MAX_HOSTS_KEY] = discover_host_count(
@@ -480,8 +500,17 @@ class RunManager:
                 scenario_ids,
                 webshell_url,
             )
-            if webshell_family and "host_behavior_check" in scenario_ids:
-                config.scenario_params.setdefault("host_behavior_check", {})[
+            if HOST_BEHAVIOR_CHECK_SCENARIO_ID in scenario_ids:
+                traffic_profile = parse_traffic_profile(operational_profile or "normal")
+                config.scenario_params.setdefault(
+                    HOST_BEHAVIOR_CHECK_SCENARIO_ID,
+                    scenario_params_for_profile(
+                        HOST_BEHAVIOR_CHECK_SCENARIO_ID,
+                        traffic_profile,
+                    ),
+                )
+            if webshell_family and HOST_BEHAVIOR_CHECK_SCENARIO_ID in scenario_ids:
+                config.scenario_params.setdefault(HOST_BEHAVIOR_CHECK_SCENARIO_ID, {})[
                     "webshell_family"
                 ] = webshell_family
 
@@ -579,6 +608,8 @@ class RunManager:
                 webshell_url,
                 scenario_params=config.scenario_params,
                 dry_run=dry_run,
+                event_store=store,
+                run_id=run_id,
             )
             exec_ctx.execution_metadata["phase1_webshell_attack"] = phase1.to_dict()
             if emitter is not None:
@@ -630,6 +661,57 @@ class RunManager:
                 )
             store.close()
             return run, run_dir, exit_code
+
+        if is_webshell:
+            http_params = config.scenario_params.get("http_followup", {})
+            burst_summary = run_webshell_phase1_non_standard_port_burst(
+                provider,
+                webshell_url,
+                http_params=http_params,
+                dry_run=dry_run,
+                event_store=store,
+                run_id=run_id,
+            )
+            phase1_payload = dict(
+                exec_ctx.execution_metadata.get("phase1_webshell_attack") or {}
+            )
+            phase1_payload["non_standard_port_burst"] = burst_summary
+            exec_ctx.execution_metadata["phase1_webshell_attack"] = phase1_payload
+            (run_dir / "phase1_webshell_attack.json").write_text(
+                json.dumps(phase1_payload, indent=2),
+                encoding="utf-8",
+            )
+            if emitter is not None:
+                emitter.emit(
+                    "phase1_webshell_burst_completed",
+                    {"non_standard_port_burst": burst_summary},
+                )
+
+            discovered = prefetch_webshell_target_net_discovery(
+                provider,
+                ctx,
+                run_id=run_id,
+                target_net=target_net,
+                dry_run=dry_run,
+                execution_metadata=dict(exec_ctx.execution_metadata),
+                event_store=store,
+            )
+            targets = targets_dict_to_target_set(discovered)
+            if emitter is not None:
+                meta = dict(discovered.get("discovery_meta") or {})
+                emitter.emit(
+                    "discovery_completed",
+                    {
+                        "hosts_found": len(discovered.get("hosts") or []),
+                        "probed_hosts": meta.get("probed_hosts", 0),
+                        "alive_hosts": meta.get("alive_hosts", []),
+                        "open_endpoints": meta.get("open_endpoints", 0),
+                        "service_hosts": meta.get("service_hosts", {}),
+                        "discovery_method": meta.get("discovery_method"),
+                        "command_delivery": meta.get("command_delivery"),
+                        "discovery_origin": meta.get("discovery_origin"),
+                    },
+                )
 
         collector = RemoteEventCollector() if execution_provider == "webshell" else None
 

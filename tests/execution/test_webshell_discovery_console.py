@@ -60,6 +60,8 @@ def test_emit_webshell_discovery_progress_updates_targets(tmp_path) -> None:
     assert phases[0][1]["alive_hosts"] == ["221.139.249.110", "221.139.249.118"]
     assert phases[1][0] == "targets_selected"
     groups = phases[1][1]["groups"]
+    assert phases[1][1]["open_endpoints"] == 2
+    assert phases[1][1]["alive_hosts"] == ["221.139.249.110", "221.139.249.118"]
     assert "HTTP" in groups
     assert "SSH" in groups
     assert "221.139.249.110" in groups["HTTP"][0]

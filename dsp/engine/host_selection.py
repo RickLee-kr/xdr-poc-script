@@ -458,6 +458,7 @@ def cache_http_endpoint_selection(
     scenario_ids: list[str],
     targets: TargetSet,
     dry_run: bool,
+    webshell_mode: bool = False,
 ) -> None:
     """Probe once and share endpoint selection across HTTP detection scenarios."""
     http_scenarios = [sid for sid in scenario_ids if sid in ("http_followup", "sql_injection")]
@@ -470,13 +471,21 @@ def cache_http_endpoint_selection(
         for sid in http_scenarios
     )
     timeout = float(ref_params.get("timeout", 10.0))
-    selection = resolve_http_attack_endpoint_selection(
-        targets,
-        ref_params,
-        max_hosts=max_hosts,
-        dry_run=dry_run,
-        timeout=timeout,
-    )
+    if webshell_mode:
+        selection = selection_from_discovered_http_hosts_unverified(
+            targets,
+            ref_params,
+            probed=[],
+            max_hosts=max_hosts,
+        )
+    else:
+        selection = resolve_http_attack_endpoint_selection(
+            targets,
+            ref_params,
+            max_hosts=max_hosts,
+            dry_run=dry_run,
+            timeout=timeout,
+        )
     cache = selection_to_cache(selection)
     for sid in http_scenarios:
         scenario_params.setdefault(sid, {})[HTTP_ENDPOINT_SELECTION_CACHE_KEY] = cache

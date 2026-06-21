@@ -66,30 +66,22 @@ def test_local_and_webshell_share_scenario_order_for_all_profiles() -> None:
         webshell_order = scenarios_for_profile(profile)
         assert local_order == webshell_order
         if profile in ("normal", "high"):
-            expected = [
-                sid
-                for sid in DISCOVERY_FIRST_SCENARIO_ORDER
-                if sid != HOST_BEHAVIOR_CHECK_SCENARIO_ID
-            ]
-            assert local_order == expected
+            assert local_order == list(DISCOVERY_FIRST_SCENARIO_ORDER)
 
 
 @pytest.mark.parametrize("profile", ["low", "normal", "high"])
 def test_profiles_preserve_discovery_first_ordering(profile: str) -> None:
-    """Test E — low/normal/high preserve discovery-first ordering."""
+    """Test E — low/normal/high preserve target-net execution ordering."""
     scenarios = scenarios_for_profile(profile)
     if profile == "low":
-        assert scenarios == ["http_followup", "dns_tunnel", "port_sweep"]
-        assert scenarios.index("http_followup") < scenarios.index("port_sweep")
+        assert scenarios == ["port_sweep", "http_followup", "dns_tunnel"]
+        assert scenarios.index("port_sweep") < scenarios.index("http_followup")
+        assert scenarios[-1] == "dns_tunnel"
     else:
-        expected = [
-            sid
-            for sid in DISCOVERY_FIRST_SCENARIO_ORDER
-            if sid != HOST_BEHAVIOR_CHECK_SCENARIO_ID
-        ]
-        assert scenarios == expected
-        assert scenarios.index("http_followup") < scenarios.index("port_sweep")
-        assert scenarios.index("sql_injection") < scenarios.index("dns_tunnel")
+        assert scenarios == list(DISCOVERY_FIRST_SCENARIO_ORDER)
+        assert scenarios.index("port_sweep") < scenarios.index("http_followup")
+        assert scenarios.index("sql_injection") < scenarios.index("dga")
+        assert scenarios[-1] == "dns_tunnel"
 
 
 def test_webshell_http_followup_targets_discovered_hosts_when_available() -> None:
@@ -229,4 +221,5 @@ def test_local_http_plan_unchanged_without_webshell_url() -> None:
         target_net="10.10.10.0/24",
     )
     assert INITIAL_COMPROMISE_ENDPOINT_KEY not in params.get("http_followup", {})
-    assert scenarios_for_profile("normal")[0] == "http_followup"
+    assert scenarios_for_profile("normal")[1] == "port_sweep"
+    assert scenarios_for_profile("normal")[-1] == "dns_tunnel"

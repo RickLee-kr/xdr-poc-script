@@ -271,7 +271,7 @@ These scenarios do not determine:
 ## Scenario Library Extension
 
 - eicar_test_file
-- webshell_recon
+- ~~webshell_recon~~ — superseded by `host_behavior_check`
 - linux_recon_burst
 - encoded_shell_execution
 - credential_store_access
@@ -292,11 +292,13 @@ Examples:
 - file read
 - file deletion
 
-### webshell_recon
+### webshell_recon *(superseded)*
 
-Generate post-compromise reconnaissance activity from a webshell execution context.
+**Superseded by `host_behavior_check`.** Do not implement as a separate scenario.
 
-Examples:
+Former intent: post-compromise reconnaissance from a webshell execution context.
+
+Examples (now run inside `host_behavior_check`):
 
 - whoami
 - id

@@ -3,14 +3,16 @@ id: host_behavior_check
 name: Host Behavior Check — EDR Observation Commands
 version: "1.0.0"
 description: >
-  Harmless host enumeration, credential artifact simulation, EICAR variants,
+  Harmless host enumeration, webshell reconnaissance (whoami, id, hostname,
+  uname, ip addr/route), credential artifact simulation, EICAR variants,
   suspicious script drops, persistence artifact simulation, and archive activity
-  on the webshell compromise host. Runs after initial HTTP/SQLi compromise and
-  before internal recon. Optional — enable via --enable-host-behavior-check or
-  explicit --scenarios.
+  on the webshell compromise host. Replaces the planned standalone
+  webshell_recon scenario. Required Phase 1 webshell attack scenario — runs
+  after initial HTTP/SQLi compromise and before internal recon on every
+  webshell attack-chain run.
 
 category: endpoint
-tags: [phase_2, edr, host_behavior, webshell, linux]
+tags: [phase_1, edr, host_behavior, webshell, linux]
 enabled: true
 
 supported_targets:

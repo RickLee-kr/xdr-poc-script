@@ -338,6 +338,7 @@ def _emit_webshell_discovery_activity(ctx: Any, scenario_id: str, targets: dict[
 
 def emit_webshell_discovery_progress(ctx: Any, *, targets: dict[str, Any]) -> None:
     """Refresh console discovery summary and attack target groups after remote probe."""
+    from dsp.engine.host_selection import cache_http_endpoint_selection
     from dsp.engine.scenario_engine import emit_progress
     from dsp.execution.remote.command.planner import targets_dict_to_target_set
     from dsp.runner.target_selection import resolve_webshell_discovered_targets_by_protocol
@@ -345,6 +346,7 @@ def emit_webshell_discovery_progress(ctx: Any, *, targets: dict[str, Any]) -> No
 
     meta = dict(targets.get("discovery_meta") or {})
     alive = list(meta.get("alive_hosts") or targets.get("hosts") or [])
+    open_count = int(meta.get("open_endpoints", 0))
     emit_progress(
         ctx,
         "discovery_completed",
@@ -352,7 +354,7 @@ def emit_webshell_discovery_progress(ctx: Any, *, targets: dict[str, Any]) -> No
             "hosts_found": len(alive),
             "probed_hosts": meta.get("probed_hosts", 0),
             "alive_hosts": alive,
-            "open_endpoints": meta.get("open_endpoints", 0),
+            "open_endpoints": open_count,
             "service_hosts": meta.get("service_hosts") or {},
             "discovery_method": meta.get("discovery_method"),
             "command_delivery": meta.get("command_delivery"),
@@ -361,6 +363,14 @@ def emit_webshell_discovery_progress(ctx: Any, *, targets: dict[str, Any]) -> No
     )
     scenario_ids = list(getattr(ctx, "scenario_ids", None) or [])
     target_set = targets_dict_to_target_set(targets)
+    if scenario_ids:
+        cache_http_endpoint_selection(
+            ctx.config.scenario_params,
+            scenario_ids=scenario_ids,
+            targets=target_set,
+            dry_run=bool(getattr(ctx, "dry_run", False)),
+            webshell_mode=True,
+        )
     groups = (
         resolve_webshell_discovered_targets_by_protocol(
             scenario_ids,
@@ -370,7 +380,11 @@ def emit_webshell_discovery_progress(ctx: Any, *, targets: dict[str, Any]) -> No
         if scenario_ids
         else {}
     )
-    payload: dict[str, Any] = {"groups": groups}
+    payload: dict[str, Any] = {
+        "groups": groups,
+        "alive_hosts": alive,
+        "open_endpoints": open_count,
+    }
     ws_ctx = ctx.config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
     if isinstance(ws_ctx, dict):
         payload["execution_host"] = {
@@ -427,6 +441,11 @@ def run_webshell_host_discovery(
             max_hosts=discovery_max_hosts,
         )
         cache_remote_discovery(ctx.config.scenario_params, targets)
+        _emit_webshell_discovery_activity(
+            ctx,
+            str(getattr(request, "scenario_id", "") or ""),
+            targets,
+        )
         return targets
 
     if not probe_specs:
@@ -457,3 +476,69 @@ def probe_commands_for_specs(
     if mock:
         return [mock_noop_command() for _ in specs]
     return [tcp_probe_command(spec["host"], spec["port"], timeout=timeout) for spec in specs]
+
+
+TARGET_NET_DISCOVERY_SCENARIO_ID = "target_net_discovery"
+
+
+def prefetch_webshell_target_net_discovery(
+    provider: Any,
+    ctx: Any,
+    *,
+    run_id: str,
+    target_net: str,
+    dry_run: bool,
+    execution_metadata: dict[str, Any],
+    event_store: Any | None = None,
+) -> dict[str, Any]:
+    """
+    Phase 3 prelude: probe ``target_net`` from the webshell host once.
+
+    Expands the target CIDR and TCP-probes FAST_SAFE_DISCOVERY_PORTS on each
+    candidate host to populate alive_hosts and service buckets for later
+    port_sweep, service follow-ups, and dns_tunnel (run order in
+    ``DISCOVERY_FIRST_SCENARIO_ORDER``).
+    """
+    from dsp.execution.remote.command.events import append_discovery_events
+    from dsp.execution.remote.models import ScenarioExecutionRequest
+
+    cached = get_cached_remote_discovery(ctx.config.scenario_params, target_net)
+    if cached is not None:
+        return cached
+
+    discovery_max_hosts = resolve_discovery_scan_max_hosts(
+        ctx.config.scenario_params,
+        target_net,
+    )
+    specs = build_discovery_probe_specs(target_net, max_hosts=discovery_max_hosts)
+    request = ScenarioExecutionRequest(
+        scenario_id=TARGET_NET_DISCOVERY_SCENARIO_ID,
+        scenario_params={},
+        execution_metadata=dict(execution_metadata),
+        run_id=run_id,
+        target_net=target_net,
+        dry_run=dry_run,
+    )
+
+    dispatch_status = "mock" if dry_run else "completed"
+
+    targets = run_webshell_host_discovery(
+        provider,
+        ctx,
+        request,
+        specs,
+    )
+    if get_cached_remote_discovery(ctx.config.scenario_params, target_net) is None:
+        cache_remote_discovery(ctx.config.scenario_params, targets)
+    if event_store is not None:
+        append_discovery_events(
+            event_store,
+            run_id=run_id,
+            scenario_id=TARGET_NET_DISCOVERY_SCENARIO_ID,
+            target_net=target_net,
+            probe_specs=specs,
+            dispatch_status=dispatch_status,
+            discovery_result=targets.get("discovery_meta"),
+            batch_results=None,
+        )
+    return targets

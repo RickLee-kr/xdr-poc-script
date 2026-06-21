@@ -8,7 +8,6 @@ import random
 import re
 from typing import Iterator
 
-from dsp.engine.host_selection import select_hosts_for_capability
 from dsp.engine.scenario_engine import TargetSet
 from dsp.protocols.base import DnsProtocolError
 
@@ -113,18 +112,9 @@ def select_tunnel_targets(
     *,
     max_hosts: int = 2,
 ) -> list[str]:
-    """Select DNS tunnel query targets — prefer dns_hosts, else any alive host."""
+    """Select DNS tunnel query targets from Live Host Discovery (alive hosts only)."""
     if config.get("targets"):
         return [str(t) for t in config["targets"]][:max_hosts]
-
-    dns_hosts = select_hosts_for_capability(
-        targets,
-        config,
-        capability="dns_hosts",
-        max_hosts=max_hosts,
-    )
-    if dns_hosts:
-        return dns_hosts
 
     alive_hosts = [str(h) for h in targets.hosts][:max_hosts]
     if alive_hosts:
