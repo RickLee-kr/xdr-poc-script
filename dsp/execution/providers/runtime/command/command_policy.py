@@ -18,7 +18,7 @@ class CommandExecutionPolicy:
     allow_file_modification: bool = False
     allow_network_access: bool = False
     allow_privilege_escalation: bool = False
-    max_timeout_seconds: int = 300
+    max_timeout_seconds: int = 600
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,5 +42,5 @@ class CommandExecutionPolicy:
             allow_privilege_escalation=bool(
                 data.get("allow_privilege_escalation", False)
             ),
-            max_timeout_seconds=int(data.get("max_timeout_seconds", 300)),
+            max_timeout_seconds=int(data.get("max_timeout_seconds", 600)),
         )

@@ -35,9 +35,8 @@ def compute_bundle_execution_timeout_seconds(manifest: dict[str, Any]) -> int:
         estimate = batches * per_op
     elif plan_type == "dns_tunnel":
         query_count = len(plan.get("queries") or [])
-        burst_count = max(0, len(plan.get("burst_schedule") or []) - 1)
-        pause_budget = burst_count * 1.25
-        estimate = query_count * per_op + pause_budget
+        send_interval = float(plan.get("send_interval_sec", 0.01))
+        estimate = query_count * (per_op + send_interval)
     elif plan_type == "http_followup":
         requests = len(plan.get("requests") or [])
         burst = plan.get("non_standard_port_burst") or {}

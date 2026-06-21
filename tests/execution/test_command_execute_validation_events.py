@@ -41,19 +41,37 @@ def test_dns_tunnel_command_evidence_includes_python_socket_method(tmp_path) -> 
     plan = {
         "type": "dns_tunnel",
         "mode": "live",
-        "timeout": 1.0,
+        "payload_mb": 0.0001,
+        "chunk_size": 30,
+        "domain": "dns-tunnel.com",
+        "mock_filename": "mock_exfil.dat",
+        "send_interval_sec": 0.01,
+        "session_id": "sess01",
         "queries": [
-            {"target": "10.10.10.20", "fqdn": "abc012.tunnel.example.com", "seq": 1},
+            {
+                "target": "10.10.10.20",
+                "fqdn": "idx-0000-abc.dns-tunnel.com",
+                "seq": 0,
+                "query_role": "idx_chunk",
+                "protocol": "dns_udp",
+                "port": 53,
+            },
         ],
     }
-    execute_command_plan(plan, provider, ctx, _request("dns_tunnel"))
+    http_calls = execute_command_plan(plan, provider, ctx, _request("dns_tunnel"))
     events = ctx.event_store.list_events("run-val")
     completed = next(e for e in events if e.event == "dns_tunnel_completed")
     assert completed.evidence.get("dns_query_method") == DNS_QUERY_METHOD_PYTHON_SOCKET_UDP53
     assert completed.evidence.get("dns_tunnel_query_sent_count") == 1
+    assert completed.evidence.get("webshell_http_dispatches") == 1
+    assert http_calls == 1
+    assert provider.execute_command.call_count == 1
     dispatched = next(e for e in events if e.event == "webshell_command_dispatched")
-    assert "python3 -c" in str(dispatched.evidence.get("remote_command"))
-    assert "socket" in str(dispatched.evidence.get("remote_command"))
+    remote_command = str(dispatched.evidence.get("remote_command"))
+    assert "python3 -c" in remote_command
+    assert "sendto" in remote_command
+    assert "recvfrom" not in remote_command
+    assert "DNS_TUNNEL_SESSION_DONE" in remote_command
 
 
 def test_dga_command_emits_validation_status_events(tmp_path) -> None:

@@ -328,9 +328,10 @@ def _run_dns_tunnel(log: EventLog, plan: dict[str, Any]) -> None:
     queries = plan.get("queries") or []
     mode = plan.get("mode", "live")
     domain = plan.get("domain", "dns-tunnel.com")
-    session_id = uuid.uuid4().hex[:6]
+    session_id = str(plan.get("session_id") or uuid.uuid4().hex[:6])
+    send_interval = float(plan.get("send_interval_sec", 0.01))
     first_target = queries[0]["target"] if queries else ""
-    burst_schedule = list(plan.get("burst_schedule") or [len(queries)])
+    idx_count = sum(1 for q in queries if q.get("query_role", "idx_chunk") == "idx_chunk")
     log.append(
         event="dns_tunnel_started",
         status="info",
@@ -338,68 +339,64 @@ def _run_dns_tunnel(log: EventLog, plan: dict[str, Any]) -> None:
         evidence={
             "session_id": session_id,
             "domain": domain,
-            "planned_chunks": len(queries),
-            "burst_schedule": burst_schedule,
+            "planned_chunks": idx_count,
+            "send_interval_sec": send_interval,
+            "payload_mb": plan.get("payload_mb"),
         },
     )
     sent = 0
-    query_idx = 0
-    for burst_idx, burst_size in enumerate(burst_schedule):
-        for _ in range(burst_size):
-            if query_idx >= len(queries):
-                break
-            item = queries[query_idx]
-            query_idx += 1
-            target = item["target"]
-            fqdn = item["fqdn"]
-            seq = item["seq"]
-            log.append(
-                event="dns_tunnel_chunk_created",
-                status="info",
-                target=target,
-                artifact=fqdn,
-                evidence={
-                    "seq": seq,
-                    "fqdn": fqdn,
-                    "domain": domain,
-                    "chunk_bytes": item.get("chunk_bytes"),
-                    "label_length": item.get("label_length"),
-                    "burst_index": burst_idx + 1,
-                },
-            )
-            send_meta: dict[str, Any] = {"outcome": "mock"}
-            if mode != "mock":
-                try:
-                    send_meta = _send_dns_tunnel_query(target, fqdn)
-                except OSError as exc:
-                    send_meta = {"outcome": "error", "message": str(exc)}
-
-            query_evidence = {
-                "session_id": session_id,
+    for item in queries:
+        target = item["target"]
+        fqdn = item["fqdn"]
+        query_role = item.get("query_role", "idx_chunk")
+        seq = item.get("seq")
+        log.append(
+            event="dns_tunnel_chunk_created",
+            status="info",
+            target=target,
+            artifact=fqdn,
+            evidence={
                 "seq": seq,
                 "fqdn": fqdn,
-                "qtype": "A",
-                "port": 53,
-                "burst_index": burst_idx + 1,
-                **send_meta,
-            }
-            log.append(
-                event="dns_query_sent",
-                status="sent",
-                target=target,
-                artifact=fqdn,
-                evidence=dict(query_evidence),
-            )
-            log.append(
-                event="dns_tunnel_query_sent",
-                status="sent",
-                target=target,
-                artifact=fqdn,
-                evidence=query_evidence,
-            )
-            sent += 1
-        if burst_idx < len(burst_schedule) - 1 and query_idx < len(queries):
-            time.sleep(random.uniform(0.5, 2.0))
+                "domain": domain,
+                "chunk_bytes": item.get("chunk_bytes"),
+                "label_length": item.get("label_length"),
+                "query_role": query_role,
+            },
+        )
+        send_meta: dict[str, Any] = {"outcome": "mock"}
+        if mode != "mock":
+            try:
+                send_meta = _send_dns_tunnel_query(target, fqdn)
+            except OSError as exc:
+                send_meta = {"outcome": "error", "message": str(exc)}
+
+        query_evidence = {
+            "session_id": session_id,
+            "seq": seq,
+            "fqdn": fqdn,
+            "qtype": "A",
+            "port": 53,
+            "query_role": query_role,
+            **send_meta,
+        }
+        log.append(
+            event="dns_query_sent",
+            status="sent",
+            target=target,
+            artifact=fqdn,
+            evidence=dict(query_evidence),
+        )
+        log.append(
+            event="dns_tunnel_query_sent",
+            status="sent",
+            target=target,
+            artifact=fqdn,
+            evidence=query_evidence,
+        )
+        sent += 1
+        if send_interval > 0 and mode != "mock" and sent < len(queries):
+            time.sleep(send_interval)
     log.append(
         event="dns_tunnel_completed",
         status="info",
@@ -408,7 +405,7 @@ def _run_dns_tunnel(log: EventLog, plan: dict[str, Any]) -> None:
             "queries_sent": sent,
             "chunks_sent": sent,
             "session_id": session_id,
-            "burst_schedule": burst_schedule,
+            "send_interval_sec": send_interval,
         },
     )
 

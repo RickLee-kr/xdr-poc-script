@@ -154,7 +154,7 @@ def test_dns_tunnel_query_sent_evidence_fields_validate() -> None:
     store = EventStore(":memory:")
     run_id = "dns_tunnel_evidence_run"
     store.open_run(run_id)
-    fqdn = "idx-000001-mfrggzdfmy.dns-tunnel.com"
+    fqdn = "idx-0000-mfrggzdfmy.dns-tunnel.com"
     target = "221.139.249.101"
     store.append(
         build_tunnel_query_sent_event(

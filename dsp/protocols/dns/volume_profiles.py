@@ -13,8 +13,8 @@ VOLUME_PROFILES: dict[str, dict[str, Any]] = {
         "max_hosts": 1,
     },
     "standard": {
-        "payload_mb": 0.01,
-        "max_chunks": 100,
+        "payload_mb": 2.0,
+        "chunk_size": 30,
         "max_hosts": 1,
     },
     "stress": {
@@ -26,6 +26,8 @@ VOLUME_PROFILES: dict[str, dict[str, Any]] = {
 
 DEFAULT_DRY_RUN_PROFILE = "standard"
 DEFAULT_LIVE_PROFILE = "standard"
+
+DRY_RUN_MAX_CHUNKS_DEFAULT = 100
 
 
 def resolve_volume_profile(name: str) -> dict[str, Any]:
@@ -55,5 +57,8 @@ def apply_volume_profile(
     profile_name = merged.pop("volume_profile", None)
     if profile_name:
         merged = {**resolve_volume_profile(str(profile_name)), **merged}
+
+    if dry_run and "max_chunks" not in merged:
+        merged["max_chunks"] = DRY_RUN_MAX_CHUNKS_DEFAULT
 
     return merged

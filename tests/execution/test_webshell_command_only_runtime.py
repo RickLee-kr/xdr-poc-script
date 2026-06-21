@@ -329,11 +329,17 @@ def test_webshell_dns_tunnel_execute_emits_idx_evidence(tmp_path: Path) -> None:
         )
         targets = resolve_targets("10.10.10.0/24", dry_run=True)
         provider.prepare(exec_ctx)
+        before_calls = len(server.command_calls)
         provider.execute(exec_ctx, record, run_ctx, targets)
+        assert len(server.command_calls) - before_calls == 1
+        assert store.count(
+            EventQuery(run_id=run_id, scenario_id="dns_tunnel", event="webshell_command_dispatched")
+        ) == 1
         sent_events = [
             event
             for event in store.list_events(run_id, "dns_tunnel")
             if event.event == "dns_tunnel_query_sent"
+            and (event.evidence or {}).get("query_role", "idx_chunk") == "idx_chunk"
         ]
         assert sent_events
         for event in sent_events:
@@ -345,6 +351,14 @@ def test_webshell_dns_tunnel_execute_emits_idx_evidence(tmp_path: Path) -> None:
             assert evidence.get("protocol") == "dns_udp"
             assert evidence.get("port") == 53
             assert evidence.get("target")
+        marker_fqdns = {
+            str(e.evidence.get("fqdn"))
+            for e in store.list_events(run_id, "dns_tunnel")
+            if e.event == "dns_tunnel_query_sent"
+        }
+        assert any(fqdn.startswith("strt-") for fqdn in marker_fqdns)
+        assert any(fqdn.startswith("end-0.") for fqdn in marker_fqdns)
+        assert any("idx-0000-" in fqdn for fqdn in marker_fqdns)
     finally:
         server.stop()
 

@@ -12,6 +12,7 @@ from dsp.execution.remote.command.models import DNS_QUERY_METHOD_PYTHON_SOCKET_U
 from dsp.execution.remote.command.shell import (
     curl_request_command,
     dns_query_command_evidence,
+    dns_tunnel_session_command_evidence,
     host_behavior_shell_command,
     kerberos_attempt_command,
     ldap_action_command,
@@ -22,7 +23,15 @@ from dsp.execution.remote.command.shell import (
     tcp_probe_command,
 )
 from dsp.execution.remote.models import ScenarioExecutionRequest
-from dsp.protocols.dns.tunnel import dns_tunnel_query_evidence, sample_burst_pause_sec
+from dsp.protocols.dns.tunnel import (
+    CHUNK_SIZE_DEFAULT,
+    MOCK_PAYLOAD_FILENAME,
+    PAYLOAD_MB_DEFAULT,
+    SEND_INTERVAL_SEC,
+    TUNNEL_DOMAIN_DEFAULT,
+    compute_dns_tunnel_session_timeout_sec,
+    dns_tunnel_query_evidence,
+)
 
 if TYPE_CHECKING:
     from dsp.execution.webshell_provider import WebshellExecutionProvider
@@ -358,157 +367,187 @@ def _execute_dns_tunnel(
     run_id = str(request.run_id)
     scenario_id = request.scenario_id
     queries = plan.get("queries") or []
-    timeout = float(plan.get("timeout", 0.05))
     mock = plan.get("mode") == "mock"
-    first_target = queries[0]["target"] if queries else ""
-    dns_method = dns_query_command_evidence(
-        str(queries[0]["target"]) if queries else "127.0.0.1",
-        str(queries[0]["fqdn"]) if queries else "example.test",
-        timeout=max(timeout, 1.0),
-        suppress_errors=False,
-    )["dns_query_method"]
-    cmd_events.append_event(
-        store,
-        run_id=run_id,
-        scenario_id=scenario_id,
-        event="dns_tunnel_started",
-        status="info",
-        target=first_target,
-        evidence={
-            "planned_chunks": len(queries),
-            "mode": plan.get("mode", "live"),
-            "dns_query_method": dns_method,
-            "session_id": plan.get("session_id"),
-            "target_selection": plan.get("target_selection", "alive_hosts"),
-            "burst_schedule": plan.get("burst_schedule") or [],
-        },
-    )
-    dispatched = 0
+    payload_mb = float(plan.get("payload_mb", PAYLOAD_MB_DEFAULT))
+    chunk_size = int(plan.get("chunk_size", CHUNK_SIZE_DEFAULT))
+    domain = str(plan.get("domain", TUNNEL_DOMAIN_DEFAULT))
+    mock_filename = str(plan.get("mock_filename", MOCK_PAYLOAD_FILENAME))
+    send_interval = float(plan.get("send_interval_sec", SEND_INTERVAL_SEC))
+    session_id = plan.get("session_id")
+    max_chunks = plan.get("max_chunks")
+    first_target = str(queries[0]["target"]) if queries else ""
+
+    by_target: dict[str, list[dict[str, Any]]] = {}
+    for item in queries:
+        by_target.setdefault(str(item["target"]), []).append(item)
+
+    http_dispatches = 0
     command_sample: str | None = None
-    burst_schedule = plan.get("burst_schedule") or [len(queries)]
-    pause_min = float(plan.get("burst_pause_min_sec", 0.5))
-    pause_max = float(plan.get("burst_pause_max_sec", 2.0))
-    query_idx = 0
-    for burst_idx, burst_size in enumerate(burst_schedule):
-        for _ in range(burst_size):
-            if query_idx >= len(queries):
-                break
-            item = queries[query_idx]
-            query_idx += 1
-            target = str(item["target"])
-            fqdn = str(item["fqdn"])
-            traffic_evidence = dns_tunnel_query_evidence(item)
-            query_evidence = dns_query_command_evidence(
-                target,
-                fqdn,
-                timeout=max(timeout, 1.0),
-                suppress_errors=False,
+
+    for target, target_queries in by_target.items():
+        idx_count = sum(
+            1 for q in target_queries if q.get("query_role", "idx_chunk") == "idx_chunk"
+        )
+        session_meta = dns_tunnel_session_command_evidence(
+            target,
+            payload_mb=payload_mb,
+            chunk_size=chunk_size,
+            domain=domain,
+            mock_filename=mock_filename,
+            send_interval=send_interval,
+            suppress_errors=False,
+        )
+        dns_method = session_meta["dns_query_method"]
+        if command_sample is None:
+            command_sample = session_meta["remote_command"]
+
+        cmd_events.append_event(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            event="dns_tunnel_started",
+            status="info",
+            target=target,
+            evidence={
+                "planned_chunks": idx_count,
+                "mode": plan.get("mode", "live"),
+                "dns_query_method": dns_method,
+                "execution_mode": "dns_tunnel_session",
+                "session_id": session_id,
+                "target_selection": plan.get("target_selection", "alive_hosts"),
+                "send_interval_sec": send_interval,
+                "payload_mb": payload_mb,
+                "chunk_size": chunk_size,
+                "mock_filename": mock_filename,
+            },
+        )
+
+        session_artifact = f"dns_tunnel_session:{target}"
+        dispatch_payload = {
+            **session_meta,
+            "target": target,
+            "dispatch_phase": "attempt",
+            "session_id": session_id,
+        }
+        cmd_events.append_event(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            event="dns_tunnel_dispatch_attempt",
+            status="info",
+            target=target,
+            artifact=session_artifact,
+            evidence=dispatch_payload,
+        )
+
+        if mock:
+            command = mock_noop_command()
+            timeout_seconds = 30
+        else:
+            command = session_meta["remote_command"]
+            timeout_seconds = compute_dns_tunnel_session_timeout_sec(
+                payload_mb,
+                chunk_size,
+                send_interval,
+                max_chunks=int(max_chunks) if max_chunks is not None else None,
             )
-            command = mock_noop_command() if mock else query_evidence["remote_command"]
-            if command_sample is None and not mock:
-                command_sample = query_evidence["remote_command"]
-            query_payload = {
-                **traffic_evidence,
-                **query_evidence,
-                "burst_index": burst_idx + 1,
-                "dispatch_phase": "attempt",
-            }
-            cmd_events.append_event(
-                store,
-                run_id=run_id,
-                scenario_id=scenario_id,
-                event="dns_tunnel_dispatch_attempt",
-                status="info",
-                target=target,
-                artifact=fqdn,
-                evidence=query_payload,
-            )
-            result = _dispatch_command_result(
-                provider,
-                command,
-                timeout_seconds=10,
-            )
-            dispatch_status = str(result.status.value)
-            dispatch_event = (
-                "dns_tunnel_dispatch_completed"
-                if dispatch_status == CommandStatus.COMPLETED.value
-                else "dns_tunnel_dispatch_failed"
-            )
-            outcome_payload = {
-                **query_payload,
-                "dispatch_phase": "completed" if dispatch_status == CommandStatus.COMPLETED.value else "failed",
-                "dispatch_status": dispatch_status,
-            }
-            cmd_events.append_event(
-                store,
-                run_id=run_id,
-                scenario_id=scenario_id,
-                event=dispatch_event,
-                status="info" if dispatch_status == CommandStatus.COMPLETED.value else "error",
-                target=target,
-                artifact=fqdn,
-                evidence=outcome_payload,
-            )
-            cmd_events.append_event(
-                store,
-                run_id=run_id,
-                scenario_id=scenario_id,
-                event="dns_tunnel_chunk_created",
-                status="info",
-                target=target,
-                artifact=fqdn,
-                evidence=outcome_payload,
-            )
-            cmd_events.append_command_dispatched(
-                store,
-                run_id=run_id,
-                scenario_id=scenario_id,
-                command_category="dns_query",
-                target=target,
-                protocol="dns_udp",
-                dispatch_status=dispatch_status,
-                artifact=fqdn,
-                traffic_event="dns_query_sent",
-                evidence=outcome_payload,
-            )
-            cmd_events.append_event(
-                store,
-                run_id=run_id,
-                scenario_id=scenario_id,
-                event="dns_tunnel_query_sent",
-                status="sent",
-                target=target,
-                artifact=fqdn,
-                evidence={**outcome_payload, "outcome": "command_dispatched"},
-            )
-            dispatched += 1
-        if burst_idx < len(burst_schedule) - 1 and query_idx < len(queries) and not mock:
-            time.sleep(
-                sample_burst_pause_sec(
-                    pause_min=pause_min,
-                    pause_max=pause_max,
+
+        result = _dispatch_command_result(
+            provider,
+            command,
+            timeout_seconds=timeout_seconds,
+        )
+        dispatch_status = str(result.status.value)
+        session_ok = mock or dispatch_status == CommandStatus.COMPLETED.value
+        outcome_payload = {
+            **dispatch_payload,
+            "dispatch_phase": "completed" if session_ok else "failed",
+            "dispatch_status": dispatch_status,
+            "timeout_seconds": timeout_seconds,
+        }
+        cmd_events.append_event(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            event="dns_tunnel_dispatch_completed" if session_ok else "dns_tunnel_dispatch_failed",
+            status="info" if session_ok else "error",
+            target=target,
+            artifact=session_artifact,
+            evidence=outcome_payload,
+        )
+        cmd_events.append_command_dispatched(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            command_category="dns_tunnel_session",
+            target=target,
+            protocol="dns_udp",
+            dispatch_status=dispatch_status,
+            artifact=session_artifact,
+            traffic_event="dns_tunnel_session_started",
+            evidence={**outcome_payload, "remote_command": command},
+        )
+        http_dispatches += 1
+
+        target_query_events = 0
+        if session_ok:
+            for item in target_queries:
+                fqdn = str(item["fqdn"])
+                traffic_evidence = dns_tunnel_query_evidence(item)
+                query_payload = {
+                    **traffic_evidence,
+                    **session_meta,
+                    "session_id": session_id,
+                    "outcome": "session_dispatched" if not mock else "mock",
+                    "dispatch_status": dispatch_status,
+                }
+                cmd_events.append_event(
+                    store,
+                    run_id=run_id,
+                    scenario_id=scenario_id,
+                    event="dns_tunnel_chunk_created",
+                    status="info",
+                    target=target,
+                    artifact=fqdn,
+                    evidence=query_payload,
                 )
-            )
-    completed_evidence: dict[str, Any] = {
-        "queries_sent": dispatched,
-        "dns_tunnel_query_sent_count": dispatched,
-        "dns_tunnel_chunk_created_count": dispatched,
-        "dns_query_method": dns_method,
-        "session_id": plan.get("session_id"),
-        "target_selection": plan.get("target_selection", "alive_hosts"),
-    }
-    if command_sample:
-        completed_evidence["remote_command_sample"] = command_sample
-    cmd_events.append_event(
-        store,
-        run_id=run_id,
-        scenario_id=scenario_id,
-        event="dns_tunnel_completed",
-        status="info",
-        target=first_target,
-        evidence=completed_evidence,
-    )
-    return dispatched
+                cmd_events.append_event(
+                    store,
+                    run_id=run_id,
+                    scenario_id=scenario_id,
+                    event="dns_tunnel_query_sent",
+                    status="sent",
+                    target=target,
+                    artifact=fqdn,
+                    evidence=query_payload,
+                )
+                target_query_events += 1
+
+        completed_evidence: dict[str, Any] = {
+            "queries_sent": target_query_events if session_ok else 0,
+            "dns_tunnel_query_sent_count": target_query_events if session_ok else 0,
+            "dns_tunnel_chunk_created_count": target_query_events if session_ok else 0,
+            "webshell_http_dispatches": http_dispatches,
+            "dns_query_method": dns_method,
+            "execution_mode": "dns_tunnel_session",
+            "session_id": session_id,
+            "target_selection": plan.get("target_selection", "alive_hosts"),
+            "send_interval_sec": send_interval,
+            "payload_mb": payload_mb,
+        }
+        if command_sample:
+            completed_evidence["remote_command_sample"] = command_sample
+        cmd_events.append_event(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            event="dns_tunnel_completed",
+            status="info",
+            target=target,
+            evidence=completed_evidence,
+        )
+
+    return http_dispatches
 
 
 def _execute_dga(

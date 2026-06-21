@@ -25,7 +25,7 @@ TUNNEL_TEST_PARAMS = {
 def _build_dns_response(txn_id: int, *, rcode: int = 0, ancount: int = 1) -> bytes:
     flags = 0x8180 | rcode
     header = struct.pack("!HHHHHH", txn_id, flags, 1, ancount, 0, 0)
-    question = encode_qname("idx-000001-test.dns-tunnel.com") + struct.pack("!HH", 1, 1)
+    question = encode_qname("idx-0000-test.dns-tunnel.com") + struct.pack("!HH", 1, 1)
     answer = b""
     if ancount:
         answer = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 300, 4) + bytes([10, 10, 10, 1])
@@ -79,7 +79,7 @@ def test_dns_tunnel_dry_run_e2e(tmp_runs_dir):
     report = (run_dir / "report.md").read_text()
     assert "## DNS Tunnel Details" in report
     assert "dns_tunnel_query_sent_count" in report
-    assert "idx-000001-" in report
+    assert "idx-0000-" in report
 
 
 def test_dns_tunnel_live_e2e(tmp_runs_dir, mock_dns_socket):
@@ -97,8 +97,8 @@ def test_dns_tunnel_live_e2e(tmp_runs_dir, mock_dns_socket):
     validation = json.loads((run_dir / "validation.json").read_text())
     result = validation["results"][0]
     assert result["decision"] == "success"
-    assert result["metrics"]["dns_tunnel_query_sent_count"] == 3
-    assert result["metrics"]["dns_tunnel_chunk_created_count"] == 3
+    assert result["metrics"]["dns_tunnel_query_sent_count"] == 5
+    assert result["metrics"]["dns_tunnel_chunk_created_count"] == 5
 
 
 def test_dns_tunnel_plugins_list():
