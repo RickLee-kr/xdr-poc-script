@@ -431,6 +431,8 @@ class RunManager:
             config=config,
             dry_run=dry_run,
             activity_emitter=emitter.emit_activity if emitter is not None else None,
+            progress_emitter=emitter.emit if emitter is not None else None,
+            scenario_ids=list(scenario_ids),
             artifact_dir=run_dir,
         )
 

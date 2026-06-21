@@ -19,6 +19,10 @@ from dsp.execution.remote.command.discovery import (
     run_discovery_from_tcp_probes,
     run_webshell_host_discovery,
 )
+from dsp.execution.remote.command.models import (
+    COMMAND_DELIVERY_INLINE_BASE64_EXEC,
+    DISCOVERY_METHOD_COMMAND_INLINE_BASE64_EXEC,
+)
 from dsp.execution.remote.command.shell import (
     PROBE_OPEN_MARKER,
     tcp_probe_batch_discovery_command,
@@ -130,7 +134,9 @@ def test_run_discovery_from_tcp_probes_uses_python_inline_batches() -> None:
     )
     assert targets["hosts"] == ["10.10.10.1"]
     assert targets["service_hosts"]["http_targets"] == ["10.10.10.1"]
-    assert targets["discovery_meta"]["discovery_method"] == "tcp_probe_batch_sh"
+    assert targets["discovery_meta"]["discovery_method"] == DISCOVERY_METHOD_COMMAND_INLINE_BASE64_EXEC
+    assert targets["discovery_meta"]["command_delivery"] == COMMAND_DELIVERY_INLINE_BASE64_EXEC
+    assert targets["discovery_meta"]["runner_upload"] is False
     assert provider.run_remote_command.call_count >= 1
 
 
@@ -159,7 +165,9 @@ def test_live_discovery_uses_tcp_probe_batches_only() -> None:
     specs = build_discovery_probe_specs("10.10.10.0/30", max_hosts=2)
     targets = run_webshell_host_discovery(provider, ctx, request, specs)
     assert targets["service_hosts"]["http_targets"] == ["10.10.10.1"]
-    assert targets["discovery_meta"]["discovery_method"] == "tcp_probe_batch_sh"
+    assert targets["discovery_meta"]["discovery_method"] == DISCOVERY_METHOD_COMMAND_INLINE_BASE64_EXEC
+    assert targets["discovery_meta"]["command_delivery"] == COMMAND_DELIVERY_INLINE_BASE64_EXEC
+    assert targets["discovery_meta"]["runner_upload"] is False
 
 
 def test_live_discovery_without_open_ports_returns_empty_service_buckets() -> None:
@@ -180,7 +188,9 @@ def test_live_discovery_without_open_ports_returns_empty_service_buckets() -> No
     targets = run_webshell_host_discovery(provider, ctx, request, specs)
     assert targets["hosts"] == []
     assert not any(targets["service_hosts"].values())
-    assert targets["discovery_meta"]["discovery_method"] == "tcp_probe_batch_sh"
+    assert targets["discovery_meta"]["discovery_method"] == DISCOVERY_METHOD_COMMAND_INLINE_BASE64_EXEC
+    assert targets["discovery_meta"]["command_delivery"] == COMMAND_DELIVERY_INLINE_BASE64_EXEC
+    assert targets["discovery_meta"]["runner_upload"] is False
 
 
 def test_resolve_discovery_scan_max_hosts_defaults_to_full_subnet() -> None:

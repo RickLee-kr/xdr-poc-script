@@ -220,7 +220,8 @@ class TestNoRuntimeUpload:
                 e for e in store.list_events(run_id) if e.event == "remote_discovery_completed"
             ]
             assert discovery_events
-            assert discovery_events[0].evidence.get("discovery_method") == "tcp_probe_batch_sh"
+            assert discovery_events[0].evidence.get("discovery_method") == "command_inline_base64_exec"
+            assert discovery_events[0].evidence.get("runner_upload") is False
         finally:
             server.stop()
 

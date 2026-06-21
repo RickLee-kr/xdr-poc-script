@@ -74,6 +74,12 @@ class OperationalConsole:
             open_endpoints = data.get("open_endpoints", 0)
             service_hosts: dict[str, list[str]] = data.get("service_hosts") or {}
             self._write("Discovery Completed")
+            if data.get("discovery_method"):
+                self._write(f"  discovery_method={data['discovery_method']}")
+            if data.get("command_delivery"):
+                self._write(f"  command_delivery={data['command_delivery']}")
+            if data.get("runner_upload") is False:
+                self._write("  runner_upload=false")
             if probed:
                 self._write(f"Probed Hosts: {probed}")
             if open_endpoints:
@@ -297,6 +303,8 @@ class OperationalConsole:
             self._write("Webshell Discovery")
             for key in (
                 "discovery_method",
+                "command_delivery",
+                "runner_upload",
                 "alive_hosts",
                 "open_endpoints",
                 "probe_batches",

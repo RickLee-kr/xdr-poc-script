@@ -10,6 +10,7 @@ from dsp.engine.scenario_engine import (
     ScenarioSummary,
     TargetSet,
     emit_activity,
+    emit_progress,
 )
 from dsp.engine.target_engine import resolve_targets
 
@@ -22,6 +23,7 @@ __all__ = [
     "ScenarioSummary",
     "TargetSet",
     "emit_activity",
+    "emit_progress",
     "resolve_targets",
     "run_scenario",
 ]

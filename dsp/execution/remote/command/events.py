@@ -198,6 +198,8 @@ def append_discovery_events(
                 "open_endpoints": discovery_result.get("open_endpoints", 0),
                 "probed_hosts": discovery_result.get("probed_hosts", len(probe_specs)),
                 "discovery_method": discovery_result.get("discovery_method"),
+                "command_delivery": discovery_result.get("command_delivery"),
+                "runner_upload": discovery_result.get("runner_upload"),
                 "probe_batches": discovery_result.get("probe_batches"),
                 "output_preview": discovery_result.get("first_batch_output_preview"),
                 "service_hosts": discovery_result.get("service_hosts"),

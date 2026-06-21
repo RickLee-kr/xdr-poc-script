@@ -84,6 +84,10 @@ def build_traffic_summary(
         if not started:
             started = _last_evidence(events, sid, "ssh_failure_started")
         if not started:
+            started = _last_evidence(events, sid, "dns_tunnel_started")
+        if not started:
+            started = _last_evidence(events, sid, "dga_started")
+        if not started:
             started = _last_evidence(events, sid, "rare_protocol_activity_started")
         if not started:
             started = _last_evidence(events, sid, "smb_scenario_started")
@@ -97,6 +101,10 @@ def build_traffic_summary(
             completed = _last_evidence(events, sid, "http_followup_completed")
         if not completed:
             completed = _last_evidence(events, sid, "ssh_failure_completed")
+        if not completed:
+            completed = _last_evidence(events, sid, "dns_tunnel_completed")
+        if not completed:
+            completed = _last_evidence(events, sid, "dga_completed")
         if not completed:
             completed = _last_evidence(events, sid, "rare_protocol_activity_completed")
         if not completed:
@@ -210,6 +218,29 @@ def build_traffic_summary(
                 "auth_failed": completed.get("failure_count") or _count_events(events, sid, "ssh_auth_failed"),
                 "timeouts": _count_events(events, sid, "ssh_auth_timeout"),
                 "sample_usernames": completed.get("sample_usernames", []),
+            })
+        elif sid == "dns_tunnel":
+            dns_dispatch = _last_evidence(events, sid, "webshell_command_dispatched")
+            scenario_summary.update({
+                "queries_planned": started.get("planned_chunks", 0),
+                "dns_tunnel_query_sent_count": _count_events(events, sid, "dns_tunnel_query_sent"),
+                "dns_tunnel_chunk_created_count": _count_events(events, sid, "dns_tunnel_chunk_created"),
+                "queries_sent": completed.get("queries_sent")
+                or completed.get("dns_tunnel_query_sent_count")
+                or _count_events(events, sid, "dns_tunnel_query_sent"),
+                "dns_query_method": completed.get("dns_query_method")
+                or started.get("dns_query_method")
+                or dns_dispatch.get("dns_query_method"),
+                "remote_command_sample": completed.get("remote_command_sample")
+                or dns_dispatch.get("remote_command"),
+            })
+        elif sid == "dga":
+            scenario_summary.update({
+                "domains_planned": started.get("domains_planned", 0),
+                "dga_domain_generated_count": _count_events(events, sid, "dga_domain_generated"),
+                "dga_nxdomain_observed_count": _count_events(events, sid, "dga_nxdomain_observed"),
+                "dga_resolved_observed_count": _count_events(events, sid, "dga_resolved_observed"),
+                "dns_query_method": completed.get("dns_query_method"),
             })
         elif sid == "rare_protocol_activity":
             scenario_summary.update({

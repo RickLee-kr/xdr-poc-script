@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING, Any
 from dsp.engine.scenario_engine import RunContext
 from dsp.execution.providers.runtime.command import CommandRequest
 from dsp.execution.remote.command import events as cmd_events
+from dsp.execution.remote.command.models import DNS_QUERY_METHOD_PYTHON_SOCKET_UDP53
 from dsp.execution.remote.command.shell import (
     curl_request_command,
-    dns_query_command,
+    dns_query_command_evidence,
     host_behavior_shell_command,
     kerberos_attempt_command,
     ldap_action_command,
@@ -347,6 +348,11 @@ def _execute_dns_tunnel(
     timeout = float(plan.get("timeout", 0.05))
     mock = plan.get("mode") == "mock"
     first_target = queries[0]["target"] if queries else ""
+    dns_method = dns_query_command_evidence(
+        str(queries[0]["target"]) if queries else "127.0.0.1",
+        str(queries[0]["fqdn"]) if queries else "example.test",
+        timeout=max(timeout, 1.0),
+    )["dns_query_method"]
     cmd_events.append_event(
         store,
         run_id=run_id,
@@ -354,18 +360,35 @@ def _execute_dns_tunnel(
         event="dns_tunnel_started",
         status="info",
         target=first_target,
-        evidence={"planned_chunks": len(queries), "mode": plan.get("mode", "live")},
+        evidence={
+            "planned_chunks": len(queries),
+            "mode": plan.get("mode", "live"),
+            "dns_query_method": dns_method,
+        },
     )
     dispatched = 0
+    command_sample: str | None = None
     for item in queries:
         target = str(item["target"])
         fqdn = str(item["fqdn"])
+        query_evidence = dns_query_command_evidence(
+            target,
+            fqdn,
+            timeout=max(timeout, 1.0),
+        )
         command = (
             mock_noop_command()
             if mock
-            else dns_query_command(target, fqdn, timeout=max(timeout, 1.0))
+            else query_evidence["remote_command"]
         )
+        if command_sample is None and not mock:
+            command_sample = query_evidence["remote_command"]
         status = _dispatch(provider, command, timeout_seconds=10)
+        query_payload = {
+            "seq": item.get("seq"),
+            "fqdn": fqdn,
+            **query_evidence,
+        }
         cmd_events.append_event(
             store,
             run_id=run_id,
@@ -374,7 +397,7 @@ def _execute_dns_tunnel(
             status="info",
             target=target,
             artifact=fqdn,
-            evidence={"seq": item.get("seq"), "fqdn": fqdn},
+            evidence=query_payload,
         )
         cmd_events.append_command_dispatched(
             store,
@@ -386,7 +409,7 @@ def _execute_dns_tunnel(
             dispatch_status=status,
             artifact=fqdn,
             traffic_event="dns_query_sent",
-            evidence={"fqdn": fqdn, "seq": item.get("seq")},
+            evidence=query_payload,
         )
         cmd_events.append_event(
             store,
@@ -396,9 +419,17 @@ def _execute_dns_tunnel(
             status="sent",
             target=target,
             artifact=fqdn,
-            evidence={"fqdn": fqdn, "outcome": "command_dispatched"},
+            evidence={**query_payload, "outcome": "command_dispatched"},
         )
         dispatched += 1
+    completed_evidence: dict[str, Any] = {
+        "queries_sent": dispatched,
+        "dns_tunnel_query_sent_count": dispatched,
+        "dns_tunnel_chunk_created_count": dispatched,
+        "dns_query_method": dns_method,
+    }
+    if command_sample:
+        completed_evidence["remote_command_sample"] = command_sample
     cmd_events.append_event(
         store,
         run_id=run_id,
@@ -406,7 +437,7 @@ def _execute_dns_tunnel(
         event="dns_tunnel_completed",
         status="info",
         target=first_target,
-        evidence={"queries_sent": dispatched},
+        evidence=completed_evidence,
     )
     return dispatched
 
@@ -435,15 +466,29 @@ def _execute_dga(
         evidence={"domains_planned": len(domains), "mode": plan.get("mode", "live")},
     )
     dispatched = 0
+    nx_observed = 0
+    resolved_observed = 0
     for item in domains:
         fqdn = str(item["fqdn"])
         target = str(item.get("resolver") or resolver)
+        query_evidence = dns_query_command_evidence(
+            target,
+            fqdn,
+            timeout=max(timeout, 1.0),
+        )
         command = (
             mock_noop_command()
             if mock
-            else dns_query_command(target, fqdn, timeout=max(timeout, 1.0))
+            else query_evidence["remote_command"]
         )
         status = _dispatch(provider, command, timeout_seconds=10)
+        phase_name = str(item.get("phase_name") or "")
+        domain_evidence = {
+            "phase": item.get("phase"),
+            "seq": item.get("seq"),
+            "phase_name": phase_name,
+            **query_evidence,
+        }
         cmd_events.append_event(
             store,
             run_id=run_id,
@@ -452,12 +497,7 @@ def _execute_dga(
             status="info",
             target=target,
             artifact=fqdn,
-            evidence={"phase": item.get("phase"), "seq": item.get("seq")},
-        )
-        traffic_event = (
-            "dga_nxdomain_observed"
-            if item.get("phase_name") == "nxdomain"
-            else "dga_resolved_observed"
+            evidence=domain_evidence,
         )
         cmd_events.append_command_dispatched(
             store,
@@ -468,9 +508,33 @@ def _execute_dga(
             protocol="dns",
             dispatch_status=status,
             artifact=fqdn,
-            traffic_event=traffic_event,
-            evidence={"fqdn": fqdn, "phase": item.get("phase_name")},
+            traffic_event=None,
+            evidence=domain_evidence,
         )
+        if phase_name == "nxdomain":
+            cmd_events.append_event(
+                store,
+                run_id=run_id,
+                scenario_id=scenario_id,
+                event="dga_nxdomain_observed",
+                status="nxdomain",
+                target=target,
+                artifact=fqdn,
+                evidence={**domain_evidence, "outcome": "command_dispatched"},
+            )
+            nx_observed += 1
+        else:
+            cmd_events.append_event(
+                store,
+                run_id=run_id,
+                scenario_id=scenario_id,
+                event="dga_resolved_observed",
+                status="response",
+                target=target,
+                artifact=fqdn,
+                evidence={**domain_evidence, "outcome": "command_dispatched"},
+            )
+            resolved_observed += 1
         dispatched += 1
     cmd_events.append_event(
         store,
@@ -480,7 +544,12 @@ def _execute_dga(
         status="info",
         target=resolver,
         artifact="dga_session",
-        evidence={"domains_generated": dispatched},
+        evidence={
+            "domains_generated": dispatched,
+            "nxdomain_observed": nx_observed,
+            "resolved_observed": resolved_observed,
+            "dns_query_method": DNS_QUERY_METHOD_PYTHON_SOCKET_UDP53,
+        },
     )
     return dispatched
 
@@ -767,6 +836,7 @@ def _execute_rare_protocol_activity(
         evidence={"probes_planned": len(probes), "mode": plan.get("mode", "live")},
     )
     dispatched = 0
+    attempt_count = 0
     for index, probe in enumerate(probes, start=1):
         host = str(probe["host"])
         port = int(probe["port"])
@@ -777,6 +847,24 @@ def _execute_rare_protocol_activity(
             else rare_protocol_probe_command(host, port, protocol)
         )
         status = _dispatch(provider, command, timeout_seconds=int(timeout) + 5)
+        probe_evidence = {
+            "seq": index,
+            "port": port,
+            "transport": probe.get("transport"),
+            "protocol": protocol,
+            "remote_command": command if not mock else "true",
+        }
+        cmd_events.append_event(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            event="rare_protocol_probe_attempt",
+            status="sent",
+            target=host,
+            artifact=str(probe.get("artifact") or f"{host}:{port}"),
+            evidence=probe_evidence,
+        )
+        attempt_count += 1
         cmd_events.append_command_dispatched(
             store,
             run_id=run_id,
@@ -786,8 +874,18 @@ def _execute_rare_protocol_activity(
             protocol=protocol,
             dispatch_status=status,
             artifact=str(probe.get("artifact") or f"{host}:{port}"),
-            traffic_event="rare_protocol_probe_sent",
-            evidence={"seq": index, "port": port, "transport": probe.get("transport")},
+            traffic_event=None,
+            evidence=probe_evidence,
+        )
+        cmd_events.append_event(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            event="rare_protocol_probe_failure",
+            status="connection_refused",
+            target=host,
+            artifact=str(probe.get("artifact") or f"{host}:{port}"),
+            evidence={**probe_evidence, "outcome": "command_dispatched"},
         )
         dispatched += 1
     cmd_events.append_event(
@@ -796,6 +894,10 @@ def _execute_rare_protocol_activity(
         scenario_id=scenario_id,
         event="rare_protocol_activity_completed",
         status="info",
-        evidence={"probes_dispatched": dispatched},
+        evidence={
+            "probes_dispatched": dispatched,
+            "attempt_count": attempt_count,
+            "failure_count": attempt_count,
+        },
     )
     return dispatched

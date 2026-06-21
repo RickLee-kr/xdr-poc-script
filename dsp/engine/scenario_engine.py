@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from dsp.event_store import EventStore
@@ -37,6 +38,8 @@ class RunContext:
     cancelled: bool = False
     deadline: datetime | None = None
     activity_emitter: Any | None = None
+    progress_emitter: Callable[[str, dict[str, Any]], None] | None = None
+    scenario_ids: list[str] = field(default_factory=list)
     artifact_dir: Path | None = None
 
 
@@ -44,6 +47,12 @@ def emit_activity(ctx: RunContext, scenario_id: str, **fields: Any) -> None:
     """Forward live activity to the operational progress emitter when present."""
     if ctx.activity_emitter is not None:
         ctx.activity_emitter(scenario_id, **fields)
+
+
+def emit_progress(ctx: RunContext, phase: str, data: dict[str, Any]) -> None:
+    """Forward run-level progress (discovery, targets) to the operational console."""
+    if ctx.progress_emitter is not None:
+        ctx.progress_emitter(phase, data)
 
 
 @dataclass

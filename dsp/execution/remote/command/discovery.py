@@ -8,7 +8,11 @@ from dsp.discovery.legacy_bash import (
     DISCOVERY_MAX_HOSTS,
     FAST_SAFE_DISCOVERY_PORTS,
 )
-from dsp.execution.remote.command.models import DISCOVERY_ORIGIN_WEBSHELL
+from dsp.execution.remote.command.models import (
+    COMMAND_DELIVERY_INLINE_BASE64_EXEC,
+    DISCOVERY_METHOD_COMMAND_INLINE_BASE64_EXEC,
+    DISCOVERY_ORIGIN_WEBSHELL,
+)
 from dsp.execution.remote.command.shell import (
     PROBE_OPEN_MARKER,
     discovery_probe_output_path,
@@ -299,7 +303,9 @@ def run_discovery_from_tcp_probes(
         candidate_hosts=candidates,
     )
     discovery_meta = dict(targets.get("discovery_meta") or {})
-    discovery_meta["discovery_method"] = "tcp_probe_batch_sh"
+    discovery_meta["discovery_method"] = DISCOVERY_METHOD_COMMAND_INLINE_BASE64_EXEC
+    discovery_meta["command_delivery"] = COMMAND_DELIVERY_INLINE_BASE64_EXEC
+    discovery_meta["runner_upload"] = False
     discovery_meta["probe_batches"] = len(batches)
     discovery_meta["probes_executed"] = len(probe_specs)
     discovery_meta["open_endpoints"] = len(open_endpoints)
@@ -320,11 +326,61 @@ def _emit_webshell_discovery_activity(ctx: Any, scenario_id: str, targets: dict[
         scenario_id,
         kind="discovery",
         discovery_method=meta.get("discovery_method"),
+        command_delivery=meta.get("command_delivery"),
+        runner_upload=meta.get("runner_upload"),
         alive_hosts=len(meta.get("alive_hosts") or []),
         open_endpoints=meta.get("open_endpoints", 0),
         output_preview=meta.get("first_batch_output_preview"),
         probe_batches=meta.get("probe_batches"),
     )
+    emit_webshell_discovery_progress(ctx, targets=targets)
+
+
+def emit_webshell_discovery_progress(ctx: Any, *, targets: dict[str, Any]) -> None:
+    """Refresh console discovery summary and attack target groups after remote probe."""
+    from dsp.engine.scenario_engine import emit_progress
+    from dsp.execution.remote.command.planner import targets_dict_to_target_set
+    from dsp.runner.target_selection import resolve_webshell_discovered_targets_by_protocol
+    from dsp.runtime.scenario_plan import WEBSHELL_EXECUTION_KEY
+
+    meta = dict(targets.get("discovery_meta") or {})
+    alive = list(meta.get("alive_hosts") or targets.get("hosts") or [])
+    emit_progress(
+        ctx,
+        "discovery_completed",
+        {
+            "hosts_found": len(alive),
+            "probed_hosts": meta.get("probed_hosts", 0),
+            "alive_hosts": alive,
+            "open_endpoints": meta.get("open_endpoints", 0),
+            "service_hosts": meta.get("service_hosts") or {},
+            "discovery_method": meta.get("discovery_method"),
+            "command_delivery": meta.get("command_delivery"),
+            "runner_upload": meta.get("runner_upload"),
+        },
+    )
+    scenario_ids = list(getattr(ctx, "scenario_ids", None) or [])
+    target_set = targets_dict_to_target_set(targets)
+    groups = (
+        resolve_webshell_discovered_targets_by_protocol(
+            scenario_ids,
+            target_set,
+            ctx.config.scenario_params,
+        )
+        if scenario_ids
+        else {}
+    )
+    payload: dict[str, Any] = {"groups": groups}
+    ws_ctx = ctx.config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
+    if isinstance(ws_ctx, dict):
+        payload["execution_host"] = {
+            "host": ws_ctx.get("execution_host"),
+            "port": ws_ctx.get("execution_port"),
+            "path": ws_ctx.get("execution_path", "/"),
+        }
+        payload["webshell_url"] = ws_ctx.get("webshell_url")
+        payload["attack_target_net"] = str(targets.get("target_net") or ctx.target_net)
+    emit_progress(ctx, "targets_selected", payload)
 
 
 def get_cached_remote_discovery(

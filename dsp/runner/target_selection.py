@@ -21,6 +21,7 @@ _PROTOCOL_GROUPS: dict[str, str] = {
     "smb_login_failure": "SMB",
     "ssh_failure": "SSH",
     "kerberos_failure": "Kerberos",
+    "rare_protocol_activity": "Rare",
 }
 
 _SELECTOR_SPECS: dict[str, tuple[str, bool]] = {
@@ -35,7 +36,7 @@ _SELECTOR_SPECS: dict[str, tuple[str, bool]] = {
     "kerberos_failure": ("select_kerberos_hosts", True),
 }
 
-_PROTOCOL_ORDER = ("Recon", "DNS", "HTTP", "LDAP", "SMB", "SSH", "Kerberos")
+_PROTOCOL_ORDER = ("Recon", "DNS", "HTTP", "LDAP", "SMB", "SSH", "Kerberos", "Rare")
 
 
 def _load_executor_module(scenario_id: str):
@@ -54,13 +55,15 @@ def resolve_scenario_targets(
     params: dict[str, Any],
 ) -> list[str]:
     """Return host IPs selected for a scenario using its executor selector."""
+    max_hosts = int(params.get("max_hosts", 2))
+    if scenario_id == "rare_protocol_activity":
+        return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
     spec = _SELECTOR_SPECS.get(scenario_id)
     if spec is None:
         return []
     func_name, is_list = spec
     module = _load_executor_module(scenario_id)
     selector = getattr(module, func_name)
-    max_hosts = int(params.get("max_hosts", 2))
     if is_list:
         return [str(h) for h in selector(targets, params, max_hosts=max_hosts)]
     return [str(selector(targets, params))]
@@ -92,6 +95,71 @@ def resolve_selected_targets_by_protocol(
         if protocol not in ordered:
             ordered[protocol] = sorted(grouped[protocol])
     return ordered
+
+
+def resolve_webshell_discovered_targets_by_protocol(
+    scenario_ids: list[str],
+    targets: TargetSet,
+    scenario_params: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Group discovery bucket targets for webshell console — no DSP-side reprobe."""
+    grouped: dict[str, set[str]] = {}
+    for scenario_id in scenario_ids:
+        protocol = _PROTOCOL_GROUPS.get(scenario_id)
+        if protocol is None:
+            continue
+        params = scenario_params.get(scenario_id, {})
+        hosts = _discovered_targets_for_scenario(scenario_id, targets, params)
+        if not hosts:
+            continue
+        grouped.setdefault(protocol, set()).update(hosts)
+
+    ordered: dict[str, list[str]] = {}
+    for protocol in _PROTOCOL_ORDER:
+        if protocol in grouped:
+            ordered[protocol] = sorted(grouped[protocol])
+    for protocol in sorted(grouped):
+        if protocol not in ordered:
+            ordered[protocol] = sorted(grouped[protocol])
+    return ordered
+
+
+def _discovered_targets_for_scenario(
+    scenario_id: str,
+    targets: TargetSet,
+    params: dict[str, Any],
+) -> list[str]:
+    max_hosts = int(params.get("max_hosts", 2))
+    if scenario_id in ("http_followup", "sql_injection"):
+        http_eps = list(targets.service_endpoints.get("http_targets") or [])
+        https_eps = list(targets.service_endpoints.get("https_targets") or [])
+        labels = [f"{host}:{port}" for host, port in (http_eps + https_eps)[:max_hosts]]
+        if labels:
+            return labels
+        return [str(host) for host in targets.service_hosts.get("http_targets", [])[:max_hosts]]
+    if scenario_id == "dga":
+        dns_hosts = list(targets.service_hosts.get("dns_hosts") or [])
+        if dns_hosts:
+            return [str(dns_hosts[0])]
+        if params.get("resolver"):
+            return [str(params["resolver"])]
+        return []
+    if scenario_id == "dns_tunnel":
+        return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
+    capability_map = {
+        "ssh_failure": "ssh_hosts",
+        "ldap_enumeration": "ldap_hosts",
+        "smb_login_failure": "smb_hosts",
+        "kerberos_failure": "kerberos_hosts",
+    }
+    capability = capability_map.get(scenario_id)
+    if capability:
+        return [str(h) for h in list(targets.service_hosts.get(capability) or [])[:max_hosts]]
+    if scenario_id == "port_sweep":
+        return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
+    if scenario_id == "rare_protocol_activity":
+        return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
+    return resolve_scenario_targets(scenario_id, targets, params)
 
 
 def scenario_start_metadata(
