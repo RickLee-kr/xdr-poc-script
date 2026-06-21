@@ -764,6 +764,14 @@ def _execute_host_behavior_check(
     ctx: RunContext,
     request: ScenarioExecutionRequest,
 ) -> int:
+    from dsp.protocols.host.behavior_observability import (
+        append_command_executed_event,
+        append_host_behavior_summary_event,
+        command_key_for_plan_name,
+        command_label_for_plan_name,
+        host_behavior_report_payload,
+    )
+
     store = ctx.event_store
     run_id = str(request.run_id)
     scenario_id = request.scenario_id
@@ -786,7 +794,8 @@ def _execute_host_behavior_check(
     )
     dispatched = 0
     for index, item in enumerate(commands, start=1):
-        shell = str(item.get("shell") or item.get("name") or "true")
+        plan_name = str(item.get("name") or f"cmd_{index}")
+        shell = str(item.get("shell") or plan_name or "true")
         command = mock_noop_command() if mock else host_behavior_shell_command(shell)
         status = _dispatch(provider, command, timeout_seconds=int(timeout))
         cmd_events.append_command_dispatched(
@@ -797,11 +806,28 @@ def _execute_host_behavior_check(
             target=target,
             protocol="host",
             dispatch_status=status,
-            artifact=str(item.get("name") or f"cmd_{index}"),
+            artifact=plan_name,
             traffic_event="host_behavior_command_dispatched",
-            evidence={"seq": index, "command_name": item.get("name")},
+            evidence={"seq": index, "command_name": plan_name, "command": plan_name},
+        )
+        append_command_executed_event(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            command=command_label_for_plan_name(plan_name),
+            command_key=command_key_for_plan_name(plan_name),
+            target=target,
+            source="remote",
+            dispatch_status=status,
         )
         dispatched += 1
+    checklist = append_host_behavior_summary_event(
+        store,
+        run_id=run_id,
+        scenario_id=scenario_id,
+        target=target,
+        source="remote",
+    )
     cmd_events.append_event(
         store,
         run_id=run_id,
@@ -810,7 +836,10 @@ def _execute_host_behavior_check(
         status="info",
         target=target,
         artifact="host_behavior_session",
-        evidence={"commands_dispatched": dispatched},
+        evidence={
+            "commands_dispatched": dispatched,
+            "host_behavior": host_behavior_report_payload(checklist),
+        },
     )
     return dispatched
 

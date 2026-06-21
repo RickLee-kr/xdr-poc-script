@@ -13,6 +13,11 @@ from dsp.runner.traffic_summary import (
 )
 from dsp.runtime.operational_profiles import scenario_display_name
 
+try:
+    from dsp.protocols.host.behavior_observability import format_host_behavior_summary_lines
+except ImportError:  # pragma: no cover
+    format_host_behavior_summary_lines = None  # type: ignore[assignment]
+
 _PROVIDER_LABELS = {
     "local": "local",
     "webshell": "webshell",
@@ -473,7 +478,17 @@ class OperationalConsole:
                     )
             for name, path in artifacts.items():
                 self._write(f"  {name}={path}")
+            if sid == "host_behavior_check":
+                self._emit_host_behavior_summary(extras)
             self._write("")
+
+    def _emit_host_behavior_summary(self, extras: dict[str, Any]) -> None:
+        summary = extras.get("host_behavior_summary")
+        if not summary or format_host_behavior_summary_lines is None:
+            return
+        for line in format_host_behavior_summary_lines(summary):
+            self._write(line)
+        self._write("")
 
     def _emit_heartbeat(self, data: dict[str, Any]) -> None:
         scenario_id = data.get("scenario_id", "")

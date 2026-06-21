@@ -11,6 +11,14 @@ from typing import Any, Callable
 from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.event_store import Event
 from dsp.protocols.host.behavior import build_host_behavior_plan
+from dsp.protocols.host.behavior_observability import (
+    append_command_executed_event,
+    append_eicar_verification_event,
+    append_host_behavior_summary_event,
+    command_key_for_plan_name,
+    command_label_for_plan_name,
+    host_behavior_report_payload,
+)
 from dsp.protocols.host.behavior_events import (
     ARCHIVE_ACCESSED,
     ARCHIVE_CREATED,
@@ -176,19 +184,72 @@ def _run_eicar_lifecycle(
     mode: str,
     timeout: float,
 ) -> None:
-    _run_file_lifecycle(
-        ctx,
+    if mode == "live":
+        _write_plain_file(path, content, timeout=timeout)
+    append_eicar_verification_event(
+        ctx.event_store,
+        run_id=ctx.run_id,
+        phase="create",
         scenario_id=scenario_id,
         target=target,
         source=source,
         path=path,
-        mode=mode,
-        timeout=timeout,
-        created_event="eicar_file_created",
-        accessed_event="eicar_file_accessed",
-        deleted_event="eicar_file_deleted",
-        create_fn=lambda: _write_plain_file(path, content, timeout=timeout),
     )
+    ctx.event_store.append(
+        build_lifecycle_event(
+            run_id=ctx.run_id,
+            scenario_id=scenario_id,
+            target=target,
+            source=source,
+            event="eicar_file_created",
+            artifact=path,
+            evidence={"path": path},
+        )
+    )
+    append_eicar_verification_event(
+        ctx.event_store,
+        run_id=ctx.run_id,
+        phase="read",
+        scenario_id=scenario_id,
+        target=target,
+        source=source,
+        path=path,
+    )
+    ctx.event_store.append(
+        build_lifecycle_event(
+            run_id=ctx.run_id,
+            scenario_id=scenario_id,
+            target=target,
+            source=source,
+            event="eicar_file_accessed",
+            artifact=path,
+            evidence={"path": path},
+        )
+    )
+    if mode == "live":
+        _read_file(path, timeout=timeout)
+    append_eicar_verification_event(
+        ctx.event_store,
+        run_id=ctx.run_id,
+        phase="delete",
+        scenario_id=scenario_id,
+        target=target,
+        source=source,
+        path=path,
+    )
+    ctx.event_store.append(
+        build_lifecycle_event(
+            run_id=ctx.run_id,
+            scenario_id=scenario_id,
+            target=target,
+            source=source,
+            event="eicar_file_deleted",
+            artifact=path,
+            evidence={"path": path},
+        )
+    )
+    if mode == "live":
+        _delete_file(path, timeout=timeout)
 
 
 def run(
@@ -270,6 +331,15 @@ def run(
                 command_name=name,
                 evidence={"seq": index, "shell": shell},
             )
+        )
+        append_command_executed_event(
+            ctx.event_store,
+            run_id=ctx.run_id,
+            scenario_id=scenario_id,
+            command=command_label_for_plan_name(name),
+            command_key=command_key_for_plan_name(name),
+            target=target,
+            source=source,
         )
         if mode == "live":
             _run_shell_command(shell, timeout=timeout)
@@ -391,6 +461,13 @@ def run(
         )
 
     elapsed = round(time.monotonic() - t0, 3)
+    checklist = append_host_behavior_summary_event(
+        ctx.event_store,
+        run_id=ctx.run_id,
+        scenario_id=scenario_id,
+        target=target,
+        source=source,
+    )
     ctx.event_store.append(
         build_host_behavior_check_completed_event(
             run_id=ctx.run_id,
@@ -403,6 +480,7 @@ def run(
                 "credential_checks_dispatched": len(credential_checks),
                 "mode": mode,
                 "duration_sec": elapsed,
+                "host_behavior": host_behavior_report_payload(checklist),
             },
         )
     )

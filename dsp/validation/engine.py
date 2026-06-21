@@ -96,6 +96,19 @@ class ValidationEngine:
 
         metrics = self.store.aggregate(run_id, scenario_id, metric_defs)
         decision, reason = self._apply_thresholds(metrics, vp)
+        missing_items: list[str] = []
+        if (
+            scenario_id == "host_behavior_check"
+            and decision == ValidationDecision.FAILED
+            and reason == "thresholds_not_met"
+        ):
+            from dsp.protocols.host.behavior_observability import (
+                build_host_behavior_checklist,
+                missing_items_for_validation,
+            )
+
+            checklist = build_host_behavior_checklist(self.store, run_id, scenario_id)
+            missing_items = missing_items_for_validation(checklist, metrics=metrics)
 
         return ValidationResult(
             run_id=run_id,
@@ -104,6 +117,7 @@ class ValidationEngine:
             reason=reason,
             metrics=metrics,
             fail_fast_codes=[],
+            missing_items=missing_items,
             validated_at=datetime.now(timezone.utc),
             validation_profile_version=profile_version,
         )

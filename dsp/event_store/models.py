@@ -143,6 +143,7 @@ class ValidationResult:
     reason: str
     metrics: dict[str, int | float | str | bool]
     fail_fast_codes: list[str] = field(default_factory=list)
+    missing_items: list[str] = field(default_factory=list)
     validated_at: datetime | None = None
     validation_profile_version: str = "1.0.0"
 
@@ -154,6 +155,7 @@ class ValidationResult:
             "reason": self.reason,
             "metrics": self.metrics,
             "fail_fast_codes": self.fail_fast_codes,
+            "missing_items": self.missing_items,
             "validated_at": (
                 self.validated_at.isoformat().replace("+00:00", "Z")
                 if self.validated_at
@@ -172,6 +174,7 @@ class ValidationResult:
             reason=data["reason"],
             metrics=dict(data.get("metrics", {})),
             fail_fast_codes=list(data.get("fail_fast_codes", [])),
+            missing_items=list(data.get("missing_items", [])),
             validated_at=(
                 datetime.fromisoformat(validated.replace("Z", "+00:00")) if validated else None
             ),

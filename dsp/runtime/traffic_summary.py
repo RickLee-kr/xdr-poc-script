@@ -78,6 +78,8 @@ def build_traffic_summary(
     for sid in scenario_ids:
         started = _last_evidence(events, sid, f"{sid}_started")
         if not started:
+            started = _last_evidence(events, sid, "host_behavior_check_started")
+        if not started:
             started = _last_evidence(events, sid, "port_sweep_started")
         if not started:
             started = _last_evidence(events, sid, "http_followup_started")
@@ -95,6 +97,8 @@ def build_traffic_summary(
             started = _last_evidence(events, sid, "sql_injection_started")
 
         completed = _last_evidence(events, sid, f"{sid}_completed")
+        if not completed:
+            completed = _last_evidence(events, sid, "host_behavior_check_completed")
         if not completed:
             completed = _last_evidence(events, sid, "port_sweep_completed")
         if not completed:
@@ -130,7 +134,15 @@ def build_traffic_summary(
             "skip_reason": skipped.get("reason"),
         }
 
-        if sid == "port_sweep":
+        if sid == "host_behavior_check":
+            started = started or _last_evidence(events, sid, "host_behavior_check_started")
+            completed = completed or _last_evidence(events, sid, "host_behavior_check_completed")
+            scenario_summary.update({
+                "commands_planned": started.get("commands_planned", 0),
+                "commands_dispatched": completed.get("commands_dispatched", 0),
+                "host_behavior": completed.get("host_behavior") or {},
+            })
+        elif sid == "port_sweep":
             scenario_summary.update({
                 "probes_planned": started.get("planned_probes", 0),
                 "probes_sent": completed.get("probe_count") or _count_events(events, sid, "port_probe_sent"),
@@ -302,6 +314,19 @@ def build_traffic_summary(
             })
 
         summary["scenarios"][sid] = scenario_summary
+
+    from dsp.protocols.host.behavior_observability import (
+        HOST_BEHAVIOR_SCENARIO_ID,
+        build_host_behavior_checklist,
+        host_behavior_report_payload,
+    )
+
+    if HOST_BEHAVIOR_SCENARIO_ID in scenario_ids:
+        checklist = build_host_behavior_checklist(store, run_id, HOST_BEHAVIOR_SCENARIO_ID)
+        payload = host_behavior_report_payload(checklist)
+        summary["host_behavior"] = payload
+        hb = summary["scenarios"].setdefault(HOST_BEHAVIOR_SCENARIO_ID, {})
+        hb["host_behavior"] = payload
 
     for sid in ("http_followup", "sql_injection"):
         scenario_probe = summary["scenarios"].get(sid, {})

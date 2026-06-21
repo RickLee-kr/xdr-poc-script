@@ -187,6 +187,11 @@ class ReportingEngine:
             lines.extend(["## Kerberos Failure Details", ""])
             lines.extend(kerberos_sections)
 
+        host_behavior_sections = self._build_host_behavior_sections(report, summaries or report.summaries)
+        if host_behavior_sections:
+            lines.extend(["## Host Behavior Summary", ""])
+            lines.extend(host_behavior_sections)
+
         sqli_sections = self._build_sql_injection_sections(report)
         if sqli_sections:
             lines.extend(["## SQL Injection Details", ""])
@@ -520,6 +525,56 @@ class ReportingEngine:
         for ev in self.store.list_events(run_id, scenario_id):
             if ev.event == "kerberos_scenario_completed":
                 return dict(ev.evidence)
+        return {}
+
+    def _build_host_behavior_sections(
+        self,
+        report: Report,
+        summaries: dict[str, dict[str, Any]] | None,
+    ) -> list[str]:
+        from dsp.protocols.host.behavior_observability import (
+            HOST_BEHAVIOR_SCENARIO_ID,
+            format_host_behavior_summary_lines,
+        )
+
+        lines: list[str] = []
+        for result in report.traffic_validation:
+            if result.scenario_id != HOST_BEHAVIOR_SCENARIO_ID:
+                continue
+            payload: dict[str, bool] | None = None
+            if summaries and HOST_BEHAVIOR_SCENARIO_ID in summaries:
+                payload = summaries[HOST_BEHAVIOR_SCENARIO_ID].get("host_behavior")
+            if payload is None:
+                payload = self._host_behavior_summary_from_store(
+                    result.run_id, HOST_BEHAVIOR_SCENARIO_ID
+                )
+            if not payload:
+                continue
+            lines.extend(format_host_behavior_summary_lines(payload))
+            if result.missing_items:
+                lines.append("")
+                lines.append("Missing:")
+                for item in result.missing_items:
+                    lines.append(f"- {item}")
+            lines.append("")
+            lines.append("```json")
+            lines.append(json.dumps({"host_behavior": payload}, indent=2))
+            lines.append("```")
+            lines.append("")
+        return lines
+
+    def _host_behavior_summary_from_store(
+        self, run_id: str, scenario_id: str
+    ) -> dict[str, bool]:
+        for ev in self.store.list_events(run_id, scenario_id):
+            if ev.event == "host_behavior_check_completed":
+                summary = dict(ev.evidence or {}).get("host_behavior")
+                if isinstance(summary, dict):
+                    return {str(k): bool(v) for k, v in summary.items()}
+            if ev.event == "host_behavior_summary":
+                summary = dict(ev.evidence or {}).get("host_behavior")
+                if isinstance(summary, dict):
+                    return {str(k): bool(v) for k, v in summary.items()}
         return {}
 
     def _build_sql_injection_sections(self, report: Report) -> list[str]:

@@ -146,9 +146,13 @@ def test_host_behavior_check_dry_run_generates_events_without_shell(tmp_runs_dir
     event_names = {e["event"] for e in hb_events}
     assert "host_behavior_check_started" in event_names
     assert "host_behavior_command_dispatched" in event_names
+    assert "command_executed" in event_names
     assert "eicar_file_created" in event_names
+    assert "eicar_created" in event_names
     assert "eicar_file_accessed" in event_names
+    assert "eicar_read" in event_names
     assert "eicar_file_deleted" in event_names
+    assert "eicar_deleted" in event_names
     assert "eicar_variant_created" in event_names
     assert "credential_artifact_enumeration" in event_names
     assert "ssh_key_enumeration" in event_names
@@ -158,6 +162,8 @@ def test_host_behavior_check_dry_run_generates_events_without_shell(tmp_runs_dir
     assert "archive_created" in event_names
     assert "host_behavior_check_completed" in event_names
     assert sum(1 for e in hb_events if e["event"] == "host_behavior_command_dispatched") == 8
+    assert sum(1 for e in hb_events if e["event"] == "command_executed") == 8
+    assert "host_behavior_summary" in event_names
     assert len(hb_events) >= 50
 
     validation = json.loads((run_dir / "validation.json").read_text())
@@ -165,6 +171,14 @@ def test_host_behavior_check_dry_run_generates_events_without_shell(tmp_runs_dir
         r for r in validation["results"] if r["scenario_id"] == HOST_BEHAVIOR_CHECK_SCENARIO_ID
     )
     assert hb_result["decision"] == "success"
+    assert hb_result.get("missing_items", []) == []
+
+    traffic = json.loads((run_dir / "traffic_summary.json").read_text())
+    assert traffic["host_behavior"]["whoami"] is True
+    assert traffic["host_behavior"]["eicar_create"] is True
+
+    report = json.loads((run_dir / "report.json").read_text())
+    assert report["host_behavior"]["eicar_create"] is True
 
 
 def test_host_behavior_check_live_dispatches_shell_commands(tmp_runs_dir) -> None:
@@ -196,3 +210,66 @@ def test_host_behavior_check_plugins_list() -> None:
     record = registry.get(HOST_BEHAVIOR_CHECK_SCENARIO_ID)
     assert record is not None
     assert record.status == PluginStatus.ACTIVE
+
+
+def test_webshell_host_behavior_observability_shows_missing_eicar(
+    tmp_path,
+) -> None:
+    from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
+
+    server = WebshellTestServer(storage_dir=tmp_path / "server")
+    server.start()
+    try:
+        params: dict[str, dict] = {}
+        apply_webshell_initial_compromise_plan(
+            params,
+            [HOST_BEHAVIOR_CHECK_SCENARIO_ID],
+            server.webshell_url,
+        )
+        params[HOST_BEHAVIOR_CHECK_SCENARIO_ID]["webshell_family"] = "jsp"
+        params[HOST_BEHAVIOR_CHECK_SCENARIO_ID]["timeout"] = 5.0
+
+        manager = RunManager(runs_dir=tmp_path / "runs")
+        _, run_dir, exit_code = manager.run(
+            scenario_ids=[HOST_BEHAVIOR_CHECK_SCENARIO_ID],
+            target_net="127.0.0.0/30",
+            dry_run=False,
+            scenario_params=params,
+            execution_provider="webshell",
+            webshell_family="jsp",
+            webshell_url=server.webshell_url,
+            remote_work_dir=str(tmp_path / "remote-work"),
+        )
+    finally:
+        server.stop()
+
+    assert exit_code == 0
+    events = [
+        json.loads(line)
+        for line in (run_dir / "events.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    hb = [e for e in events if e.get("scenario_id") == HOST_BEHAVIOR_CHECK_SCENARIO_ID]
+    names = {e["event"] for e in hb}
+    assert "command_executed" in names
+    assert "host_behavior_summary" in names
+    assert "eicar_created" not in names
+
+    executed = [e for e in hb if e["event"] == "command_executed"]
+    commands = {e["evidence"]["command"] for e in executed}
+    assert "whoami" in commands
+    assert "ip addr" in commands
+
+    validation = json.loads((run_dir / "validation.json").read_text())
+    hb_result = next(
+        r for r in validation["results"] if r["scenario_id"] == HOST_BEHAVIOR_CHECK_SCENARIO_ID
+    )
+    assert hb_result["decision"] == "failed"
+    assert "eicar_create" in hb_result["missing_items"]
+    assert "eicar_read" in hb_result["missing_items"]
+    assert "eicar_delete" in hb_result["missing_items"]
+
+    traffic = json.loads((run_dir / "traffic_summary.json").read_text())
+    assert traffic["host_behavior"]["whoami"] is True
+    assert traffic["host_behavior"]["eicar_create"] is False
+

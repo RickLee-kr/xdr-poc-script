@@ -145,6 +145,10 @@ def _latest_completed_evidence(
     run_id: str,
     scenario_id: str,
 ) -> dict[str, Any]:
+    preferred = f"{scenario_id}_completed"
+    for event in reversed(store.list_events(run_id)):
+        if event.scenario_id == scenario_id and event.event == preferred:
+            return dict(event.evidence or {})
     for event in reversed(store.list_events(run_id)):
         if event.scenario_id == scenario_id and str(event.event).endswith("_completed"):
             return dict(event.evidence or {})
@@ -174,6 +178,10 @@ def _scenario_completion_extras(scenario_id: str, evidence: dict[str, Any]) -> d
         extras["duration_sec"] = evidence.get("duration_sec")
         extras["probes_per_second"] = evidence.get("probes_per_second")
         extras["concurrency"] = evidence.get("concurrency")
+    elif scenario_id == "host_behavior_check":
+        summary = evidence.get("host_behavior")
+        if isinstance(summary, dict):
+            extras["host_behavior_summary"] = summary
     return {k: v for k, v in extras.items() if v is not None}
 
 
@@ -265,8 +273,14 @@ def format_validation_warnings(results: list) -> list[str]:
         else:
             label = "Validation Note"
         lines.append(
-            f"{label}: {result.scenario_id} → {result.decision.value} ({result.reason})"
+            f"{label}: {result.scenario_id} → {result.decision.value}"
+            + (f" ({result.reason})" if result.reason and not result.missing_items else "")
         )
+        missing = list(getattr(result, "missing_items", []) or [])
+        if missing:
+            lines.append("Missing:")
+            for item in missing:
+                lines.append(f"  {item}")
     return lines
 
 
@@ -856,16 +870,6 @@ class RunManager:
         run.status = RunStatus.COMPLETED
         run.ended_at = datetime.now(timezone.utc)
 
-        reporter = ReportingEngine(store, self.registry)
-        report = reporter.generate(run_id, results, run=run, summaries=summaries)
-        if detection_confirmation is not None:
-            report.detection_confirmation = detection_confirmation
-        reporter.write_report_md(run_dir / "report.md", report)
-        reporter.write_report_json(run_dir / "report.json", report)
-
-        store.export_jsonl(run_dir / "events.jsonl")
-        event_count = store.count(EventQuery(run_id=run_id))
-
         from dsp.runtime.traffic_summary import build_traffic_summary
 
         summary_profile = traffic_profile or operational_profile or "normal"
@@ -879,6 +883,28 @@ class RunManager:
             if execution_provider == "webshell"
             else None,
         )
+        host_behavior_payload = traffic_summary.get("host_behavior")
+        if isinstance(host_behavior_payload, dict):
+            summaries.setdefault("host_behavior_check", {})["host_behavior"] = host_behavior_payload
+
+        reporter = ReportingEngine(store, self.registry)
+        report = reporter.generate(run_id, results, run=run, summaries=summaries)
+        if detection_confirmation is not None:
+            report.detection_confirmation = detection_confirmation
+        if isinstance(host_behavior_payload, dict):
+            report.run_metadata["host_behavior"] = host_behavior_payload
+        reporter.write_report_md(run_dir / "report.md", report, summaries=summaries)
+        report_dict = report.to_dict()
+        if isinstance(host_behavior_payload, dict):
+            report_dict["host_behavior"] = host_behavior_payload
+        (run_dir / "report.json").write_text(
+            json.dumps(report_dict, indent=2),
+            encoding="utf-8",
+        )
+
+        store.export_jsonl(run_dir / "events.jsonl")
+        event_count = store.count(EventQuery(run_id=run_id))
+
         (run_dir / "traffic_summary.json").write_text(
             json.dumps(traffic_summary, indent=2),
             encoding="utf-8",
