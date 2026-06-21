@@ -29,6 +29,7 @@ FORBIDDEN_REMOTE_ARTIFACTS = frozenset(
         "manifest.json",
         "run_scenario.py",
         "remote_discovery.py",
+        "discover_runner.py",
     }
 )
 

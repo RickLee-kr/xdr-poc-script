@@ -199,10 +199,9 @@ def append_discovery_events(
                 "probed_hosts": discovery_result.get("probed_hosts", len(probe_specs)),
                 "discovery_method": discovery_result.get("discovery_method"),
                 "probe_batches": discovery_result.get("probe_batches"),
-                "output_preview": discovery_result.get("output_preview"),
-                "deploy_error": discovery_result.get("deploy_error"),
+                "output_preview": discovery_result.get("first_batch_output_preview"),
                 "service_hosts": discovery_result.get("service_hosts"),
-                "upload_method": discovery_result.get("upload_method"),
+                "timed_out_batches": discovery_result.get("timed_out_batches"),
             }
         )
     append_event(

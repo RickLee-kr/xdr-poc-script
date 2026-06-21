@@ -20,7 +20,10 @@ from dsp.execution.remote.command.models import (
     FORBIDDEN_REMOTE_ARTIFACTS,
     REMOTE_EXECUTION_MODE_COMMAND,
 )
-from dsp.execution.remote.command.discovery import REMOTE_DISCOVERY_CACHE_KEY
+from dsp.execution.remote.command.discovery import (
+    DISCOVERY_SCAN_MAX_HOSTS_KEY,
+    REMOTE_DISCOVERY_CACHE_KEY,
+)
 from dsp.execution.remote.command.runner import CommandScenarioRunner
 from dsp.execution.webshell.transport import RealHttpTransport, RetryPolicy
 from dsp.execution.webshell_config import WebshellExecutionConfig as WsConfig
@@ -153,8 +156,71 @@ class TestNoRuntimeUpload:
             provider.execute(exec_ctx, record, run_ctx, targets)
             for forbidden in FORBIDDEN_REMOTE_ARTIFACTS:
                 assert not any(forbidden in call for call in server.upload_calls)
+                assert not any(forbidden in call for call in server.command_calls)
             assert exec_ctx.execution_metadata["remote_execution_mode"] == REMOTE_EXECUTION_MODE_COMMAND
             assert server.command_calls, "expected webshell command dispatch"
+        finally:
+            server.stop()
+
+    def test_live_discovery_uses_command_only_tcp_probes(
+        self, tmp_path: Path,
+    ) -> None:
+        server = WebshellTestServer(storage_dir=tmp_path / "server")
+        server.start()
+        try:
+            provider = _connected_provider(server)
+            loader = PluginLoader()
+            record = loader.discover_and_load().get("http_followup")
+            assert record is not None
+            run_id = "cmd_probe_discovery"
+            store = EventStore(tmp_path / "events.db")
+            store.open_run(run_id)
+            scenario_params: dict[str, dict] = {
+                "http_followup": {"max_hosts": 1},
+                DISCOVERY_SCAN_MAX_HOSTS_KEY: 2,
+            }
+            apply_webshell_initial_compromise_plan(
+                scenario_params,
+                ["http_followup"],
+                server.webshell_url,
+            )
+            exec_ctx = ExecutionContext(
+                run_id=run_id,
+                target_net="10.10.10.0/30",
+                dry_run=False,
+                provider_type="webshell",
+                execution_metadata={
+                    "traffic_origin_host": "remote",
+                    "remote_work_dir": "/tmp/dsp",
+                },
+            )
+            run_ctx = RunContext(
+                run_id=run_id,
+                target_net="10.10.10.0/30",
+                event_store=store,
+                config=RunConfig(dry_run=False, scenario_params=scenario_params),
+                dry_run=False,
+            )
+            provider.prepare(exec_ctx)
+            provider.execute(
+                exec_ctx,
+                record,
+                run_ctx,
+                resolve_targets("10.10.10.0/30", dry_run=False, discovery=False),
+            )
+            joined_commands = "\n".join(server.command_calls)
+            for forbidden in FORBIDDEN_REMOTE_ARTIFACTS:
+                assert forbidden not in joined_commands
+                assert not any(forbidden in call for call in server.upload_calls)
+            assert "py_compile" not in joined_commands
+            assert "discover_runner.py" not in joined_commands
+            assert "python3 -c" in joined_commands
+            assert "socket" in joined_commands
+            discovery_events = [
+                e for e in store.list_events(run_id) if e.event == "remote_discovery_completed"
+            ]
+            assert discovery_events
+            assert discovery_events[0].evidence.get("discovery_method") == "tcp_probe_batch_sh"
         finally:
             server.stop()
 

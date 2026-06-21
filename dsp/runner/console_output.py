@@ -297,10 +297,9 @@ class OperationalConsole:
             self._write("Webshell Discovery")
             for key in (
                 "discovery_method",
-                "upload_method",
                 "alive_hosts",
                 "open_endpoints",
-                "deploy_error",
+                "probe_batches",
                 "output_preview",
             ):
                 if key in data and data[key] not in (None, "", 0):
