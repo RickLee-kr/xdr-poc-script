@@ -38,15 +38,96 @@ def _event_dict(event: Event) -> dict[str, Any]:
     return _normalize_event(event)
 
 
-def _count_events(events: list[dict[str, Any]], scenario_id: str, event_name: str) -> int:
-    return sum(1 for e in events if e.get("scenario_id") == scenario_id and e.get("event") == event_name)
+def _is_phase1_webshell_evidence(evidence: dict[str, Any]) -> bool:
+    return evidence.get("phase") == "phase1_webshell_attack"
 
 
-def _last_evidence(events: list[dict[str, Any]], scenario_id: str, event_name: str) -> dict[str, Any]:
+def _last_evidence(
+    events: list[dict[str, Any]],
+    scenario_id: str,
+    event_name: str,
+    *,
+    exclude_phase1: bool = False,
+) -> dict[str, Any]:
     for e in reversed(events):
-        if e.get("scenario_id") == scenario_id and e.get("event") == event_name:
-            return dict(e.get("evidence") or {})
+        if e.get("scenario_id") != scenario_id or e.get("event") != event_name:
+            continue
+        evidence = dict(e.get("evidence") or {})
+        if exclude_phase1 and _is_phase1_webshell_evidence(evidence):
+            continue
+        return evidence
     return {}
+
+
+def _count_events(
+    events: list[dict[str, Any]],
+    scenario_id: str,
+    event_name: str,
+    *,
+    exclude_phase1: bool = False,
+) -> int:
+    total = 0
+    for e in events:
+        if e.get("scenario_id") != scenario_id or e.get("event") != event_name:
+            continue
+        evidence = e.get("evidence") or {}
+        if exclude_phase1 and _is_phase1_webshell_evidence(evidence):
+            continue
+        total += 1
+    return total
+
+
+def _http_scenario_fallback_fields(
+    targets: TargetSet,
+    scenario_params: dict[str, dict[str, Any]] | None,
+    scenario_id: str,
+) -> dict[str, Any]:
+    if scenario_id not in ("http_followup", "sql_injection"):
+        return {}
+    params = (scenario_params or {}).get(scenario_id) or {}
+    from dsp.engine.host_selection import (
+        http_selection_summary_fields,
+        resolve_discovery_http_selection,
+    )
+
+    selection = resolve_discovery_http_selection(
+        targets,
+        params,
+        webshell_mode=True,
+    )
+    if not selection.selected:
+        http_hosts = targets.hosts_for_capability("http_targets")
+        if not http_hosts:
+            return {}
+        return {
+            "http_targets": http_hosts,
+            "https_targets": targets.hosts_for_capability("https_targets"),
+            "selected_targets": [str(host) for host in http_hosts[: int(params.get("max_hosts", 2))]],
+            "target_count": min(len(http_hosts), int(params.get("max_hosts", 2))),
+        }
+    return http_selection_summary_fields(selection, targets)
+
+
+def _merge_http_summary_fields(
+    scenario_summary: dict[str, Any],
+    fallback: dict[str, Any],
+) -> None:
+    if not fallback:
+        return
+    for key in (
+        "selected_targets",
+        "target_count",
+        "http_targets",
+        "https_targets",
+        "selected_http_target_reason",
+        "probe_summaries",
+        "target_probe",
+        "rejected_targets",
+    ):
+        if not scenario_summary.get(key) and fallback.get(key):
+            scenario_summary[key] = fallback[key]
+    if not scenario_summary.get("target_count") and scenario_summary.get("selected_targets"):
+        scenario_summary["target_count"] = len(scenario_summary["selected_targets"])
 
 
 def build_traffic_summary(
@@ -57,6 +138,7 @@ def build_traffic_summary(
     targets: TargetSet,
     traffic_profile: str,
     webshell_execution: dict[str, Any] | None = None,
+    scenario_params: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build planned vs actual traffic summary for a run."""
     events = [_normalize_event(e) for e in store.list_events(run_id)]
@@ -76,7 +158,8 @@ def build_traffic_summary(
         summary["webshell_url"] = webshell_execution.get("webshell_url")
 
     for sid in scenario_ids:
-        started = _last_evidence(events, sid, f"{sid}_started")
+        exclude_phase1 = sid in ("http_followup", "sql_injection")
+        started = _last_evidence(events, sid, f"{sid}_started", exclude_phase1=exclude_phase1)
         if not started:
             started = _last_evidence(events, sid, "host_behavior_check_started")
         if not started:
@@ -96,7 +179,7 @@ def build_traffic_summary(
         if not started:
             started = _last_evidence(events, sid, "sql_injection_started")
 
-        completed = _last_evidence(events, sid, f"{sid}_completed")
+        completed = _last_evidence(events, sid, f"{sid}_completed", exclude_phase1=exclude_phase1)
         if not completed:
             completed = _last_evidence(events, sid, "host_behavior_check_completed")
         if not completed:
@@ -154,10 +237,16 @@ def build_traffic_summary(
                 "concurrency": started.get("concurrency") or completed.get("concurrency"),
             })
         elif sid == "http_followup":
+            request_count = (
+                completed.get("request_count")
+                or completed.get("requests_sent")
+                or _count_events(events, sid, "http_request_sent", exclude_phase1=True)
+            )
             scenario_summary.update({
                 "requests_planned": 0 if skipped else started.get("planned_requests", 0),
-                "requests_sent": completed.get("request_count") or _count_events(events, sid, "http_request_sent"),
-                "responses_received": completed.get("response_count", 0),
+                "requests_sent": request_count,
+                "responses_received": completed.get("response_count")
+                or completed.get("responses_received", 0),
                 "paths_sample": completed.get("paths_used") or started.get("paths_planned"),
                 "user_agent_classes": completed.get("user_agent_classes", {}),
                 "malicious_rare_ua_count": completed.get("malicious_rare_ua_count", 0),
@@ -223,6 +312,10 @@ def build_traffic_summary(
                     "success": burst.get("success", 0),
                     "failure": burst.get("failure", 0),
                 }
+            _merge_http_summary_fields(
+                scenario_summary,
+                _http_scenario_fallback_fields(targets, scenario_params, sid),
+            )
         elif sid == "ssh_failure":
             scenario_summary.update({
                 "auth_attempts_planned": started.get("planned_attempts", 0),
@@ -278,9 +371,14 @@ def build_traffic_summary(
                 "auth_failed": 0,
             })
         elif sid == "sql_injection":
+            request_count = (
+                completed.get("requests_sent")
+                or completed.get("request_count")
+                or _count_events(events, sid, "sql_request_sent", exclude_phase1=True)
+            )
             scenario_summary.update({
                 "requests_planned": 0 if skipped else started.get("planned_requests", 0),
-                "requests_sent": completed.get("requests_sent") or completed.get("request_count", 0),
+                "requests_sent": request_count,
                 "responses_received": completed.get("response_count", 0),
                 "payload_count": completed.get("payload_count", 0),
                 "payload_category_distribution": completed.get("payload_category_distribution", {}),
@@ -312,6 +410,10 @@ def build_traffic_summary(
                 or skipped.get("selected_targets", []),
                 "sql_injection_requests_jsonl": completed.get("sql_injection_requests_jsonl", ""),
             })
+            _merge_http_summary_fields(
+                scenario_summary,
+                _http_scenario_fallback_fields(targets, scenario_params, sid),
+            )
 
         summary["scenarios"][sid] = scenario_summary
 

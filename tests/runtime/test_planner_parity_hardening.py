@@ -179,18 +179,24 @@ def test_select_discovered_http_endpoint_tuples_port_ranking() -> None:
 def test_webshell_scenario_start_metadata_defers_target_selection() -> None:
     from dsp.runner.target_selection import scenario_start_metadata
 
-    targets = TargetSet(target_net="172.16.50.0/24", hosts=[])
+    targets = TargetSet(
+        target_net="172.16.50.0/24",
+        hosts=["10.10.10.97"],
+        service_hosts={"http_targets": ["10.10.10.97"]},
+        service_endpoints={"http_targets": [("10.10.10.97", 8080)]},
+        discovery_enabled=True,
+    )
     meta = scenario_start_metadata(
         "http_followup",
         targets,
-        {},
+        {"max_hosts": 1},
         webshell_mode=True,
     )
     assert meta["discovery_origin"] == "webshell_host"
-    assert meta["selection_deferred"] is True
     assert meta["remote_discovery"] == "remote_discovery_execute"
     assert meta["target_net"] == "172.16.50.0/24"
-    assert "selected_targets" not in meta
+    assert meta["selected_targets"]
+    assert meta["target_count"] == 1
     endpoints = select_discovered_http_endpoint_tuples(
         http_hosts=["10.10.10.5"],
         http_endpoints=[("10.10.10.5", 8080), ("10.10.10.5", 80)],

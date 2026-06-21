@@ -52,6 +52,7 @@ from dsp.reporting import ReportingEngine
 from dsp.runner.progress_emitter import ProgressEmitter
 from dsp.runner.target_selection import (
     resolve_selected_targets_by_protocol,
+    resolve_webshell_discovered_targets_by_protocol,
     scenario_start_metadata,
 )
 from dsp.validation import ValidationEngine
@@ -711,6 +712,13 @@ class RunManager:
                 event_store=store,
             )
             targets = targets_dict_to_target_set(discovered)
+            cache_http_endpoint_selection(
+                config.scenario_params,
+                scenario_ids=scenario_ids,
+                targets=targets,
+                dry_run=dry_run,
+                webshell_mode=True,
+            )
             if emitter is not None:
                 meta = dict(discovered.get("discovery_meta") or {})
                 emitter.emit(
@@ -726,6 +734,25 @@ class RunManager:
                         "discovery_origin": meta.get("discovery_origin"),
                     },
                 )
+                ws_ctx = config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
+                targets_payload: dict[str, Any] = {
+                    "groups": resolve_webshell_discovered_targets_by_protocol(
+                        scenario_ids,
+                        targets,
+                        config.scenario_params,
+                    ),
+                    "alive_hosts": meta.get("alive_hosts", []),
+                    "open_endpoints": meta.get("open_endpoints", 0),
+                }
+                if isinstance(ws_ctx, dict):
+                    targets_payload["execution_host"] = {
+                        "host": ws_ctx.get("execution_host"),
+                        "port": ws_ctx.get("execution_port"),
+                        "path": ws_ctx.get("execution_path", "/"),
+                    }
+                    targets_payload["webshell_url"] = ws_ctx.get("webshell_url")
+                    targets_payload["attack_target_net"] = target_net
+                emitter.emit("targets_selected", targets_payload)
 
         collector = RemoteEventCollector() if execution_provider == "webshell" else None
 
@@ -882,6 +909,7 @@ class RunManager:
             webshell_execution=config.scenario_params.get(WEBSHELL_EXECUTION_KEY)
             if execution_provider == "webshell"
             else None,
+            scenario_params=config.scenario_params if execution_provider == "webshell" else None,
         )
         host_behavior_payload = traffic_summary.get("host_behavior")
         if isinstance(host_behavior_payload, dict):

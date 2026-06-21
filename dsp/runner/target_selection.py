@@ -208,6 +208,20 @@ def scenario_start_metadata(
         }
         if scenario_id in ("http_followup", "sql_injection"):
             meta["remote_discovery"] = "remote_discovery_execute"
+            from dsp.engine.host_selection import (
+                format_selected_target_labels,
+                resolve_discovery_http_selection,
+            )
+
+            selection = resolve_discovery_http_selection(
+                targets,
+                params,
+                webshell_mode=True,
+            )
+            if selection.selected:
+                meta["selected_targets"] = format_selected_target_labels(selection.selected)
+                meta["target_count"] = len(selection.selected)
+                meta["selection_deferred"] = False
         if scenario_id == "port_sweep":
             meta["selection_reason"] = "alive_hosts_from_remote_discovery"
         return meta

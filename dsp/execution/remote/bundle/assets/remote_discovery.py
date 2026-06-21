@@ -138,37 +138,55 @@ def _hosts_for(targets: dict[str, Any], capability: str) -> list[str]:
     return list((targets.get("service_hosts") or {}).get(capability, []))
 
 
-def _select_http_endpoints(
+def _resolve_http_plan_endpoints(
     targets: dict[str, Any],
     params: dict[str, Any],
     *,
     dry_run: bool = False,
-) -> list[tuple[str, int]]:
+) -> tuple[list[tuple[str, int]], dict[str, object]]:
     from dsp.engine.host_selection import (
-        HTTP_ENDPOINT_SELECTION_CACHE_KEY,
-        selection_from_cache,
+        http_selection_summary_fields,
+        resolve_discovery_http_selection,
     )
 
-    cached = params.get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
-    if cached:
-        selection = selection_from_cache(cached)  # type: ignore[arg-type]
-        if selection.selected:
-            return [(ep.host, ep.port) for ep in selection.selected]
-
+    target_set = _targets_to_target_set(targets)
     max_hosts = int(params.get("max_hosts", 2))
+    selection = resolve_discovery_http_selection(
+        target_set,
+        params,
+        max_hosts=max_hosts,
+        dry_run=dry_run,
+        webshell_mode=True,
+        timeout=float(params.get("timeout", 10.0)),
+    )
+    if selection.selected:
+        endpoints = [(ep.host, ep.port) for ep in selection.selected]
+        return endpoints, http_selection_summary_fields(selection, target_set)
+
     http_hosts = _hosts_for(targets, "http_targets")
     http_endpoints = list((targets.get("service_endpoints") or {}).get("http_targets", []))
-    return select_discovered_http_endpoint_tuples(
+    endpoints = select_discovered_http_endpoint_tuples(
         http_hosts=http_hosts,
         http_endpoints=http_endpoints,
         max_hosts=max_hosts,
         explicit_hosts=None,
         explicit_port=int(params.get("port", 80)),
     )
+    return endpoints, http_selection_summary_fields(selection, target_set)
+
+
+def _select_http_endpoints(
+    targets: dict[str, Any],
+    params: dict[str, Any],
+    *,
+    dry_run: bool = False,
+) -> list[tuple[str, int]]:
+    endpoints, _ = _resolve_http_plan_endpoints(targets, params, dry_run=dry_run)
+    return endpoints
 
 
 def _plan_http_followup(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    endpoints = _select_http_endpoints(targets, params, dry_run=dry_run)
+    endpoints, selection_fields = _resolve_http_plan_endpoints(targets, params, dry_run=dry_run)
     if not endpoints:
         return {"type": "http_followup", "mode": "skip", "reason": "no_http_endpoints"}
     max_hosts = int(params.get("max_hosts", 2))
@@ -194,11 +212,12 @@ def _plan_http_followup(targets: dict[str, Any], params: dict[str, Any], *, dry_
             for plan in enriched_plans
         ],
         "non_standard_port_burst": {"enabled": False},
+        **selection_fields,
     }
 
 
 def _plan_sql_injection(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    endpoints = _select_http_endpoints(targets, params, dry_run=dry_run)
+    endpoints, selection_fields = _resolve_http_plan_endpoints(targets, params, dry_run=dry_run)
     if not endpoints:
         return {"type": "sql_injection", "mode": "skip", "reason": "no_http_endpoints"}
     max_hosts = int(params.get("max_hosts", 2))
@@ -225,6 +244,7 @@ def _plan_sql_injection(targets: dict[str, Any], params: dict[str, Any], *, dry_
         "mode": "mock" if dry_run else "live",
         "timeout": float(params.get("timeout", 10.0)),
         "requests": requests,
+        **selection_fields,
     }
 
 

@@ -432,6 +432,7 @@ def run_webshell_host_discovery(
     )
     cached = get_cached_remote_discovery(ctx.config.scenario_params, target_net)
     if cached is not None:
+        ensure_webshell_http_selection_cache(ctx, cached, dry_run=request.dry_run)
         return cached
 
     if request.dry_run:
@@ -481,6 +482,28 @@ def probe_commands_for_specs(
 TARGET_NET_DISCOVERY_SCENARIO_ID = "target_net_discovery"
 
 
+def ensure_webshell_http_selection_cache(
+    ctx: Any,
+    targets: dict[str, Any],
+    *,
+    dry_run: bool,
+) -> None:
+    """Populate shared HTTP endpoint selection after webshell-origin discovery."""
+    from dsp.engine.host_selection import cache_http_endpoint_selection
+    from dsp.execution.remote.command.planner import targets_dict_to_target_set
+
+    scenario_ids = list(getattr(ctx, "scenario_ids", None) or [])
+    if not scenario_ids:
+        return
+    cache_http_endpoint_selection(
+        ctx.config.scenario_params,
+        scenario_ids=scenario_ids,
+        targets=targets_dict_to_target_set(targets),
+        dry_run=dry_run,
+        webshell_mode=True,
+    )
+
+
 def prefetch_webshell_target_net_discovery(
     provider: Any,
     ctx: Any,
@@ -504,6 +527,7 @@ def prefetch_webshell_target_net_discovery(
 
     cached = get_cached_remote_discovery(ctx.config.scenario_params, target_net)
     if cached is not None:
+        ensure_webshell_http_selection_cache(ctx, cached, dry_run=dry_run)
         return cached
 
     discovery_max_hosts = resolve_discovery_scan_max_hosts(

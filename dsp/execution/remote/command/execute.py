@@ -153,6 +153,25 @@ def _execute_port_sweep(
     return dispatched
 
 
+def _plan_selection_fields(plan: dict[str, Any]) -> dict[str, Any]:
+    """Extract HTTP endpoint selection metadata attached during planning."""
+    keys = (
+        "selected_targets",
+        "target_count",
+        "http_targets",
+        "https_targets",
+        "selected_http_target_reason",
+        "probe_summaries",
+        "target_probe",
+        "rejected_targets",
+        "redirect_only_candidates",
+        "https_targets_skipped",
+        "hosts",
+        "endpoints",
+    )
+    return {key: plan[key] for key in keys if key in plan}
+
+
 def _execute_http_followup(
     plan: dict[str, Any],
     provider: WebshellExecutionProvider,
@@ -165,13 +184,26 @@ def _execute_http_followup(
     requests_list = plan.get("requests") or []
     timeout = float(plan.get("timeout", 10.0))
     mock = plan.get("mode") == "mock"
+    selection_fields = _plan_selection_fields(plan)
+    primary_target = ""
+    if selection_fields.get("hosts"):
+        primary_target = str(selection_fields["hosts"][0])
+    elif requests_list:
+        primary_target = str(requests_list[0].get("url") or "")
+    started_evidence = {
+        "requests_planned": len(requests_list),
+        "planned_requests": len(requests_list),
+        "mode": plan.get("mode", "live"),
+        **selection_fields,
+    }
     cmd_events.append_event(
         store,
         run_id=run_id,
         scenario_id=scenario_id,
         event="http_followup_started",
         status="info",
-        evidence={"requests_planned": len(requests_list), "mode": plan.get("mode", "live")},
+        target=primary_target,
+        evidence=started_evidence,
     )
     dispatched = 0
     for index, item in enumerate(requests_list, start=1):
@@ -211,7 +243,12 @@ def _execute_http_followup(
         scenario_id=scenario_id,
         event="http_followup_completed",
         status="info",
-        evidence={"requests_sent": dispatched},
+        target=primary_target,
+        evidence={
+            "requests_sent": dispatched,
+            "request_count": dispatched,
+            **selection_fields,
+        },
     )
     return dispatched
 
@@ -228,13 +265,25 @@ def _execute_sql_injection(
     requests_list = plan.get("requests") or []
     timeout = float(plan.get("timeout", 10.0))
     mock = plan.get("mode") == "mock"
+    selection_fields = _plan_selection_fields(plan)
+    primary_target = ""
+    if selection_fields.get("hosts"):
+        primary_target = str(selection_fields["hosts"][0])
+    elif requests_list:
+        primary_target = str(requests_list[0].get("url") or "")
     cmd_events.append_event(
         store,
         run_id=run_id,
         scenario_id=scenario_id,
         event="sql_injection_started",
         status="info",
-        evidence={"requests_planned": len(requests_list), "mode": plan.get("mode", "live")},
+        target=primary_target,
+        evidence={
+            "requests_planned": len(requests_list),
+            "planned_requests": len(requests_list),
+            "mode": plan.get("mode", "live"),
+            **selection_fields,
+        },
     )
     dispatched = 0
     for index, item in enumerate(requests_list, start=1):
@@ -283,7 +332,12 @@ def _execute_sql_injection(
         scenario_id=scenario_id,
         event="sql_injection_completed",
         status="info",
-        evidence={"requests_sent": dispatched},
+        target=primary_target,
+        evidence={
+            "requests_sent": dispatched,
+            "request_count": dispatched,
+            **selection_fields,
+        },
     )
     return dispatched
 

@@ -452,6 +452,64 @@ def resolve_http_endpoint_selection(
     )
 
 
+def resolve_discovery_http_selection(
+    targets: TargetSet,
+    config: dict,
+    *,
+    max_hosts: int | None = None,
+    dry_run: bool = False,
+    webshell_mode: bool = False,
+    timeout: float = 10.0,
+) -> HttpFollowupSelection:
+    """Resolve HTTP follow-up selection from shared cache or discovery buckets."""
+    cached = config.get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
+    if cached:
+        selection = selection_from_cache(cached)  # type: ignore[arg-type]
+        if selection.selected:
+            return selection
+
+    hosts_limit = max_hosts if max_hosts is not None else int(config.get("max_hosts", 2))
+    if webshell_mode:
+        return selection_from_discovered_http_hosts_unverified(
+            targets,
+            config,
+            probed=[],
+            max_hosts=hosts_limit,
+        )
+    return resolve_http_attack_endpoint_selection(
+        targets,
+        config,
+        max_hosts=hosts_limit,
+        dry_run=dry_run,
+        timeout=timeout,
+    )
+
+
+def http_selection_summary_fields(
+    selection: HttpFollowupSelection,
+    targets: TargetSet,
+) -> dict[str, object]:
+    """Serialize HTTP endpoint selection for events and traffic_summary."""
+    selected_targets = format_selected_target_labels(selection.selected)
+    return {
+        "selected_targets": selected_targets,
+        "target_count": len(selection.selected),
+        "http_targets": targets.hosts_for_capability("http_targets"),
+        "https_targets": targets.hosts_for_capability("https_targets"),
+        "selected_http_target_reason": selection.selected_http_target_reason,
+        "probe_summaries": selection.probe_summaries,
+        "target_probe": selection.probe_summaries,
+        "rejected_targets": selection.rejected_targets,
+        "redirect_only_candidates": selection.redirect_only_candidates,
+        "https_targets_skipped": selection.https_targets_skipped,
+        "hosts": [ep.host for ep in selection.selected],
+        "endpoints": [
+            {"host": ep.host, "port": ep.port, "scheme": ep.scheme, "selection_reason": ep.selection_reason}
+            for ep in selection.selected
+        ],
+    }
+
+
 def cache_http_endpoint_selection(
     scenario_params: dict[str, dict[str, object]],
     *,
@@ -471,21 +529,14 @@ def cache_http_endpoint_selection(
         for sid in http_scenarios
     )
     timeout = float(ref_params.get("timeout", 10.0))
-    if webshell_mode:
-        selection = selection_from_discovered_http_hosts_unverified(
-            targets,
-            ref_params,
-            probed=[],
-            max_hosts=max_hosts,
-        )
-    else:
-        selection = resolve_http_attack_endpoint_selection(
-            targets,
-            ref_params,
-            max_hosts=max_hosts,
-            dry_run=dry_run,
-            timeout=timeout,
-        )
+    selection = resolve_discovery_http_selection(
+        targets,
+        ref_params,
+        max_hosts=max_hosts,
+        dry_run=dry_run,
+        webshell_mode=webshell_mode,
+        timeout=timeout,
+    )
     cache = selection_to_cache(selection)
     for sid in http_scenarios:
         scenario_params.setdefault(sid, {})[HTTP_ENDPOINT_SELECTION_CACHE_KEY] = cache
