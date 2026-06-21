@@ -215,7 +215,7 @@ class TestNoRuntimeUpload:
             assert "py_compile" not in joined_commands
             assert "discover_runner.py" not in joined_commands
             assert "python3 -c" in joined_commands
-            assert "socket" in joined_commands
+            assert "base64" in joined_commands
             discovery_events = [
                 e for e in store.list_events(run_id) if e.event == "remote_discovery_completed"
             ]

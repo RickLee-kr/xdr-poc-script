@@ -41,6 +41,13 @@ def tcp_probe_command(host: str, port: int, *, timeout: float = 3.0) -> str:
 PROBE_OPEN_MARKER = "DSP_PROBE_OPEN"
 
 
+def _python3_b64_exec_command(script: str) -> str:
+    """Run multiline Python via ``python3 -c`` + base64 (shell/webshell safe)."""
+    payload = base64.b64encode(script.encode("utf-8")).decode("ascii")
+    bootstrap = f"import base64; exec(base64.b64decode({payload!r}).decode())"
+    return f"python3 -c {shlex.quote(bootstrap)}"
+
+
 def tcp_probe_discovery_command(
     host: str,
     port: int,
@@ -51,19 +58,23 @@ def tcp_probe_discovery_command(
     """TCP probe that records open ports in a file, then cats it for transport capture."""
     t = max(0.1, float(timeout))
     write_script = (
-        "import socket;"
-        f"h={host!r};p={int(port)};t={t};m={PROBE_OPEN_MARKER!r};out={output_path!r};"
-        "lines=[];"
-        "try:"
-        " socket.create_connection((h,p),timeout=t).close();"
-        " lines.append(m);"
-        "except OSError:"
-        " pass;"
-        "open(out,'w').write(chr(10).join(lines))"
+        "import socket\n"
+        f"h = {host!r}\n"
+        f"p = {int(port)}\n"
+        f"t = {t}\n"
+        f"m = {PROBE_OPEN_MARKER!r}\n"
+        f"out = {output_path!r}\n"
+        "lines = []\n"
+        "try:\n"
+        "    socket.create_connection((h, p), timeout=t).close()\n"
+        "    lines.append(m)\n"
+        "except OSError:\n"
+        "    pass\n"
+        'open(out, "w").write("\\n".join(lines))\n'
     )
     pipeline = (
         f"rm -f {shlex.quote(output_path)}; "
-        f"python3 -c {shlex.quote(write_script)}; "
+        f"{_python3_b64_exec_command(write_script)}; "
         f"cat {shlex.quote(output_path)} 2>/dev/null"
     )
     return wrap_remote_shell_command(pipeline)
@@ -80,27 +91,32 @@ def tcp_probe_batch_discovery_command(
     t = max(0.1, float(timeout))
     worker_count = max(1, min(int(workers), len(probes) or 1))
     write_script = (
-        "import socket;"
-        "from concurrent.futures import ThreadPoolExecutor,as_completed;"
-        f"probes={probes!r};t={t};m={PROBE_OPEN_MARKER!r};out={output_path!r};w={worker_count};"
-        "def probe(tup):"
-        " h,p=tup;"
-        " try:"
-        "  socket.create_connection((h,p),timeout=t).close();"
-        "  return f'{m} {h}:{p}';"
-        " except OSError:"
-        "  return None;"
-        "lines=[];"
-        "with ThreadPoolExecutor(max_workers=min(w,max(1,len(probes)))) as pool:"
-        " futures=[pool.submit(probe,x) for x in probes];"
-        " for fut in as_completed(futures):"
-        "  row=fut.result();"
-        "  if row: lines.append(row);"
-        "open(out,'w').write(chr(10).join(lines))"
+        "import socket\n"
+        "from concurrent.futures import ThreadPoolExecutor, as_completed\n"
+        f"probes = {probes!r}\n"
+        f"t = {t}\n"
+        f"m = {PROBE_OPEN_MARKER!r}\n"
+        f"out = {output_path!r}\n"
+        f"w = {worker_count}\n"
+        "def probe(tup):\n"
+        "    h, p = tup\n"
+        "    try:\n"
+        "        socket.create_connection((h, p), timeout=t).close()\n"
+        "        return f\"{m} {h}:{p}\"\n"
+        "    except OSError:\n"
+        "        return None\n"
+        "lines = []\n"
+        "with ThreadPoolExecutor(max_workers=min(w, max(1, len(probes)))) as pool:\n"
+        "    futures = [pool.submit(probe, x) for x in probes]\n"
+        "    for fut in as_completed(futures):\n"
+        "        row = fut.result()\n"
+        "        if row:\n"
+        "            lines.append(row)\n"
+        'open(out, "w").write("\\n".join(lines))\n'
     )
     pipeline = (
         f"rm -f {shlex.quote(output_path)}; "
-        f"python3 -c {shlex.quote(write_script)}; "
+        f"{_python3_b64_exec_command(write_script)}; "
         f"cat {shlex.quote(output_path)} 2>/dev/null"
     )
     return wrap_remote_shell_command(pipeline)

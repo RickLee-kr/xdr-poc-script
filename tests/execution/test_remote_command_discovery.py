@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import socket
+import subprocess
+import threading
 from unittest.mock import MagicMock
 
 from dsp.execution.remote.command.discovery import (
@@ -16,7 +19,62 @@ from dsp.execution.remote.command.discovery import (
     run_discovery_from_tcp_probes,
     run_webshell_host_discovery,
 )
-from dsp.execution.remote.command.shell import PROBE_OPEN_MARKER
+from dsp.execution.remote.command.shell import (
+    PROBE_OPEN_MARKER,
+    tcp_probe_batch_discovery_command,
+    tcp_probe_discovery_command,
+)
+
+
+def test_tcp_probe_discovery_commands_execute_without_syntax_error() -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    accepted: list[socket.socket] = []
+
+    def _accept() -> None:
+        conn, _addr = listener.accept()
+        accepted.append(conn)
+
+    thread = threading.Thread(target=_accept, daemon=True)
+    thread.start()
+
+    try:
+        commands = (
+            tcp_probe_discovery_command(
+                "127.0.0.1",
+                port,
+                output_path="/tmp/dsp-probe-single-test.out",
+            ),
+            tcp_probe_batch_discovery_command(
+                [("127.0.0.1", port), ("127.0.0.1", port + 1)],
+                output_path="/tmp/dsp-probe-batch-test.out",
+            ),
+        )
+        single_output = subprocess.run(
+            ["bash", "-lc", commands[0]],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        batch_output = subprocess.run(
+            ["bash", "-lc", commands[1]],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        for completed in (single_output, batch_output):
+            assert "SyntaxError" not in (completed.stderr or "")
+            assert PROBE_OPEN_MARKER in (completed.stdout or "")
+        assert f"{PROBE_OPEN_MARKER} 127.0.0.1:{port}" in (batch_output.stdout or "")
+    finally:
+        listener.close()
+        for conn in accepted:
+            conn.close()
+        thread.join(timeout=2)
 
 
 def test_mock_discovery_does_not_assign_services_without_probe_results() -> None:
@@ -57,10 +115,9 @@ def test_run_discovery_from_tcp_probes_uses_python_inline_batches() -> None:
 
     def _run_remote_command(command: str, *, timeout_seconds: float = 300.0) -> bytes:
         assert "python3 -c" in command
-        assert "socket" in command
+        assert "base64" in command
         assert "discover_runner.py" not in command
         assert "py_compile" not in command
-        assert "base64.b64decode" not in command
         return marker_line
 
     provider.run_remote_command.side_effect = _run_remote_command
