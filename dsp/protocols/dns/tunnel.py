@@ -6,10 +6,12 @@ import base64
 import os
 import random
 import re
-from typing import Iterator
+import uuid
+from typing import Any, Iterator
 
 from dsp.engine.scenario_engine import TargetSet
 from dsp.protocols.base import DnsProtocolError
+from dsp.protocols.dns.volume_profiles import apply_volume_profile
 
 CHUNK_SIZE_DEFAULT = 30
 PAYLOAD_MB_DEFAULT = 2.0
@@ -71,15 +73,21 @@ def sample_burst_pause_sec(
 def iter_payload_chunks(
     payload_mb: float,
     chunk_size: int = CHUNK_SIZE_DEFAULT,
+    *,
+    seed: int | None = None,
 ) -> Iterator[bytes]:
     """Yield fixed-size random payload chunks up to payload_mb."""
     total_bytes = int(payload_mb * 1024 * 1024)
     if total_bytes < chunk_size:
         total_bytes = chunk_size
     produced = 0
+    rng = random.Random(seed) if seed is not None else None
     while produced < total_bytes:
         need = min(chunk_size, total_bytes - produced)
-        yield os.urandom(need)
+        if rng is not None:
+            yield rng.randbytes(need)
+        else:
+            yield os.urandom(need)
         produced += need
 
 
@@ -121,3 +129,165 @@ def select_tunnel_targets(
         return alive_hosts
 
     return []
+
+
+def build_tunnel_session_marker_fqdn(session_id: str, marker: str, domain: str) -> str:
+    """Build strt-{session} or end-{session} session marker FQDN."""
+    domain = domain.strip().rstrip(".")
+    if not domain:
+        raise DnsProtocolError("tunnel domain is required")
+    if marker not in {"strt", "end"}:
+        raise DnsProtocolError(f"invalid session marker: {marker}")
+    return f"{marker}-{session_id}.{domain}"
+
+
+def build_dns_tunnel_query_entry(
+    target: str,
+    fqdn: str,
+    *,
+    seq: int | None = None,
+    chunk_bytes: int | None = None,
+    label_length: int | None = None,
+    query_role: str = "idx_chunk",
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a DNS tunnel query record with standardized traffic evidence fields."""
+    entry: dict[str, Any] = {
+        "target": target,
+        "resolver": target,
+        "fqdn": fqdn,
+        "query": fqdn,
+        "protocol": "dns_udp",
+        "port": 53,
+        "query_role": query_role,
+        "idx_pattern": is_valid_tunnel_fqdn(fqdn),
+    }
+    if seq is not None:
+        entry["seq"] = seq
+    if chunk_bytes is not None:
+        entry["chunk_bytes"] = chunk_bytes
+    if label_length is not None:
+        entry["label_length"] = label_length
+    if session_id is not None:
+        entry["session_id"] = session_id
+    return entry
+
+
+def build_dns_tunnel_queries(
+    hosts: list[str],
+    *,
+    payload_mb: float,
+    chunk_size: int = CHUNK_SIZE_DEFAULT,
+    domain: str = TUNNEL_DOMAIN_DEFAULT,
+    max_chunks: int | None = None,
+    include_session_markers: bool = False,
+    session_id: str | None = None,
+    plan_seed: int | None = None,
+) -> tuple[list[dict[str, Any]], str]:
+    """Build idx-pattern DNS tunnel query list for one or more alive hosts."""
+    if not hosts:
+        return [], session_id or uuid.uuid4().hex[:6]
+
+    sid = session_id or uuid.uuid4().hex[:6]
+    total = plan_chunk_count(payload_mb, chunk_size)
+    if max_chunks is not None:
+        total = min(total, int(max_chunks))
+
+    queries: list[dict[str, Any]] = []
+    for target in hosts:
+        chunk_iter = iter_payload_chunks(payload_mb, chunk_size, seed=plan_seed)
+        if include_session_markers:
+            strt_fqdn = build_tunnel_session_marker_fqdn(sid, "strt", domain)
+            queries.append(
+                build_dns_tunnel_query_entry(
+                    target,
+                    strt_fqdn,
+                    query_role="session_start",
+                    session_id=sid,
+                )
+            )
+        for seq in range(1, total + 1):
+            chunk = next(chunk_iter)
+            label = chunk_to_b32_label(chunk)
+            fqdn = build_tunnel_fqdn(seq, label, domain)
+            queries.append(
+                build_dns_tunnel_query_entry(
+                    target,
+                    fqdn,
+                    seq=seq,
+                    chunk_bytes=len(chunk),
+                    label_length=len(label),
+                    session_id=sid,
+                )
+            )
+        if include_session_markers:
+            end_fqdn = build_tunnel_session_marker_fqdn(sid, "end", domain)
+            queries.append(
+                build_dns_tunnel_query_entry(
+                    target,
+                    end_fqdn,
+                    query_role="session_end",
+                    session_id=sid,
+                )
+            )
+    return queries, sid
+
+
+def plan_dns_tunnel(
+    targets: TargetSet,
+    params: dict[str, Any],
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Build a complete DNS tunnel execution plan (local, webshell, remote discovery)."""
+    tuned = apply_volume_profile(params, dry_run=dry_run)
+    payload_mb = float(tuned.get("payload_mb", PAYLOAD_MB_DEFAULT))
+    chunk_size = int(tuned.get("chunk_size", CHUNK_SIZE_DEFAULT))
+    domain = str(tuned.get("domain", TUNNEL_DOMAIN_DEFAULT))
+    max_hosts = int(tuned.get("max_hosts", 2))
+    max_chunks = tuned.get("max_chunks")
+    include_session_markers = bool(tuned.get("include_session_markers", False))
+    plan_seed = tuned.get("plan_seed")
+    seed = int(plan_seed) if plan_seed is not None else None
+
+    hosts = select_tunnel_targets(targets, tuned, max_hosts=max_hosts)
+    if not hosts:
+        return {"type": "dns_tunnel", "mode": "skip", "reason": "no_alive_hosts"}
+
+    queries, session_id = build_dns_tunnel_queries(
+        hosts,
+        payload_mb=payload_mb,
+        chunk_size=chunk_size,
+        domain=domain,
+        max_chunks=int(max_chunks) if max_chunks is not None else None,
+        include_session_markers=include_session_markers,
+        plan_seed=seed,
+    )
+    return {
+        "type": "dns_tunnel",
+        "mode": "mock" if dry_run else "live",
+        "domain": domain,
+        "timeout": float(tuned.get("timeout", 0.05)),
+        "queries": queries,
+        "burst_schedule": plan_burst_schedule(len(queries)),
+        "burst_pause_min_sec": float(tuned.get("burst_pause_min_sec", BURST_PAUSE_MIN_SEC)),
+        "burst_pause_max_sec": float(tuned.get("burst_pause_max_sec", BURST_PAUSE_MAX_SEC)),
+        "session_id": session_id,
+        "target_selection": "alive_hosts",
+    }
+
+
+def dns_tunnel_query_evidence(item: dict[str, Any]) -> dict[str, Any]:
+    """Return standardized evidence fields for dns_tunnel_query_sent events."""
+    fqdn = str(item.get("fqdn") or item.get("query") or "")
+    target = str(item.get("target") or "")
+    return {
+        "target": target,
+        "resolver": str(item.get("resolver") or target),
+        "fqdn": fqdn,
+        "query": str(item.get("query") or fqdn),
+        "protocol": str(item.get("protocol") or "dns_udp"),
+        "port": int(item.get("port") or 53),
+        "idx_pattern": bool(item.get("idx_pattern", is_valid_tunnel_fqdn(fqdn))),
+        **{k: item[k] for k in ("seq", "chunk_bytes", "label_length", "session_id", "query_role") if k in item},
+    }

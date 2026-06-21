@@ -14,6 +14,7 @@ from dsp.protocols.dns.tunnel import (
     TUNNEL_DOMAIN_DEFAULT,
     build_tunnel_fqdn,
     chunk_to_b32_label,
+    dns_tunnel_query_evidence,
     iter_payload_chunks,
     plan_burst_schedule,
     plan_chunk_count,
@@ -125,17 +126,23 @@ def run(
                 else:
                     result = client.send_fire_and_forget(target, fqdn)
 
-                query_evidence = {
-                    "session_id": session_id,
-                    "seq": seq,
-                    "qtype": query.qtype,
-                    "resolver": target,
-                    "port": query.port,
-                    "query_id": result.query_id,
-                    "outcome": result.outcome,
-                    "label_length": len(b32_label),
-                    "burst_index": burst_idx + 1,
-                }
+                query_evidence = dns_tunnel_query_evidence(
+                    {
+                        "target": target,
+                        "fqdn": fqdn,
+                        "seq": seq,
+                        "label_length": len(b32_label),
+                    }
+                )
+                query_evidence.update(
+                    {
+                        "session_id": session_id,
+                        "qtype": query.qtype,
+                        "query_id": result.query_id,
+                        "outcome": result.outcome,
+                        "burst_index": burst_idx + 1,
+                    }
+                )
                 if result.evidence.get("bytes_sent") is not None:
                     query_evidence["bytes_sent"] = result.evidence["bytes_sent"]
                 ctx.event_store.append(

@@ -31,6 +31,11 @@ validation_profile:
         event: dns_tunnel_query_sent
         status: sent
       aggregate: count
+    - name: dns_tunnel_idx_pattern_count
+      event_filter:
+        event: dns_tunnel_query_sent
+        status: sent
+      aggregate: count
   success:
     dns_tunnel_query_sent_count:
       min: 1
@@ -38,6 +43,10 @@ validation_profile:
       min: 1
   fail_fast:
     - SOT_EMPTY_AFTER_EXECUTE
+    - DNS_TUNNEL_EVIDENCE_INCOMPLETE
+    - DNS_TUNNEL_INVALID_FQDN_PATTERN
+    - DNS_TUNNEL_INVALID_PROTOCOL
+    - DNS_TUNNEL_INVALID_PORT
 
 report_profile:
   profile_version: "1.0.0"

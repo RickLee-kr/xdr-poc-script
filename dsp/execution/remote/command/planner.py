@@ -23,18 +23,7 @@ from dsp.protocols.dns.dga import (
     generate_nxdomain_fqdn,
     generate_resolvable_fqdn,
 )
-from dsp.protocols.dns.tunnel import (
-    CHUNK_SIZE_DEFAULT,
-    PAYLOAD_MB_DEFAULT,
-    TUNNEL_DOMAIN_DEFAULT,
-    build_tunnel_fqdn,
-    chunk_to_b32_label,
-    iter_payload_chunks,
-    plan_burst_schedule,
-    plan_chunk_count,
-    select_tunnel_targets,
-)
-from dsp.protocols.dns.volume_profiles import apply_volume_profile
+from dsp.protocols.dns.tunnel import plan_dns_tunnel
 from dsp.protocols.http.sqli_payloads import plan_sqli_requests
 from dsp.protocols.http.urls import plan_followup_requests
 from dsp.protocols.kerberos.attempts import plan_kerberos_attempts
@@ -177,43 +166,7 @@ def _plan_sql_injection(targets: dict[str, Any], params: dict[str, Any], *, dry_
 
 
 def _plan_dns_tunnel(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    target_set = targets_dict_to_target_set(targets)
-    tuned = apply_volume_profile(params, dry_run=dry_run)
-    payload_mb = float(tuned.get("payload_mb", PAYLOAD_MB_DEFAULT))
-    chunk_size = int(tuned.get("chunk_size", CHUNK_SIZE_DEFAULT))
-    domain = str(tuned.get("domain", TUNNEL_DOMAIN_DEFAULT))
-    max_hosts = int(tuned.get("max_hosts", 2))
-    hosts = select_tunnel_targets(target_set, tuned, max_hosts=max_hosts)
-    if not hosts:
-        return {"type": "dns_tunnel", "mode": "skip", "reason": "no_alive_hosts"}
-    total = plan_chunk_count(payload_mb, chunk_size)
-    max_chunks = tuned.get("max_chunks")
-    if max_chunks is not None:
-        total = min(total, int(max_chunks))
-    queries: list[dict[str, Any]] = []
-    for target in hosts:
-        for seq, chunk in enumerate(iter_payload_chunks(payload_mb, chunk_size), start=1):
-            if seq > total:
-                break
-            label = chunk_to_b32_label(chunk)
-            fqdn = build_tunnel_fqdn(seq, label, domain)
-            queries.append(
-                {
-                    "target": target,
-                    "seq": seq,
-                    "fqdn": fqdn,
-                    "chunk_bytes": len(chunk),
-                    "label_length": len(label),
-                }
-            )
-    return {
-        "type": "dns_tunnel",
-        "mode": "mock" if dry_run else "live",
-        "domain": domain,
-        "timeout": float(tuned.get("timeout", 0.05)),
-        "queries": queries,
-        "burst_schedule": plan_burst_schedule(len(queries)),
-    }
+    return plan_dns_tunnel(targets_dict_to_target_set(targets), params, dry_run=dry_run)
 
 
 def _plan_dga(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:

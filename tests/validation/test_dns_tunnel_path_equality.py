@@ -37,25 +37,36 @@ def test_dns_tunnel_path_equality():
     _append_lifecycle(store, run_id, "dns_tunnel")
 
     fqdn = "idx-000001-mfrggzdfmy.dns-tunnel.com"
+    target = "10.10.10.20"
     for seq in (1, 2, 3):
+        evidence = {
+            "target": target,
+            "resolver": target,
+            "fqdn": fqdn,
+            "query": fqdn,
+            "protocol": "dns_udp",
+            "port": 53,
+            "idx_pattern": True,
+            "seq": seq,
+        }
         store.append(
             build_tunnel_chunk_created_event(
                 run_id=run_id,
                 scenario_id="dns_tunnel",
-                target="10.10.10.20",
+                target=target,
                 fqdn=fqdn,
                 source="dry_run",
-                evidence={"seq": seq},
+                evidence=evidence,
             )
         )
         store.append(
             build_tunnel_query_sent_event(
                 run_id=run_id,
                 scenario_id="dns_tunnel",
-                target="10.10.10.20",
+                target=target,
                 fqdn=fqdn,
                 source="dry_run",
-                evidence={"seq": seq},
+                evidence=evidence,
             )
         )
 

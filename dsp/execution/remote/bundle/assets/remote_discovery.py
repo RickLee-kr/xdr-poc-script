@@ -295,35 +295,9 @@ def _targets_to_target_set(targets: dict[str, Any]) -> Any:
 
 
 def _plan_dns_tunnel(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    from dsp.protocols.dns.tunnel import select_tunnel_targets
+    from dsp.protocols.dns.tunnel import plan_dns_tunnel
 
-    max_hosts = int(params.get("max_hosts", 2))
-    hosts = select_tunnel_targets(_targets_to_target_set(targets), params, max_hosts=max_hosts)
-    if not hosts:
-        return {"type": "dns_tunnel", "mode": "skip", "reason": "no_alive_hosts"}
-    domain = str(params.get("domain", "dns-tunnel.com"))
-    total = int(params.get("max_chunks", 3))
-    queries = []
-    for target in hosts:
-        for seq in range(1, total + 1):
-            fqdn = f"{seq:04d}.chunk.dns-tunnel.{domain}"
-            queries.append(
-                {
-                    "target": target,
-                    "seq": seq,
-                    "fqdn": fqdn,
-                    "chunk_bytes": 32,
-                    "label_length": len(fqdn),
-                }
-            )
-    return {
-        "type": "dns_tunnel",
-        "mode": "mock" if dry_run else "live",
-        "domain": domain,
-        "timeout": float(params.get("timeout", 0.05)),
-        "queries": queries,
-        "burst_schedule": [len(queries)],
-    }
+    return plan_dns_tunnel(_targets_to_target_set(targets), params, dry_run=dry_run)
 
 
 def _plan_dga(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:

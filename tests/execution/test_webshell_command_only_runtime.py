@@ -289,6 +289,66 @@ def test_scenario_dispatches_webshell_commands(
         server.stop()
 
 
+def test_webshell_dns_tunnel_execute_emits_idx_evidence(tmp_path: Path) -> None:
+    server = WebshellTestServer(storage_dir=tmp_path / "server")
+    server.start()
+    try:
+        provider = _connected_provider(server)
+        loader = PluginLoader()
+        record = loader.discover_and_load().get("dns_tunnel")
+        assert record is not None
+        run_id = "cmd_dns_tunnel_idx"
+        store = EventStore(tmp_path / "events.db")
+        store.open_run(run_id)
+        scenario_params: dict[str, dict] = {
+            "dns_tunnel": {
+                "max_hosts": 1,
+                "max_chunks": 2,
+                "plan_seed": 42,
+            }
+        }
+        _seed_discovery(scenario_params)
+        apply_webshell_initial_compromise_plan(
+            scenario_params,
+            ["dns_tunnel"],
+            server.webshell_url,
+        )
+        exec_ctx = ExecutionContext(
+            run_id=run_id,
+            target_net="10.10.10.0/24",
+            dry_run=True,
+            provider_type="webshell",
+            execution_metadata={"traffic_origin_host": "remote", "remote_work_dir": "/tmp/dsp"},
+        )
+        run_ctx = RunContext(
+            run_id=run_id,
+            target_net="10.10.10.0/24",
+            event_store=store,
+            config=RunConfig(dry_run=True, scenario_params=scenario_params),
+            dry_run=True,
+        )
+        targets = resolve_targets("10.10.10.0/24", dry_run=True)
+        provider.prepare(exec_ctx)
+        provider.execute(exec_ctx, record, run_ctx, targets)
+        sent_events = [
+            event
+            for event in store.list_events(run_id, "dns_tunnel")
+            if event.event == "dns_tunnel_query_sent"
+        ]
+        assert sent_events
+        for event in sent_events:
+            evidence = event.evidence
+            fqdn = str(evidence.get("fqdn") or event.artifact)
+            assert fqdn.startswith("idx-")
+            assert "chunk.dns-tunnel" not in fqdn
+            assert evidence.get("query")
+            assert evidence.get("protocol") == "dns_udp"
+            assert evidence.get("port") == 53
+            assert evidence.get("target")
+    finally:
+        server.stop()
+
+
 def test_discovery_origin_is_webshell_host(tmp_path: Path) -> None:
     server = WebshellTestServer(storage_dir=tmp_path / "server")
     server.start()

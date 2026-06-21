@@ -95,6 +95,14 @@ class ValidationEngine:
             )
 
         metrics = self.store.aggregate(run_id, scenario_id, metric_defs)
+        if scenario_id == "dns_tunnel":
+            from dsp.protocols.dns.tunnel_validation import count_dns_tunnel_idx_pattern_queries
+
+            metrics["dns_tunnel_idx_pattern_count"] = count_dns_tunnel_idx_pattern_queries(
+                self.store,
+                run_id,
+                scenario_id,
+            )
         decision, reason = self._apply_thresholds(metrics, vp)
         missing_items: list[str] = []
         if (
@@ -165,6 +173,21 @@ class ValidationEngine:
             for name, value in self.store.aggregate(run_id, scenario_id, metric_defs).items():
                 if isinstance(value, (int, float)) and value < 0:
                     codes.append("COUNTER_IMPOSSIBLE")
+
+        if scenario_id == "dns_tunnel":
+            from dsp.protocols.dns.tunnel_validation import (
+                DNS_TUNNEL_FAIL_FAST_CODES,
+                evaluate_dns_tunnel_invariants,
+            )
+
+            invariant_codes = evaluate_dns_tunnel_invariants(
+                self.store,
+                run_id,
+                scenario_id,
+            )
+            for code in invariant_codes:
+                if code in fail_fast and code not in codes:
+                    codes.append(code)
 
         return codes
 
