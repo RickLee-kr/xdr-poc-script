@@ -83,26 +83,22 @@ class ValidationEngine:
 
         fail_fast_codes = self._evaluate_fail_fast(run_id, scenario_id, vp, metric_defs)
         if fail_fast_codes:
+            from dsp.runtime.scenario_store_metrics import aggregate_scenario_metrics
+
             return ValidationResult(
                 run_id=run_id,
                 scenario_id=scenario_id,
                 decision=ValidationDecision.CODE_FAILURE,
                 reason=fail_fast_codes[0],
-                metrics=self.store.aggregate(run_id, scenario_id, metric_defs),
+                metrics=aggregate_scenario_metrics(self.store, self.registry, run_id, scenario_id),
                 fail_fast_codes=fail_fast_codes,
                 validated_at=datetime.now(timezone.utc),
                 validation_profile_version=profile_version,
             )
 
-        metrics = self.store.aggregate(run_id, scenario_id, metric_defs)
-        if scenario_id == "dns_tunnel":
-            from dsp.protocols.dns.tunnel_validation import count_dns_tunnel_idx_pattern_queries
+        from dsp.runtime.scenario_store_metrics import aggregate_scenario_metrics
 
-            metrics["dns_tunnel_idx_pattern_count"] = count_dns_tunnel_idx_pattern_queries(
-                self.store,
-                run_id,
-                scenario_id,
-            )
+        metrics = aggregate_scenario_metrics(self.store, self.registry, run_id, scenario_id)
         decision, reason = self._apply_thresholds(metrics, vp)
         missing_items: list[str] = []
         if (

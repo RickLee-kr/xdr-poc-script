@@ -910,6 +910,7 @@ class RunManager:
             if execution_provider == "webshell"
             else None,
             scenario_params=config.scenario_params if execution_provider == "webshell" else None,
+            registry=self.registry,
         )
         host_behavior_payload = traffic_summary.get("host_behavior")
         if isinstance(host_behavior_payload, dict):

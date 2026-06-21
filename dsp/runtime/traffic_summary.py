@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from dsp.engine.scenario_engine import TargetSet
 from dsp.event_store import Event, EventStore
+
+if TYPE_CHECKING:
+    from dsp.plugins.registry import PluginRegistry
 
 
 def _normalize_event(event: Event | dict[str, Any]) -> dict[str, Any]:
@@ -57,6 +61,156 @@ def _last_evidence(
             continue
         return evidence
     return {}
+
+
+def _last_scenario_evidence(
+    events: list[dict[str, Any]],
+    scenario_id: str,
+    event_name: str,
+    *,
+    exclude_phase1: bool = True,
+) -> dict[str, Any]:
+    """Prefer non-phase1 lifecycle evidence; fall back to any matching event."""
+    evidence = _last_evidence(events, scenario_id, event_name, exclude_phase1=exclude_phase1)
+    if evidence or not exclude_phase1:
+        return evidence
+    return _last_evidence(events, scenario_id, event_name, exclude_phase1=False)
+
+
+def _parse_request_url(url: str) -> tuple[str, int, str]:
+    parsed = urlparse(url)
+    scheme = parsed.scheme or "http"
+    host = parsed.hostname or ""
+    port = parsed.port
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return host, int(port), scheme
+
+
+def _endpoint_label(host: str, port: int, scheme: str = "http") -> str:
+    default_port = 443 if scheme == "https" else 80
+    if port and port != default_port:
+        return f"{scheme}://{host}:{port}"
+    return f"{scheme}://{host}"
+
+
+def _collect_http_request_metadata(
+    events: list[dict[str, Any]],
+    scenario_id: str,
+    *,
+    exclude_phase1: bool = True,
+) -> dict[str, Any]:
+    ports_used: set[int] = set()
+    schemes_used: set[str] = set()
+    target_ips: set[str] = set()
+    per_target_request_count: dict[str, int] = {}
+    payload_category_distribution: dict[str, int] = {}
+    transport_distribution: dict[str, int] = {}
+
+    request_events = (
+        "http_request_sent",
+        "sql_request_sent",
+        "http_request_created",
+        "sql_payload_generated",
+    )
+    for event in events:
+        if event.get("scenario_id") != scenario_id:
+            continue
+        event_name = event.get("event")
+        if event_name not in request_events:
+            continue
+        evidence = event.get("evidence") or {}
+        if exclude_phase1 and _is_phase1_webshell_evidence(evidence):
+            continue
+
+        url = str(evidence.get("url") or event.get("artifact") or event.get("target") or "")
+        host = str(evidence.get("host") or "")
+        port_val = evidence.get("port")
+        scheme = str(evidence.get("scheme") or "")
+
+        if url.startswith(("http://", "https://")):
+            host, port, scheme = _parse_request_url(url)
+        elif host and port_val is not None:
+            port = int(port_val)
+            scheme = scheme or "http"
+        else:
+            continue
+
+        if host:
+            target_ips.add(host)
+        if port:
+            ports_used.add(port)
+        if scheme:
+            schemes_used.add(scheme)
+
+        label = _endpoint_label(host, port, scheme or "http")
+        per_target_request_count[label] = per_target_request_count.get(label, 0) + 1
+
+        if event_name == "sql_payload_generated":
+            category = str(evidence.get("payload_category") or "unknown")
+            payload_category_distribution[category] = payload_category_distribution.get(category, 0) + 1
+        if event_name == "sql_request_sent":
+            transport = str(evidence.get("transport") or evidence.get("method") or "GET")
+            transport_distribution[transport] = transport_distribution.get(transport, 0) + 1
+
+    selected_targets = sorted(per_target_request_count.keys())
+    return {
+        "target_ips": sorted(target_ips),
+        "ports_used": sorted(ports_used),
+        "schemes_used": sorted(schemes_used),
+        "selected_targets": selected_targets,
+        "target_count": len(selected_targets),
+        "per_target_request_count": per_target_request_count,
+        "requests_per_target": dict(per_target_request_count),
+        "payload_category_distribution": payload_category_distribution,
+        "transport_distribution": transport_distribution,
+    }
+
+
+def _collect_port_sweep_metadata(
+    events: list[dict[str, Any]],
+    scenario_id: str,
+) -> dict[str, Any]:
+    ports: set[int] = set()
+    target_ips: set[str] = set()
+    probe_events = {"port_probe_sent", "port_connection_opened", "port_connection_failed"}
+    for event in events:
+        if event.get("scenario_id") != scenario_id:
+            continue
+        if event.get("event") not in probe_events:
+            continue
+        evidence = event.get("evidence") or {}
+        host = str(evidence.get("host") or event.get("target") or "")
+        port_val = evidence.get("port")
+        if host:
+            target_ips.add(host)
+        if port_val is not None:
+            ports.add(int(port_val))
+    return {
+        "ports": sorted(ports),
+        "target_ips": sorted(target_ips),
+    }
+
+
+def _merge_nonempty_fields(scenario_summary: dict[str, Any], fields: dict[str, Any]) -> None:
+    for key, value in fields.items():
+        if value in (None, "", [], {}):
+            continue
+        if not scenario_summary.get(key):
+            scenario_summary[key] = value
+
+
+def _scenario_store_metrics(
+    store: EventStore,
+    registry: PluginRegistry | None,
+    run_id: str,
+    scenario_id: str,
+) -> dict[str, int | float]:
+    if registry is None:
+        return {}
+    from dsp.runtime.scenario_store_metrics import aggregate_scenario_metrics
+
+    return aggregate_scenario_metrics(store, registry, run_id, scenario_id)
 
 
 def _count_events(
@@ -139,6 +293,7 @@ def build_traffic_summary(
     traffic_profile: str,
     webshell_execution: dict[str, Any] | None = None,
     scenario_params: dict[str, dict[str, Any]] | None = None,
+    registry: PluginRegistry | None = None,
 ) -> dict[str, Any]:
     """Build planned vs actual traffic summary for a run."""
     events = [_normalize_event(e) for e in store.list_events(run_id)]
@@ -159,45 +314,45 @@ def build_traffic_summary(
 
     for sid in scenario_ids:
         exclude_phase1 = sid in ("http_followup", "sql_injection")
-        started = _last_evidence(events, sid, f"{sid}_started", exclude_phase1=exclude_phase1)
+        started = _last_scenario_evidence(events, sid, f"{sid}_started", exclude_phase1=exclude_phase1)
         if not started:
-            started = _last_evidence(events, sid, "host_behavior_check_started")
+            started = _last_scenario_evidence(events, sid, "host_behavior_check_started")
         if not started:
-            started = _last_evidence(events, sid, "port_sweep_started")
+            started = _last_scenario_evidence(events, sid, "port_sweep_started")
         if not started:
-            started = _last_evidence(events, sid, "http_followup_started")
+            started = _last_scenario_evidence(events, sid, "http_followup_started")
         if not started:
-            started = _last_evidence(events, sid, "ssh_failure_started")
+            started = _last_scenario_evidence(events, sid, "ssh_failure_started")
         if not started:
-            started = _last_evidence(events, sid, "dns_tunnel_started")
+            started = _last_scenario_evidence(events, sid, "dns_tunnel_started")
         if not started:
-            started = _last_evidence(events, sid, "dga_started")
+            started = _last_scenario_evidence(events, sid, "dga_started")
         if not started:
-            started = _last_evidence(events, sid, "rare_protocol_activity_started")
+            started = _last_scenario_evidence(events, sid, "rare_protocol_activity_started")
         if not started:
-            started = _last_evidence(events, sid, "smb_scenario_started")
+            started = _last_scenario_evidence(events, sid, "smb_scenario_started")
         if not started:
-            started = _last_evidence(events, sid, "sql_injection_started")
+            started = _last_scenario_evidence(events, sid, "sql_injection_started")
 
-        completed = _last_evidence(events, sid, f"{sid}_completed", exclude_phase1=exclude_phase1)
+        completed = _last_scenario_evidence(events, sid, f"{sid}_completed", exclude_phase1=exclude_phase1)
         if not completed:
-            completed = _last_evidence(events, sid, "host_behavior_check_completed")
+            completed = _last_scenario_evidence(events, sid, "host_behavior_check_completed")
         if not completed:
-            completed = _last_evidence(events, sid, "port_sweep_completed")
+            completed = _last_scenario_evidence(events, sid, "port_sweep_completed")
         if not completed:
-            completed = _last_evidence(events, sid, "http_followup_completed")
+            completed = _last_scenario_evidence(events, sid, "http_followup_completed")
         if not completed:
-            completed = _last_evidence(events, sid, "ssh_failure_completed")
+            completed = _last_scenario_evidence(events, sid, "ssh_failure_completed")
         if not completed:
-            completed = _last_evidence(events, sid, "dns_tunnel_completed")
+            completed = _last_scenario_evidence(events, sid, "dns_tunnel_completed")
         if not completed:
-            completed = _last_evidence(events, sid, "dga_completed")
+            completed = _last_scenario_evidence(events, sid, "dga_completed")
         if not completed:
-            completed = _last_evidence(events, sid, "rare_protocol_activity_completed")
+            completed = _last_scenario_evidence(events, sid, "rare_protocol_activity_completed")
         if not completed:
-            completed = _last_evidence(events, sid, "smb_scenario_completed")
+            completed = _last_scenario_evidence(events, sid, "smb_scenario_completed")
         if not completed:
-            completed = _last_evidence(events, sid, "sql_injection_completed")
+            completed = _last_scenario_evidence(events, sid, "sql_injection_completed")
 
         skipped = _last_evidence(events, sid, f"{sid}_skipped")
         if not skipped:
@@ -211,6 +366,8 @@ def build_traffic_summary(
         if not skipped:
             skipped = _last_evidence(events, sid, "rare_protocol_activity_skipped")
 
+        store_metrics = _scenario_store_metrics(store, registry, run_id, sid)
+        use_store_metrics = bool(store_metrics)
         scenario_summary: dict[str, Any] = {
             "target_ips": completed.get("targets") or started.get("hosts") or skipped.get("hosts") or [],
             "skipped": bool(skipped),
@@ -226,27 +383,60 @@ def build_traffic_summary(
                 "host_behavior": completed.get("host_behavior") or {},
             })
         elif sid == "port_sweep":
+            port_meta = _collect_port_sweep_metadata(events, sid)
+            if use_store_metrics:
+                probes_sent = int(store_metrics.get("port_probe_count", 0))
+                connections_open = int(store_metrics.get("port_connection_success_count", 0))
+                connection_failures = int(store_metrics.get("port_connection_failure_count", 0))
+            else:
+                probes_sent = int(
+                    completed.get("probe_count")
+                    or _count_events(events, sid, "port_probe_sent")
+                )
+                connections_open = int(completed.get("connection_success_count", 0))
+                connection_failures = int(
+                    completed.get("connection_failure_count")
+                    or _count_events(events, sid, "port_connection_failed")
+                )
             scenario_summary.update({
                 "probes_planned": started.get("planned_probes", 0),
-                "probes_sent": completed.get("probe_count") or _count_events(events, sid, "port_probe_sent"),
-                "connections_open": completed.get("connection_success_count", 0),
-                "connection_failures": completed.get("connection_failure_count", 0),
-                "ports": started.get("ports", []),
+                "probes_sent": probes_sent,
+                "connections_open": connections_open,
+                "connection_failures": connection_failures,
+                "ports": started.get("ports") or port_meta.get("ports", []),
                 "duration_sec": completed.get("duration_sec"),
                 "probes_per_second": completed.get("probes_per_second"),
                 "concurrency": started.get("concurrency") or completed.get("concurrency"),
             })
+            _merge_nonempty_fields(scenario_summary, {"target_ips": port_meta.get("target_ips", [])})
         elif sid == "http_followup":
-            request_count = (
-                completed.get("request_count")
-                or completed.get("requests_sent")
-                or _count_events(events, sid, "http_request_sent", exclude_phase1=True)
+            request_metadata = _collect_http_request_metadata(events, sid, exclude_phase1=True)
+            if use_store_metrics:
+                requests_sent = int(store_metrics.get("http_request_sent_count", 0))
+                responses_received = int(store_metrics.get("http_response_received_count", 0))
+            else:
+                requests_sent = int(
+                    completed.get("request_count")
+                    or completed.get("requests_sent")
+                    or _count_events(events, sid, "http_request_sent", exclude_phase1=True)
+                )
+                responses_received = int(
+                    completed.get("response_count")
+                    or completed.get("responses_received")
+                    or _count_events(events, sid, "http_response_received", exclude_phase1=True)
+                )
+            requests_planned = (
+                started.get("planned_requests")
+                or started.get("requests_planned")
+                or _count_events(events, sid, "http_request_created", exclude_phase1=True)
+                or 0
             )
+            if skipped:
+                requests_planned = 0
             scenario_summary.update({
-                "requests_planned": 0 if skipped else started.get("planned_requests", 0),
-                "requests_sent": request_count,
-                "responses_received": completed.get("response_count")
-                or completed.get("responses_received", 0),
+                "requests_planned": requests_planned,
+                "requests_sent": requests_sent,
+                "responses_received": responses_received,
                 "paths_sample": completed.get("paths_used") or started.get("paths_planned"),
                 "user_agent_classes": completed.get("user_agent_classes", {}),
                 "malicious_rare_ua_count": completed.get("malicious_rare_ua_count", 0),
@@ -312,10 +502,27 @@ def build_traffic_summary(
                     "success": burst.get("success", 0),
                     "failure": burst.get("failure", 0),
                 }
+            elif use_store_metrics and (
+                store_metrics.get("non_standard_port_connection_attempt_count")
+                or store_metrics.get("non_standard_port_connection_failure_count")
+                or store_metrics.get("non_standard_port_connection_success_count")
+            ):
+                scenario_summary["non_standard_port_burst"] = {
+                    "ports": burst.get("ports", []),
+                    "attempts": int(store_metrics.get("non_standard_port_connection_attempt_count", 0)),
+                    "success": int(store_metrics.get("non_standard_port_connection_success_count", 0)),
+                    "failure": int(store_metrics.get("non_standard_port_connection_failure_count", 0)),
+                }
             _merge_http_summary_fields(
                 scenario_summary,
                 _http_scenario_fallback_fields(targets, scenario_params, sid),
             )
+            _merge_nonempty_fields(scenario_summary, request_metadata)
+            if not scenario_summary.get("http_targets"):
+                scenario_summary["http_targets"] = targets.hosts_for_capability("http_targets")
+            if requests_sent > 0 and not scenario_summary.get("selected_targets"):
+                scenario_summary["selected_targets"] = request_metadata.get("selected_targets", [])
+                scenario_summary["target_count"] = len(scenario_summary["selected_targets"])
         elif sid == "ssh_failure":
             scenario_summary.update({
                 "auth_attempts_planned": started.get("planned_attempts", 0),
@@ -371,16 +578,34 @@ def build_traffic_summary(
                 "auth_failed": 0,
             })
         elif sid == "sql_injection":
-            request_count = (
-                completed.get("requests_sent")
-                or completed.get("request_count")
-                or _count_events(events, sid, "sql_request_sent", exclude_phase1=True)
+            request_metadata = _collect_http_request_metadata(events, sid, exclude_phase1=True)
+            if use_store_metrics:
+                requests_sent = int(store_metrics.get("sql_request_sent_count", 0))
+                payload_count = int(store_metrics.get("sql_payload_generated_count", 0))
+            else:
+                requests_sent = int(
+                    completed.get("requests_sent")
+                    or completed.get("request_count")
+                    or _count_events(events, sid, "sql_request_sent", exclude_phase1=True)
+                )
+                payload_count = int(
+                    completed.get("payload_count")
+                    or _count_events(events, sid, "sql_payload_generated", exclude_phase1=True)
+                )
+            requests_planned = (
+                started.get("planned_requests")
+                or started.get("requests_planned")
+                or payload_count
+                or 0
             )
+            if skipped:
+                requests_planned = 0
             scenario_summary.update({
-                "requests_planned": 0 if skipped else started.get("planned_requests", 0),
-                "requests_sent": request_count,
-                "responses_received": completed.get("response_count", 0),
-                "payload_count": completed.get("payload_count", 0),
+                "requests_planned": requests_planned,
+                "requests_sent": requests_sent,
+                "responses_received": int(store_metrics.get("sql_response_received_count", 0))
+                or completed.get("response_count", 0),
+                "payload_count": payload_count,
                 "payload_category_distribution": completed.get("payload_category_distribution", {}),
                 "transport_distribution": completed.get("transport_distribution", {}),
                 "ports_used": completed.get("ports_used", started.get("ports_used", [])),
@@ -414,6 +639,22 @@ def build_traffic_summary(
                 scenario_summary,
                 _http_scenario_fallback_fields(targets, scenario_params, sid),
             )
+            _merge_nonempty_fields(scenario_summary, request_metadata)
+            if not scenario_summary.get("payload_category_distribution"):
+                scenario_summary["payload_category_distribution"] = request_metadata.get(
+                    "payload_category_distribution",
+                    {},
+                )
+            if not scenario_summary.get("transport_distribution"):
+                scenario_summary["transport_distribution"] = request_metadata.get(
+                    "transport_distribution",
+                    {},
+                )
+            if not scenario_summary.get("http_targets"):
+                scenario_summary["http_targets"] = targets.hosts_for_capability("http_targets")
+            if requests_sent > 0 and not scenario_summary.get("selected_targets"):
+                scenario_summary["selected_targets"] = request_metadata.get("selected_targets", [])
+                scenario_summary["target_count"] = len(scenario_summary["selected_targets"])
 
         summary["scenarios"][sid] = scenario_summary
 
