@@ -51,7 +51,59 @@ def test_command_executed_events_build_checklist(store: EventStore) -> None:
     assert checklist.passwd_read
     assert checklist.base64_exec
     assert not checklist.eicar_create
-    assert checklist.missing_keys() == ["eicar_create", "eicar_delete", "eicar_read"]
+    assert checklist.missing_keys() == [
+        "eicar_archive",
+        "eicar_copy",
+        "eicar_create",
+        "eicar_decode",
+        "eicar_delete",
+        "eicar_encode",
+        "eicar_move",
+        "eicar_read",
+    ]
+
+
+def test_eicar_lifecycle_events(store: EventStore) -> None:
+    run_id = "run-obs"
+    sid = "host_behavior_check"
+    from dsp.protocols.host.behavior_observability import append_eicar_lifecycle_event
+
+    for event in (
+        "eicar_create",
+        "eicar_read",
+        "eicar_copy",
+        "eicar_move",
+        "eicar_archive",
+        "eicar_encode",
+        "eicar_decode",
+        "eicar_delete",
+    ):
+        append_eicar_lifecycle_event(
+            store,
+            run_id=run_id,
+            event=event,
+            scenario_id=sid,
+        )
+
+    checklist = build_host_behavior_checklist(store, run_id, sid)
+    assert checklist.eicar_create
+    assert checklist.eicar_read
+    assert checklist.eicar_copy
+    assert checklist.eicar_move
+    assert checklist.eicar_archive
+    assert checklist.eicar_encode
+    assert checklist.eicar_decode
+    assert checklist.eicar_delete
+    assert checklist.missing_keys() == [
+        "base64_exec",
+        "hostname",
+        "id",
+        "ip_addr",
+        "ip_route",
+        "passwd_read",
+        "uname",
+        "whoami",
+    ]
 
 
 def test_eicar_verification_events(store: EventStore) -> None:
@@ -78,8 +130,13 @@ def test_format_host_behavior_summary_lines() -> None:
             "ip_route": True,
             "passwd_read": True,
             "base64_exec": True,
-            "eicar_create": False,
-            "eicar_read": False,
+            "eicar_create": True,
+            "eicar_read": True,
+            "eicar_copy": False,
+            "eicar_move": False,
+            "eicar_archive": False,
+            "eicar_encode": False,
+            "eicar_decode": False,
             "eicar_delete": False,
         }
     )

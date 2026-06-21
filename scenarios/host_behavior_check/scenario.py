@@ -64,7 +64,7 @@ class HostBehaviorCheckScenario(Scenario):
             EventQuery(
                 run_id=ctx.run_id,
                 scenario_id=scenario_id,
-                event="eicar_file_created",
+                event="eicar_create",
                 status="info",
             )
         )

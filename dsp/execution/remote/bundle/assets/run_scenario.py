@@ -1045,6 +1045,29 @@ def _hb_file_lifecycle(
         )
 
 
+def _hb_run_planned_steps(
+    log: EventLog,
+    *,
+    target: str,
+    mode: str,
+    timeout: float,
+    steps: list[dict[str, str]],
+) -> None:
+    for step in steps:
+        event_name = str(step["event"])
+        shell = str(step["shell"])
+        artifact = str(step.get("artifact") or event_name)
+        log.append(
+            event=event_name,
+            status="info",
+            target=target,
+            artifact=artifact,
+            evidence={"shell": shell, "artifact": artifact},
+        )
+        if mode == "live":
+            _run_shell_command(shell, timeout=timeout)
+
+
 def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
     if plan.get("mode") == "skip":
         _write_skip(
@@ -1060,7 +1083,8 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
     timeout = float(plan.get("timeout", 30.0))
     commands = list(plan.get("commands") or [])
     credential_checks = list(plan.get("credential_checks") or [])
-    eicar = dict(plan.get("eicar") or {})
+    eicar_lifecycle = list(plan.get("eicar_lifecycle") or [])
+    encoded_file_activity = list(plan.get("encoded_file_activity") or [])
 
     log.append(
         event="host_behavior_check_started",
@@ -1071,6 +1095,8 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
             "target_host": target,
             "commands_planned": len(commands),
             "credential_checks_planned": len(credential_checks),
+            "eicar_lifecycle_planned": len(eicar_lifecycle),
+            "encoded_file_activity_planned": len(encoded_file_activity),
             "eicar_variants_planned": len(plan.get("eicar_variants") or []),
             "suspicious_scripts_planned": len(plan.get("suspicious_scripts") or []),
             "persistence_artifacts_planned": len(plan.get("persistence_artifacts") or []),
@@ -1107,20 +1133,22 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
         if mode == "live":
             _run_shell_command(shell, timeout=timeout)
 
-    path = eicar.get("path")
-    content = eicar.get("content")
-    if path and content:
-        eicar_path = str(path)
-        _hb_file_lifecycle(
+    if eicar_lifecycle:
+        _hb_run_planned_steps(
             log,
             target=target,
             mode=mode,
             timeout=timeout,
-            path=eicar_path,
-            created_event="eicar_file_created",
-            accessed_event="eicar_file_accessed",
-            deleted_event="eicar_file_deleted",
-            create_fn=lambda: _hb_write_plain_file(eicar_path, str(content), timeout=timeout),
+            steps=eicar_lifecycle,
+        )
+
+    if encoded_file_activity:
+        _hb_run_planned_steps(
+            log,
+            target=target,
+            mode=mode,
+            timeout=timeout,
+            steps=encoded_file_activity,
         )
 
     for variant in plan.get("eicar_variants") or []:
@@ -1205,6 +1233,8 @@ def _run_host_behavior_check(log: EventLog, plan: dict[str, Any]) -> None:
             "target_host": target,
             "commands_dispatched": len(commands),
             "credential_checks_dispatched": len(credential_checks),
+            "eicar_lifecycle_dispatched": len(eicar_lifecycle),
+            "encoded_file_activity_dispatched": len(encoded_file_activity),
             "mode": mode,
         },
     )

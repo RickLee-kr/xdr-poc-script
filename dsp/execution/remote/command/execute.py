@@ -764,13 +764,7 @@ def _execute_host_behavior_check(
     ctx: RunContext,
     request: ScenarioExecutionRequest,
 ) -> int:
-    from dsp.protocols.host.behavior_observability import (
-        append_command_executed_event,
-        append_host_behavior_summary_event,
-        command_key_for_plan_name,
-        command_label_for_plan_name,
-        host_behavior_report_payload,
-    )
+    from dsp.protocols.host.behavior_executor import execute_host_behavior_plan
 
     store = ctx.event_store
     run_id = str(request.run_id)
@@ -778,70 +772,23 @@ def _execute_host_behavior_check(
     target = plan.get("target_host")
     if not target:
         return 0
-    target = str(target)
-    commands = plan.get("commands") or []
     timeout = float(plan.get("timeout", 30.0))
     mock = plan.get("mode") == "mock"
-    cmd_events.append_event(
-        store,
-        run_id=run_id,
-        scenario_id=scenario_id,
-        event="host_behavior_check_started",
-        status="info",
-        target=target,
-        artifact="host_behavior_session",
-        evidence={"commands_planned": len(commands), "mode": plan.get("mode", "live")},
-    )
-    dispatched = 0
-    for index, item in enumerate(commands, start=1):
-        plan_name = str(item.get("name") or f"cmd_{index}")
-        shell = str(item.get("shell") or plan_name or "true")
+
+    def _dispatch_shell(shell: str) -> None:
         command = mock_noop_command() if mock else host_behavior_shell_command(shell)
-        status = _dispatch(provider, command, timeout_seconds=int(timeout))
-        cmd_events.append_command_dispatched(
-            store,
-            run_id=run_id,
-            scenario_id=scenario_id,
-            command_category="host_behavior",
-            target=target,
-            protocol="host",
-            dispatch_status=status,
-            artifact=plan_name,
-            traffic_event="host_behavior_command_dispatched",
-            evidence={"seq": index, "command_name": plan_name, "command": plan_name},
-        )
-        append_command_executed_event(
-            store,
-            run_id=run_id,
-            scenario_id=scenario_id,
-            command=command_label_for_plan_name(plan_name),
-            command_key=command_key_for_plan_name(plan_name),
-            target=target,
-            source="remote",
-            dispatch_status=status,
-        )
-        dispatched += 1
-    checklist = append_host_behavior_summary_event(
+        _dispatch(provider, command, timeout_seconds=int(timeout))
+
+    completed = execute_host_behavior_plan(
         store,
+        plan,
         run_id=run_id,
         scenario_id=scenario_id,
-        target=target,
         source="remote",
+        run_shell=None if mock else _dispatch_shell,
+        timeout=timeout,
     )
-    cmd_events.append_event(
-        store,
-        run_id=run_id,
-        scenario_id=scenario_id,
-        event="host_behavior_check_completed",
-        status="info",
-        target=target,
-        artifact="host_behavior_session",
-        evidence={
-            "commands_dispatched": dispatched,
-            "host_behavior": host_behavior_report_payload(checklist),
-        },
-    )
-    return dispatched
+    return int(completed.get("commands_dispatched", 0))
 
 
 def _execute_rare_protocol_activity(

@@ -147,12 +147,16 @@ def test_host_behavior_check_dry_run_generates_events_without_shell(tmp_runs_dir
     assert "host_behavior_check_started" in event_names
     assert "host_behavior_command_dispatched" in event_names
     assert "command_executed" in event_names
-    assert "eicar_file_created" in event_names
-    assert "eicar_created" in event_names
-    assert "eicar_file_accessed" in event_names
+    assert "eicar_create" in event_names
     assert "eicar_read" in event_names
-    assert "eicar_file_deleted" in event_names
-    assert "eicar_deleted" in event_names
+    assert "eicar_copy" in event_names
+    assert "eicar_move" in event_names
+    assert "eicar_archive" in event_names
+    assert "eicar_encode" in event_names
+    assert "eicar_decode" in event_names
+    assert "eicar_delete" in event_names
+    assert "encoded_file_create" in event_names
+    assert "encoded_file_decode" in event_names
     assert "eicar_variant_created" in event_names
     assert "credential_artifact_enumeration" in event_names
     assert "ssh_key_enumeration" in event_names
@@ -172,6 +176,8 @@ def test_host_behavior_check_dry_run_generates_events_without_shell(tmp_runs_dir
     )
     assert hb_result["decision"] == "success"
     assert hb_result.get("missing_items", []) == []
+    assert hb_result["metrics"]["eicar_create_count"] >= 1
+    assert hb_result["metrics"]["eicar_delete_count"] >= 1
 
     traffic = json.loads((run_dir / "traffic_summary.json").read_text())
     assert traffic["host_behavior"]["whoami"] is True
@@ -212,7 +218,7 @@ def test_host_behavior_check_plugins_list() -> None:
     assert record.status == PluginStatus.ACTIVE
 
 
-def test_webshell_host_behavior_observability_shows_missing_eicar(
+def test_webshell_host_behavior_runs_full_eicar_lifecycle(
     tmp_path,
 ) -> None:
     from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
@@ -253,7 +259,9 @@ def test_webshell_host_behavior_observability_shows_missing_eicar(
     names = {e["event"] for e in hb}
     assert "command_executed" in names
     assert "host_behavior_summary" in names
-    assert "eicar_created" not in names
+    assert "eicar_create" in names
+    assert "eicar_delete" in names
+    assert "encoded_file_create" in names
 
     executed = [e for e in hb if e["event"] == "command_executed"]
     commands = {e["evidence"]["command"] for e in executed}
@@ -264,12 +272,11 @@ def test_webshell_host_behavior_observability_shows_missing_eicar(
     hb_result = next(
         r for r in validation["results"] if r["scenario_id"] == HOST_BEHAVIOR_CHECK_SCENARIO_ID
     )
-    assert hb_result["decision"] == "failed"
-    assert "eicar_create" in hb_result["missing_items"]
-    assert "eicar_read" in hb_result["missing_items"]
-    assert "eicar_delete" in hb_result["missing_items"]
+    assert hb_result["decision"] == "success"
+    assert hb_result.get("missing_items", []) == []
 
     traffic = json.loads((run_dir / "traffic_summary.json").read_text())
     assert traffic["host_behavior"]["whoami"] is True
-    assert traffic["host_behavior"]["eicar_create"] is False
+    assert traffic["host_behavior"]["eicar_create"] is True
+    assert traffic["host_behavior"]["eicar_delete"] is True
 

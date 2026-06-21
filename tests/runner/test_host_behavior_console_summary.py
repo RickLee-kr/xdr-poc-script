@@ -25,9 +25,14 @@ def test_scenario_completed_prints_host_behavior_summary() -> None:
                     "ip_route": True,
                     "passwd_read": True,
                     "base64_exec": True,
-                    "eicar_create": False,
-                    "eicar_read": False,
-                    "eicar_delete": False,
+                    "eicar_create": True,
+                    "eicar_read": True,
+                    "eicar_copy": True,
+                    "eicar_move": True,
+                    "eicar_archive": True,
+                    "eicar_encode": True,
+                    "eicar_decode": True,
+                    "eicar_delete": True,
                 }
             },
             "artifacts": {},
@@ -37,5 +42,7 @@ def test_scenario_completed_prints_host_behavior_summary() -> None:
     assert "Host Behavior Check Completed" in output
     assert "Host Behavior Summary" in output
     assert "whoami" in output
-    assert "MISSING" in output
     assert "create" in output
+    assert "archive" in output
+    assert "OK" in output
+    assert "MISSING" not in output

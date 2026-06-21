@@ -4,11 +4,12 @@ name: Host Behavior Check — EDR Observation Commands
 version: "1.0.0"
 description: >
   Harmless host enumeration, webshell reconnaissance (whoami, id, hostname,
-  uname, ip addr/route), credential artifact simulation, EICAR variants,
-  suspicious script drops, persistence artifact simulation, and archive activity
-  on the webshell compromise host. Replaces the planned standalone
-  webshell_recon scenario. Required Phase 1 webshell attack scenario — runs
-  after initial HTTP/SQLi compromise and before internal recon on every
+  uname, ip addr/route), credential artifact simulation, full EICAR lifecycle
+  (create/read/copy/move/archive/encode/decode/delete), encoded file activity,
+  EICAR variants, suspicious script drops, persistence artifact simulation,
+  and archive activity on the webshell compromise host. Replaces the planned
+  standalone webshell_recon scenario. Required Phase 1 webshell attack scenario —
+  runs after initial HTTP/SQLi compromise and before internal recon on every
   webshell attack-chain run.
 
 category: endpoint
@@ -30,15 +31,78 @@ validation_profile:
         event: host_behavior_command_dispatched
         status: sent
       aggregate: count
-    - name: eicar_lifecycle_count
+    - name: eicar_create_count
       event_filter:
-        event: eicar_file_created
+        event: eicar_create
+        status: info
+      aggregate: count
+    - name: eicar_read_count
+      event_filter:
+        event: eicar_read
+        status: info
+      aggregate: count
+    - name: eicar_copy_count
+      event_filter:
+        event: eicar_copy
+        status: info
+      aggregate: count
+    - name: eicar_move_count
+      event_filter:
+        event: eicar_move
+        status: info
+      aggregate: count
+    - name: eicar_archive_count
+      event_filter:
+        event: eicar_archive
+        status: info
+      aggregate: count
+    - name: eicar_encode_count
+      event_filter:
+        event: eicar_encode
+        status: info
+      aggregate: count
+    - name: eicar_decode_count
+      event_filter:
+        event: eicar_decode
+        status: info
+      aggregate: count
+    - name: eicar_delete_count
+      event_filter:
+        event: eicar_delete
+        status: info
+      aggregate: count
+    - name: encoded_file_create_count
+      event_filter:
+        event: encoded_file_create
+        status: info
+      aggregate: count
+    - name: encoded_file_decode_count
+      event_filter:
+        event: encoded_file_decode
         status: info
       aggregate: count
   success:
     host_behavior_command_count:
+      min: 8
+    eicar_create_count:
       min: 1
-    eicar_lifecycle_count:
+    eicar_read_count:
+      min: 1
+    eicar_copy_count:
+      min: 1
+    eicar_move_count:
+      min: 1
+    eicar_archive_count:
+      min: 1
+    eicar_encode_count:
+      min: 1
+    eicar_decode_count:
+      min: 1
+    eicar_delete_count:
+      min: 1
+    encoded_file_create_count:
+      min: 1
+    encoded_file_decode_count:
       min: 1
   fail_fast:
     - SOT_EMPTY_AFTER_EXECUTE
@@ -48,7 +112,8 @@ report_profile:
   protocol: host_behavior_check
   highlight_metrics:
     - host_behavior_command_count
-    - eicar_lifecycle_count
+    - eicar_create_count
+    - eicar_delete_count
   sample_events: 5
   sample_filter:
     event: host_behavior_command_dispatched
@@ -57,7 +122,7 @@ defaults:
   timeout: 30.0
 
 safety:
-  max_events: 120
+  max_events: 200
   max_duration_sec: 180
   allowed_domains: []
   allowed_ports: []

@@ -12,6 +12,16 @@ HOST_BEHAVIOR_COMMAND_DISPATCHED = "host_behavior_command_dispatched"
 EICAR_FILE_CREATED = "eicar_file_created"
 EICAR_FILE_ACCESSED = "eicar_file_accessed"
 EICAR_FILE_DELETED = "eicar_file_deleted"
+EICAR_CREATE = "eicar_create"
+EICAR_READ = "eicar_read"
+EICAR_COPY = "eicar_copy"
+EICAR_MOVE = "eicar_move"
+EICAR_ARCHIVE = "eicar_archive"
+EICAR_ENCODE = "eicar_encode"
+EICAR_DECODE = "eicar_decode"
+EICAR_DELETE = "eicar_delete"
+ENCODED_FILE_CREATE = "encoded_file_create"
+ENCODED_FILE_DECODE = "encoded_file_decode"
 EICAR_VARIANT_CREATED = "eicar_variant_created"
 EICAR_VARIANT_ACCESSED = "eicar_variant_accessed"
 EICAR_VARIANT_DELETED = "eicar_variant_deleted"
@@ -35,6 +45,16 @@ HOST_BEHAVIOR_TRAFFIC_EVENTS = frozenset(
         EICAR_FILE_CREATED,
         EICAR_FILE_ACCESSED,
         EICAR_FILE_DELETED,
+        EICAR_CREATE,
+        EICAR_READ,
+        EICAR_COPY,
+        EICAR_MOVE,
+        EICAR_ARCHIVE,
+        EICAR_ENCODE,
+        EICAR_DECODE,
+        EICAR_DELETE,
+        ENCODED_FILE_CREATE,
+        ENCODED_FILE_DECODE,
         EICAR_VARIANT_CREATED,
         EICAR_VARIANT_ACCESSED,
         EICAR_VARIANT_DELETED,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from typing import Any
 
 EICAR_TEST_STRING = (
@@ -63,8 +64,114 @@ def _safe_run_token(run_id: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in run_id)
 
 
+EICAR_PRIMARY_PATH = "/tmp/dsp_eicar.txt"
+EICAR_COPY_PATH = "/tmp/dsp_eicar_copy.txt"
+EICAR_MOVED_PATH = "/tmp/dsp_eicar_moved.txt"
+EICAR_ARCHIVE_PATH = "/tmp/dsp_eicar.tar.gz"
+EICAR_B64_PATH = "/tmp/dsp_eicar.b64"
+EICAR_DECODED_PATH = "/tmp/dsp_eicar_decoded.txt"
+
+ENCODED_TEST_PATH = "/tmp/dsp_encoded_test.txt"
+ENCODED_B64_PATH = "/tmp/dsp_encoded_test.b64"
+ENCODED_RESTORED_PATH = "/tmp/dsp_encoded_restored.txt"
+
+
 def default_eicar_path(run_id: str) -> str:
-    return f"/tmp/dsp_eicar_{_safe_run_token(run_id)}.txt"
+    _ = run_id
+    return EICAR_PRIMARY_PATH
+
+
+def _eicar_create_shell(path: str, content: str) -> str:
+    return f"printf %s {shlex.quote(content)} > {shlex.quote(path)}"
+
+
+def build_eicar_lifecycle_steps(
+    *,
+    path: str | None = None,
+    content: str = EICAR_TEST_STRING,
+) -> list[dict[str, str]]:
+    """Ordered EICAR lifecycle steps — event name and shell command pairs."""
+    primary = path or EICAR_PRIMARY_PATH
+    delete_shell = "rm -f " + " ".join(
+        shlex.quote(p)
+        for p in (
+            primary,
+            EICAR_MOVED_PATH,
+            EICAR_DECODED_PATH,
+            EICAR_B64_PATH,
+            EICAR_ARCHIVE_PATH,
+        )
+    )
+    return [
+        {
+            "event": "eicar_create",
+            "shell": _eicar_create_shell(primary, content),
+            "artifact": primary,
+        },
+        {
+            "event": "eicar_read",
+            "shell": f"cat {shlex.quote(primary)}",
+            "artifact": primary,
+        },
+        {
+            "event": "eicar_copy",
+            "shell": f"cp {shlex.quote(primary)} {shlex.quote(EICAR_COPY_PATH)}",
+            "artifact": EICAR_COPY_PATH,
+        },
+        {
+            "event": "eicar_move",
+            "shell": f"mv {shlex.quote(EICAR_COPY_PATH)} {shlex.quote(EICAR_MOVED_PATH)}",
+            "artifact": EICAR_MOVED_PATH,
+        },
+        {
+            "event": "eicar_archive",
+            "shell": (
+                f"tar czf {shlex.quote(EICAR_ARCHIVE_PATH)} {shlex.quote(primary)}"
+            ),
+            "artifact": EICAR_ARCHIVE_PATH,
+        },
+        {
+            "event": "eicar_encode",
+            "shell": f"base64 {shlex.quote(primary)} > {shlex.quote(EICAR_B64_PATH)}",
+            "artifact": EICAR_B64_PATH,
+        },
+        {
+            "event": "eicar_decode",
+            "shell": (
+                f"base64 -d {shlex.quote(EICAR_B64_PATH)} > "
+                f"{shlex.quote(EICAR_DECODED_PATH)}"
+            ),
+            "artifact": EICAR_DECODED_PATH,
+        },
+        {
+            "event": "eicar_delete",
+            "shell": delete_shell,
+            "artifact": primary,
+        },
+    ]
+
+
+def build_encoded_file_activity_steps() -> list[dict[str, str]]:
+    """Non-EICAR base64 encode/decode file activity."""
+    return [
+        {
+            "event": "encoded_file_create",
+            "shell": (
+                f'echo "hello" > {shlex.quote(ENCODED_TEST_PATH)} && '
+                f"base64 {shlex.quote(ENCODED_TEST_PATH)} > "
+                f"{shlex.quote(ENCODED_B64_PATH)}"
+            ),
+            "artifact": ENCODED_B64_PATH,
+        },
+        {
+            "event": "encoded_file_decode",
+            "shell": (
+                f"base64 -d {shlex.quote(ENCODED_B64_PATH)} > "
+                f"{shlex.quote(ENCODED_RESTORED_PATH)}"
+            ),
+            "artifact": ENCODED_RESTORED_PATH,
+        },
+    ]
 
 
 def _tmp_path(run_id: str, name: str) -> str:
@@ -187,6 +294,11 @@ def build_host_behavior_plan(
             "path": str(params.get("eicar_path") or default_eicar_path(run_id)),
             "content": EICAR_TEST_STRING,
         },
+        "eicar_lifecycle": build_eicar_lifecycle_steps(
+            path=str(params.get("eicar_path") or default_eicar_path(run_id)),
+            content=EICAR_TEST_STRING,
+        ),
+        "encoded_file_activity": build_encoded_file_activity_steps(),
         "eicar_variants": _build_eicar_variants(run_id),
         "suspicious_scripts": _build_suspicious_scripts(run_id),
         "persistence_artifacts": _build_persistence_artifacts(run_id),

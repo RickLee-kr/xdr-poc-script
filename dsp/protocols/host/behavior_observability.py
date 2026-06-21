@@ -15,10 +15,49 @@ def _now() -> datetime:
 HOST_BEHAVIOR_SCENARIO_ID = "host_behavior_check"
 
 COMMAND_EXECUTED = "command_executed"
-EICAR_CREATED = "eicar_created"
+EICAR_CREATE = "eicar_create"
 EICAR_READ = "eicar_read"
-EICAR_DELETED = "eicar_deleted"
+EICAR_COPY = "eicar_copy"
+EICAR_MOVE = "eicar_move"
+EICAR_ARCHIVE = "eicar_archive"
+EICAR_ENCODE = "eicar_encode"
+EICAR_DECODE = "eicar_decode"
+EICAR_DELETE = "eicar_delete"
+ENCODED_FILE_CREATE = "encoded_file_create"
+ENCODED_FILE_DECODE = "encoded_file_decode"
 HOST_BEHAVIOR_SUMMARY_EVENT = "host_behavior_summary"
+
+EICAR_CHECKLIST_KEYS: tuple[str, ...] = (
+    "eicar_create",
+    "eicar_read",
+    "eicar_copy",
+    "eicar_move",
+    "eicar_archive",
+    "eicar_encode",
+    "eicar_decode",
+    "eicar_delete",
+)
+
+EICAR_EVENT_TO_CHECKLIST_KEY: dict[str, str] = {
+    EICAR_CREATE: "eicar_create",
+    EICAR_READ: "eicar_read",
+    EICAR_COPY: "eicar_copy",
+    EICAR_MOVE: "eicar_move",
+    EICAR_ARCHIVE: "eicar_archive",
+    EICAR_ENCODE: "eicar_encode",
+    EICAR_DECODE: "eicar_decode",
+    EICAR_DELETE: "eicar_delete",
+    # Legacy lifecycle names (variants / older runs)
+    "eicar_created": "eicar_create",
+    "eicar_file_created": "eicar_create",
+    "eicar_variant_created": "eicar_create",
+    "eicar_read_legacy": "eicar_read",
+    "eicar_file_accessed": "eicar_read",
+    "eicar_variant_accessed": "eicar_read",
+    "eicar_deleted": "eicar_delete",
+    "eicar_file_deleted": "eicar_delete",
+    "eicar_variant_deleted": "eicar_delete",
+}
 
 # Internal command plan names → checklist / report keys
 COMMAND_NAME_TO_KEY: dict[str, str] = {
@@ -63,6 +102,11 @@ CHECKLIST_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("eicar_create", "create"),
             ("eicar_read", "read"),
+            ("eicar_copy", "copy"),
+            ("eicar_move", "move"),
+            ("eicar_archive", "archive"),
+            ("eicar_encode", "encode"),
+            ("eicar_decode", "decode"),
             ("eicar_delete", "delete"),
         ),
     ),
@@ -87,6 +131,11 @@ class HostBehaviorChecklist:
     base64_exec: bool = False
     eicar_create: bool = False
     eicar_read: bool = False
+    eicar_copy: bool = False
+    eicar_move: bool = False
+    eicar_archive: bool = False
+    eicar_encode: bool = False
+    eicar_decode: bool = False
     eicar_delete: bool = False
 
     def to_dict(self) -> dict[str, bool]:
@@ -141,6 +190,34 @@ def append_command_executed_event(
     )
 
 
+def append_eicar_lifecycle_event(
+    store: EventStore,
+    *,
+    run_id: str,
+    event: str,
+    scenario_id: str = HOST_BEHAVIOR_SCENARIO_ID,
+    target: str = "",
+    source: str = "local",
+    artifact: str = "",
+    shell: str = "",
+    stage: str = "executor",
+) -> None:
+    store.append(
+        Event(
+            run_id=run_id,
+            scenario_id=scenario_id,
+            timestamp=_now(),
+            stage=stage,
+            event=event,
+            status="info",
+            target=target,
+            artifact=artifact or event,
+            evidence={"shell": shell, "artifact": artifact},
+            source=source,
+        )
+    )
+
+
 def append_eicar_verification_event(
     store: EventStore,
     *,
@@ -152,27 +229,24 @@ def append_eicar_verification_event(
     path: str = "",
     stage: str = "executor",
 ) -> None:
+    """Legacy helper — maps create/read/delete phases to lifecycle event names."""
     event_map = {
-        "create": EICAR_CREATED,
+        "create": EICAR_CREATE,
         "read": EICAR_READ,
-        "delete": EICAR_DELETED,
+        "delete": EICAR_DELETE,
     }
     event_name = event_map.get(phase)
     if not event_name:
         return
-    store.append(
-        Event(
-            run_id=run_id,
-            scenario_id=scenario_id,
-            timestamp=_now(),
-            stage=stage,
-            event=event_name,
-            status="info",
-            target=target,
-            artifact=path or f"eicar_{phase}",
-            evidence={"path": path, "phase": phase},
-            source=source,
-        )
+    append_eicar_lifecycle_event(
+        store,
+        run_id=run_id,
+        event=event_name,
+        scenario_id=scenario_id,
+        target=target,
+        source=source,
+        artifact=path or f"eicar_{phase}",
+        stage=stage,
     )
 
 
@@ -184,9 +258,7 @@ def build_host_behavior_checklist(
     """Build execution checklist from verification events in the Event Store."""
     events = store.list_events(run_id, scenario_id)
     executed_keys: set[str] = set()
-    eicar_create = False
-    eicar_read = False
-    eicar_delete = False
+    eicar_flags = {key: False for key in EICAR_CHECKLIST_KEYS}
 
     for event in events:
         name = str(event.event)
@@ -198,12 +270,9 @@ def build_host_behavior_checklist(
                 executed_keys.add(key)
             continue
 
-        if name in {EICAR_CREATED, "eicar_file_created", "eicar_variant_created"}:
-            eicar_create = True
-        elif name in {EICAR_READ, "eicar_file_accessed", "eicar_variant_accessed"}:
-            eicar_read = True
-        elif name in {EICAR_DELETED, "eicar_file_deleted", "eicar_variant_deleted"}:
-            eicar_delete = True
+        checklist_key = EICAR_EVENT_TO_CHECKLIST_KEY.get(name)
+        if checklist_key:
+            eicar_flags[checklist_key] = True
 
         if name == "host_behavior_command_dispatched":
             plan_name = str(evidence.get("command") or evidence.get("command_name") or "")
@@ -219,9 +288,7 @@ def build_host_behavior_checklist(
         ip_route="ip_route" in executed_keys,
         passwd_read="passwd_read" in executed_keys,
         base64_exec="base64_exec" in executed_keys,
-        eicar_create=eicar_create,
-        eicar_read=eicar_read,
-        eicar_delete=eicar_delete,
+        **eicar_flags,
     )
 
 
@@ -297,9 +364,16 @@ def iter_host_behavior_events(
 ) -> Iterable[Event]:
     verification_events = {
         COMMAND_EXECUTED,
-        EICAR_CREATED,
+        EICAR_CREATE,
         EICAR_READ,
-        EICAR_DELETED,
+        EICAR_COPY,
+        EICAR_MOVE,
+        EICAR_ARCHIVE,
+        EICAR_ENCODE,
+        EICAR_DECODE,
+        EICAR_DELETE,
+        ENCODED_FILE_CREATE,
+        ENCODED_FILE_DECODE,
         HOST_BEHAVIOR_SUMMARY_EVENT,
     }
     for event in store.list_events(run_id, scenario_id):
@@ -312,7 +386,19 @@ def count_verification_events(
     run_id: str,
     scenario_id: str = HOST_BEHAVIOR_SCENARIO_ID,
 ) -> dict[str, int]:
-    counts = {COMMAND_EXECUTED: 0, EICAR_CREATED: 0, EICAR_READ: 0, EICAR_DELETED: 0}
+    counts = {
+        COMMAND_EXECUTED: 0,
+        EICAR_CREATE: 0,
+        EICAR_READ: 0,
+        EICAR_COPY: 0,
+        EICAR_MOVE: 0,
+        EICAR_ARCHIVE: 0,
+        EICAR_ENCODE: 0,
+        EICAR_DECODE: 0,
+        EICAR_DELETE: 0,
+        ENCODED_FILE_CREATE: 0,
+        ENCODED_FILE_DECODE: 0,
+    }
     for event in iter_host_behavior_events(store, run_id, scenario_id):
         if event.event in counts:
             counts[str(event.event)] += 1
