@@ -24,7 +24,6 @@ from dsp.runtime.scenario_plan import (
     parse_initial_compromise_endpoint,
     webshell_server_endpoint,
 )
-from dsp.runtime.webshell_phase1 import run_webshell_phase1_attack
 from dsp.execution.webshell_provider import WebshellExecutionProvider
 from dsp.runner import RunManager
 from dsp.runner.console_output import OperationalConsole
@@ -91,18 +90,28 @@ def _discovery_dict() -> dict:
     }
 
 
-def test_phase1_runs_before_prepare() -> None:
+def test_prepare_runs_before_prefetch() -> None:
     call_order: list[str] = []
-
-    def _phase1(*_args, **_kwargs):
-        call_order.append("phase1")
-        return MagicMock(to_dict=lambda: {"phase": "phase1_webshell_attack"})
 
     def _prepare(_ctx):
         call_order.append("prepare")
 
+    def _prefetch(*_args, **_kwargs):
+        call_order.append("prefetch")
+        return {
+            "target_net": "10.10.10.0/24",
+            "hosts": [],
+            "service_hosts": {},
+            "service_endpoints": {},
+            "discovery_enabled": True,
+            "discovery_meta": {"alive_hosts": [], "open_endpoints": 0, "probed_hosts": 0},
+        }
+
     tmpdir = Path(tempfile.mkdtemp())
-    with patch("dsp.runner.run_manager.run_webshell_phase1_attack", side_effect=_phase1):
+    with patch(
+        "dsp.runner.run_manager.prefetch_webshell_target_net_discovery",
+        side_effect=_prefetch,
+    ):
         with patch.object(RunManager, "_create_execution_provider") as create_provider:
             provider = _webshell_provider_mock()
             provider.prepare.side_effect = _prepare
@@ -120,7 +129,7 @@ def test_phase1_runs_before_prepare() -> None:
                 webshell_family="jsp",
             )
 
-    assert call_order[:2] == ["phase1", "prepare"]
+    assert call_order[:2] == ["prepare", "prefetch"]
 
 
 def test_webshell_server_endpoint_from_user_url() -> None:
@@ -221,45 +230,38 @@ def test_webshell_attack_chain_order(tmp_path: Path) -> None:
     def _track(event: str, _payload: dict) -> None:
         events.append(event)
 
-    phase1_calls: list[str] = []
     prepare_calls: list[str] = []
 
-    def _phase1(url: str, *, dry_run: bool, **kwargs):
-        phase1_calls.append("phase1")
-        return run_webshell_phase1_attack(url, dry_run=dry_run)
+    with patch.object(RunManager, "_create_execution_provider") as create_provider:
+        provider = _webshell_provider_mock()
 
-    with patch("dsp.runner.run_manager.run_webshell_phase1_attack", side_effect=_phase1):
-        with patch.object(RunManager, "_create_execution_provider") as create_provider:
-            provider = _webshell_provider_mock()
+        def _prepare(ctx):
+            prepare_calls.append("prepare")
+            ctx.execution_metadata["traffic_origin_host"] = "remote"
 
-            def _prepare(ctx):
-                prepare_calls.append("prepare")
-                ctx.execution_metadata["traffic_origin_host"] = "remote"
+        provider.prepare.side_effect = _prepare
+        provider.execute.return_value = None
+        provider.cleanup.return_value = None
+        create_provider.return_value = provider
 
-            provider.prepare.side_effect = _prepare
-            provider.execute.return_value = None
-            provider.cleanup.return_value = None
-            create_provider.return_value = provider
+        manager = RunManager(runs_dir=tmp_path / "runs")
+        with patch(
+            "dsp.execution.remote.command.runner.CommandScenarioRunner.run",
+            return_value=MagicMock(to_dict=lambda: {"remote_execution_id": "r1"}),
+        ):
+            manager.run(
+                scenario_ids=["http_followup"],
+                target_net="10.10.10.0/24",
+                dry_run=True,
+                execution_provider="webshell",
+                webshell_url="http://10.10.10.50:8080/shell.jsp",
+                webshell_family="jsp",
+                on_progress=_track,
+            )
 
-            manager = RunManager(runs_dir=tmp_path / "runs")
-            with patch(
-                "dsp.execution.remote.command.runner.CommandScenarioRunner.run",
-                return_value=MagicMock(to_dict=lambda: {"remote_execution_id": "r1"}),
-            ):
-                manager.run(
-                    scenario_ids=["http_followup"],
-                    target_net="10.10.10.0/24",
-                    dry_run=True,
-                    execution_provider="webshell",
-                    webshell_url="http://10.10.10.50:8080/shell.jsp",
-                    webshell_family="jsp",
-                    on_progress=_track,
-                )
-
-    assert phase1_calls == ["phase1"]
     assert prepare_calls == ["prepare"]
     assert "discovery_deferred" in events
-    assert "phase1_webshell_attack_completed" in events
+    assert "phase1_webshell_attack_completed" not in events
 
 
 def test_webshell_http_followup_targets_discovered_hosts_after_remote_discovery() -> None:
@@ -462,46 +464,6 @@ def test_phase2_http_followup_attaches_abnormal_user_agents() -> None:
     assert all(is_abnormal_user_agent(item["user_agent"]) for item in plan["requests"])
 
 
-def test_phase1_url_scan_attaches_abnormal_user_agents() -> None:
-    captured_uas: list[str] = []
-
-    class _TrackingClient:
-        def request(self, request) -> None:
-            headers = request.headers or {}
-            captured_uas.append(headers.get("User-Agent", ""))
-
-        def make_request(self, plan):
-            from dsp.protocols.types import HttpRequest
-
-            path = plan.path if not plan.query else f"{plan.path}?{plan.query}"
-            return HttpRequest(
-                url=plan.url,
-                method=plan.method,
-                host=plan.host,
-                port=plan.port,
-                path=path,
-                headers=plan.headers,
-            )
-
-    from dsp.protocols.http.user_agents import is_abnormal_user_agent
-    from dsp.runtime import webshell_phase1 as phase1_mod
-    from dsp.runtime.scenario_plan import parse_initial_compromise_endpoint
-
-    endpoint = parse_initial_compromise_endpoint("http://10.10.10.20/shell.jsp")
-    phase1_mod._run_url_scan_with_user_agents(
-        endpoint,
-        _TrackingClient(),
-        webshell_url="http://10.10.10.20/shell.jsp",
-        params={"abnormal_ua_ratio": 1.0},
-        dry_run=False,
-        timeout=2.0,
-        events=None,
-        mode="live",
-    )
-    assert captured_uas
-    assert all(is_abnormal_user_agent(ua) for ua in captured_uas)
-
-
 def test_console_output_separates_execution_host_and_attack_target_net() -> None:
     stream = io.StringIO()
     console = OperationalConsole(stream=stream)
@@ -527,40 +489,25 @@ def test_console_output_separates_execution_host_and_attack_target_net() -> None
 def test_run_manager_skips_dsp_discovery_for_webshell(tmp_path: Path) -> None:
     with patch("dsp.runner.run_manager.resolve_targets") as resolve_targets:
         resolve_targets.return_value = TargetSet(target_net="10.10.10.0/24")
-        with patch("dsp.runner.run_manager.run_webshell_phase1_attack") as phase1:
-            phase1.return_value = MagicMock(to_dict=lambda: {})
-            with patch.object(RunManager, "_create_execution_provider") as create_provider:
-                provider = _webshell_provider_mock()
-                provider.prepare.return_value = None
-                provider.execute.return_value = None
-                provider.cleanup.return_value = None
-                create_provider.return_value = provider
+        with patch.object(RunManager, "_create_execution_provider") as create_provider:
+            provider = _webshell_provider_mock()
+            provider.prepare.return_value = None
+            provider.execute.return_value = None
+            provider.cleanup.return_value = None
+            create_provider.return_value = provider
 
-                manager = RunManager(runs_dir=tmp_path / "runs")
-                manager.run(
-                    scenario_ids=["http_followup"],
-                    target_net="10.10.10.0/24",
-                    dry_run=True,
-                    execution_provider="webshell",
-                    webshell_url="http://10.10.10.50/shell.jsp",
-                    webshell_family="jsp",
-                )
+            manager = RunManager(runs_dir=tmp_path / "runs")
+            manager.run(
+                scenario_ids=["http_followup"],
+                target_net="10.10.10.0/24",
+                dry_run=True,
+                execution_provider="webshell",
+                webshell_url="http://10.10.10.50/shell.jsp",
+                webshell_family="jsp",
+            )
 
     resolve_targets.assert_called_once()
     assert resolve_targets.call_args.kwargs.get("discovery") is False
-    phase1.assert_called_once()
-
-
-def test_phase1_module_records_webshell_host_endpoint() -> None:
-    result = run_webshell_phase1_attack(
-        "http://10.10.10.20/shell.jsp",
-        dry_run=True,
-    )
-    payload = result.to_dict()
-    assert payload["endpoint"]["host"] == "10.10.10.20"
-    assert payload["execution_path"] == "/shell.jsp"
-    assert payload["traffic_origin"] == "dsp_host"
-    assert payload["phase"] == "phase1_webshell_attack"
 
 
 @pytest.mark.parametrize(

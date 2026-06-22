@@ -737,16 +737,6 @@ def print_http_endpoint_probe_diagnostics(
     if selection is None:
         return None
     webshell_probe_rows: list[dict[str, int | str | bool]] | None = None
-    if webshell_execution:
-        endpoint = webshell_execution.get("endpoint")
-        if isinstance(endpoint, dict):
-            ws_probe = selection_from_initial_compromise(
-                endpoint,
-                dry_run=True,
-                timeout=10.0,
-                selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
-            )
-            webshell_probe_rows = ws_probe.probe_summaries
     for line in format_http_probe_diagnostic_lines(
         selection,
         discovered_http_hosts=discovered_http_hosts,
@@ -785,15 +775,6 @@ def http_target_probe_payload(
     if attack_target_net:
         payload["attack_target_net"] = attack_target_net
     if webshell_execution:
-        endpoint = webshell_execution.get("endpoint")
-        if isinstance(endpoint, dict):
-            ws_probe = selection_from_initial_compromise(
-                endpoint,
-                dry_run=True,
-                timeout=10.0,
-                selection_reason=INITIAL_COMPROMISE_SELECTION_REASON,
-            )
-            payload["webshell_endpoint_diagnostics"] = ws_probe.probe_summaries
         payload["execution_host"] = webshell_execution.get("execution_host")
         payload["webshell_url"] = webshell_execution.get("webshell_url")
     return payload

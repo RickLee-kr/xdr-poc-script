@@ -501,18 +501,14 @@ def test_transport_failure_no_local_fallback(tmp_path: Path) -> None:
     manager = RunManager(runs_dir=tmp_path / "runs")
     with patch("dsp.engine.orchestrator.run_scenario") as mock_local:
         with patch.object(RunManager, "_create_execution_provider", return_value=provider):
-            with patch(
-                "dsp.runner.run_manager.run_webshell_phase1_non_standard_port_burst",
-                return_value={"planned_requests": 0, "requests_sent": 0},
-            ):
-                run, run_dir, _ = manager.run(
-                    scenario_ids=["port_sweep"],
-                    target_net="10.10.10.0/24",
-                    dry_run=True,
-                    execution_provider="webshell",
-                    webshell_family="jsp",
-                    webshell_url="https://lab.example/shell.jsp",
-                )
+            run, run_dir, _ = manager.run(
+                scenario_ids=["port_sweep"],
+                target_net="10.10.10.0/24",
+                dry_run=True,
+                execution_provider="webshell",
+                webshell_family="jsp",
+                webshell_url="https://lab.example/shell.jsp",
+            )
     mock_local.assert_not_called()
     store = EventStore.open_existing(run_dir / "events.db")
     try:

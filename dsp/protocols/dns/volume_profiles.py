@@ -8,8 +8,7 @@ from typing import Any
 # Explicit scenario_params keys always override profile values.
 VOLUME_PROFILES: dict[str, dict[str, Any]] = {
     "demo": {
-        "payload_mb": 0.0001,
-        "max_chunks": 5,
+        "payload_mb": 1.0,
         "max_hosts": 1,
     },
     "standard": {
@@ -18,9 +17,9 @@ VOLUME_PROFILES: dict[str, dict[str, Any]] = {
         "max_hosts": 1,
     },
     "stress": {
-        "payload_mb": 2.0,
+        "payload_mb": 4.0,
         "chunk_size": 30,
-        "max_hosts": 2,
+        "max_hosts": 1,
     },
 }
 

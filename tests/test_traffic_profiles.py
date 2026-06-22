@@ -42,9 +42,34 @@ def test_dns_tunnel_profile_mapping_increases_with_intensity() -> None:
     normal = scenario_params_for_profile("dns_tunnel", "normal")
     high = scenario_params_for_profile("dns_tunnel", "high")
 
-    assert low["max_chunks"] < normal["max_chunks"] < high["max_chunks"]
+    assert low["payload_mb"] < normal["payload_mb"] < high["payload_mb"]
     assert low["traffic_profile"] == "low"
     assert high["traffic_profile"] == "high"
+
+
+def test_profile_dns_tunnel_payload_mb() -> None:
+    assert scenario_params_for_profile("dns_tunnel", "low")["payload_mb"] == 1.0
+    assert scenario_params_for_profile("dns_tunnel", "normal")["payload_mb"] == 2.0
+    assert scenario_params_for_profile("dns_tunnel", "high")["payload_mb"] == 4.0
+
+
+def _dga_total_domains(params: dict) -> int:
+    return int(params["phase1_count"]) + int(params["phase2_count"])
+
+
+def test_dga_domain_counts_increase_with_profile_intensity() -> None:
+    low = scenario_params_for_profile("dga", "low")
+    normal = scenario_params_for_profile("dga", "normal")
+    high = scenario_params_for_profile("dga", "high")
+
+    low_total = _dga_total_domains(low)
+    normal_total = _dga_total_domains(normal)
+    high_total = _dga_total_domains(high)
+
+    assert low_total == 15
+    assert normal_total == 45
+    assert high_total == 90
+    assert low_total < normal_total < high_total
 
 
 def test_build_scenario_params_wraps_scenario_id() -> None:

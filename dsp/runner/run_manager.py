@@ -28,10 +28,6 @@ from dsp.runtime.scenario_plan import (
     WEBSHELL_EXECUTION_KEY,
     apply_webshell_initial_compromise_plan,
 )
-from dsp.runtime.webshell_phase1 import (
-    run_webshell_phase1_attack,
-    run_webshell_phase1_non_standard_port_burst,
-)
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.providers.runtime.command.command_exceptions import CommandTransportError
@@ -612,22 +608,6 @@ class RunManager:
         if execution_provider == "webshell":
             exec_ctx.execution_metadata["remote_work_dir"] = remote_work_dir
 
-        if is_webshell:
-            phase1 = run_webshell_phase1_attack(
-                webshell_url,
-                scenario_params=config.scenario_params,
-                dry_run=dry_run,
-                event_store=store,
-                run_id=run_id,
-            )
-            exec_ctx.execution_metadata["phase1_webshell_attack"] = phase1.to_dict()
-            if emitter is not None:
-                emitter.emit("phase1_webshell_attack_completed", phase1.to_dict())
-            (run_dir / "phase1_webshell_attack.json").write_text(
-                json.dumps(phase1.to_dict(), indent=2),
-                encoding="utf-8",
-            )
-
         try:
             provider.prepare(exec_ctx)
         except Exception as exc:
@@ -672,30 +652,6 @@ class RunManager:
             return run, run_dir, exit_code
 
         if is_webshell:
-            http_params = config.scenario_params.get("http_followup", {})
-            burst_summary = run_webshell_phase1_non_standard_port_burst(
-                provider,
-                webshell_url,
-                http_params=http_params,
-                dry_run=dry_run,
-                event_store=store,
-                run_id=run_id,
-            )
-            phase1_payload = dict(
-                exec_ctx.execution_metadata.get("phase1_webshell_attack") or {}
-            )
-            phase1_payload["non_standard_port_burst"] = burst_summary
-            exec_ctx.execution_metadata["phase1_webshell_attack"] = phase1_payload
-            (run_dir / "phase1_webshell_attack.json").write_text(
-                json.dumps(phase1_payload, indent=2),
-                encoding="utf-8",
-            )
-            if emitter is not None:
-                emitter.emit(
-                    "phase1_webshell_burst_completed",
-                    {"non_standard_port_burst": burst_summary},
-                )
-
             discovered = prefetch_webshell_target_net_discovery(
                 provider,
                 ctx,

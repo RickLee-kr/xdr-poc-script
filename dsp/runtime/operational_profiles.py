@@ -164,13 +164,7 @@ def _apply_host_limit(
         host_count,
         max_hosts_override=max_hosts_override,
     )
-    if "max_hosts" in merged:
-        if profile == "high":
-            merged["max_hosts"] = limit
-        else:
-            merged["max_hosts"] = min(int(merged["max_hosts"]), limit)
-    else:
-        merged["max_hosts"] = limit
+    merged["max_hosts"] = limit
     return merged
 
 
@@ -195,9 +189,6 @@ def build_operational_scenario_params(
             host_count,
             max_hosts_override=max_hosts,
         )
-        if scenario_id == "http_followup":
-            desired = int(base.get("max_hosts", 3))
-            merged["max_hosts"] = min(desired, host_count) if host_count > 0 else desired
         params[scenario_id] = merged
     return params
 

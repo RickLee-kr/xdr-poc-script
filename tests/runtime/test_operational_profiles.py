@@ -90,6 +90,8 @@ def test_build_operational_scenario_params_caps_hosts_for_normal() -> None:
     assert params["http_followup"]["max_total"] == 300
     assert params["http_followup"]["abnormal_ua_ratio"] == 0.10
     assert params["dns_tunnel"]["traffic_profile"] == "normal"
+    assert params["dns_tunnel"]["payload_mb"] == 2.0
+    assert params["dns_tunnel"]["max_hosts"] == 2
 
 
 def test_build_operational_scenario_params_uses_all_hosts_for_high() -> None:
@@ -98,7 +100,7 @@ def test_build_operational_scenario_params_uses_all_hosts_for_high() -> None:
         ["http_followup"],
         target_net="192.168.55.0/30",
     )
-    assert params["http_followup"]["max_hosts"] == 1
+    assert params["http_followup"]["max_hosts"] == 2
     assert params["http_followup"]["traffic_profile"] == "high"
 
 
@@ -142,11 +144,28 @@ def test_apply_host_limit_honors_explicit_full_sweep_flag() -> None:
     assert merged["full_sweep"] is True
 
 
-def test_build_operational_scenario_params_max_hosts_override_caps_high() -> None:
+def test_build_operational_scenario_params_low_dns_tunnel_profile() -> None:
+    params = build_operational_scenario_params(
+        "low",
+        ["dns_tunnel"],
+        target_net="10.10.10.0/24",
+    )
+    assert params["dns_tunnel"]["payload_mb"] == 1.0
+    assert params["dns_tunnel"]["max_hosts"] == 1
+
+
+def test_build_operational_scenario_params_high_dns_tunnel_profile() -> None:
+    params = build_operational_scenario_params(
+        "high",
+        ["dns_tunnel"],
+        target_net="192.168.55.0/30",
+    )
+    assert params["dns_tunnel"]["payload_mb"] == 4.0
+    assert params["dns_tunnel"]["max_hosts"] == 2
     params = build_operational_scenario_params(
         "high",
         ["http_followup"],
         target_net="10.10.10.0/24",
         max_hosts=3,
     )
-    assert params["http_followup"]["max_hosts"] == 1
+    assert params["http_followup"]["max_hosts"] == 3

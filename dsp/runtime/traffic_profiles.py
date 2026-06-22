@@ -12,6 +12,20 @@ _PROFILE_ALIASES: dict[str, str] = {
     "burst": "high",
 }
 
+# Profile-level DNS tunnel payload sizes (MB).
+_PROFILE_DNS_TUNNEL_PAYLOAD_MB: dict[str, float] = {
+    "low": 1.0,
+    "normal": 2.0,
+    "high": 4.0,
+}
+
+# DGA total domain counts (phase1 + phase2) per operational profile.
+_DGA_DOMAIN_COUNTS: dict[str, dict[str, int]] = {
+    "low": {"phase1_count": 12, "phase2_count": 3},
+    "normal": {"phase1_count": 35, "phase2_count": 10},
+    "high": {"phase1_count": 70, "phase2_count": 20},
+}
+
 # Per-scenario parameter templates keyed by operational profile name.
 # Explicit scenario_params passed at run time always override these values.
 _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
@@ -23,32 +37,28 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
     "dns_tunnel": {
         "low": {
             "volume_profile": "demo",
-            "payload_mb": 0.0001,
-            "max_chunks": 5,
+            "payload_mb": _PROFILE_DNS_TUNNEL_PAYLOAD_MB["low"],
             "max_hosts": 1,
             "timeout": 0.1,
         },
         "normal": {
             "volume_profile": "standard",
-            "payload_mb": 0.01,
-            "max_chunks": 50,
-            "max_hosts": 1,
+            "payload_mb": _PROFILE_DNS_TUNNEL_PAYLOAD_MB["normal"],
+            "max_hosts": 2,
             "timeout": 0.05,
         },
         "high": {
             "volume_profile": "stress",
-            "payload_mb": 0.5,
-            "max_chunks": 150,
-            "max_hosts": 2,
+            "payload_mb": _PROFILE_DNS_TUNNEL_PAYLOAD_MB["high"],
             "chunk_size": 30,
             "max_duration_sec": 120,
             "timeout": 0.05,
         },
     },
     "dga": {
-        "low": {"phase1_count": 3, "phase2_count": 2, "timeout": 0.1},
-        "normal": {"phase1_count": 35, "phase2_count": 10, "timeout": 0.05},
-        "high": {"phase1_count": 40, "phase2_count": 15, "timeout": 0.05},
+        "low": {**_DGA_DOMAIN_COUNTS["low"], "timeout": 0.1},
+        "normal": {**_DGA_DOMAIN_COUNTS["normal"], "timeout": 0.05},
+        "high": {**_DGA_DOMAIN_COUNTS["high"], "timeout": 0.05},
     },
     "http_followup": {
         "low": {
