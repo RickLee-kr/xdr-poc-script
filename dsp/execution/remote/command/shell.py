@@ -35,6 +35,13 @@ def discovery_probe_output_path(run_id: str, batch_index: int) -> str:
     return f"/tmp/.dsp-{token}-probe-{int(batch_index)}.out"
 
 
+def dns_tunnel_sent_marker_output_path(run_id: str, target: str) -> str:
+    """Remote path for per-send DNS tunnel stdout markers (cat back after session)."""
+    token = _sanitize_run_token(run_id)
+    host_token = re.sub(r"[^A-Za-z0-9._-]+", "_", str(target or "host").strip())[:32]
+    return f"/tmp/.dsp-{token}-dns-tunnel-{host_token}.sent"
+
+
 def tcp_probe_command(host: str, port: int, *, timeout: float = 3.0) -> str:
     """TCP connect probe via python3 stdlib — no file upload required."""
     t = max(1, int(timeout))
@@ -250,8 +257,11 @@ def dns_tunnel_session_command(
     mock_filename: str = MOCK_PAYLOAD_FILENAME,
     send_interval: float = SEND_INTERVAL_SEC,
     suppress_errors: bool = True,
+    max_chunks: int | None = None,
+    marker_output_path: str = "/tmp/.dsp-dns-tunnel.sent",
 ) -> str:
     """Run full DNS tunnel exfil session on remote host — sendto only, no DNS recv."""
+    max_chunks_literal = "None" if max_chunks is None else str(int(max_chunks))
     script = (
         "import base64\n"
         "import os\n"
@@ -268,6 +278,8 @@ def dns_tunnel_session_command(
         f"M = {float(payload_mb)}\n"
         f"I = {float(send_interval)}\n"
         f"P = {MOCK_PAYLOAD_PATTERN!r}\n"
+        f"N = {max_chunks_literal}\n"
+        f"MARKER = {marker_output_path!r}\n"
         "\n"
         "def b32(x: bytes) -> str:\n"
         "    return base64.b32encode(x).decode(\"ascii\").lower().rstrip(\"=\")\n"
@@ -295,8 +307,10 @@ def dns_tunnel_session_command(
         "\n"
         "def send(sock: socket.socket, fqdn: str) -> None:\n"
         "    sock.sendto(make_query(fqdn), (T, 53))\n"
-        "    print(\"DNS_TUNNEL_SENT:\" + fqdn)\n"
+        "    with open(MARKER, \"a\", encoding=\"ascii\") as mh:\n"
+        "        mh.write(\"DNS_TUNNEL_SENT:\" + fqdn + \"\\n\")\n"
         "\n"
+        "open(MARKER, \"w\").close()\n"
         "with tempfile.TemporaryDirectory() as td:\n"
         "    fp = os.path.join(td, F)\n"
         "    open(fp, \"wb\").write(build_payload())\n"
@@ -310,13 +324,21 @@ def dns_tunnel_session_command(
         "                break\n"
         "            send(sock, \"idx-\" + format(seq, \"04d\") + \"-\" + b32(ch) + \".\" + D)\n"
         "            seq += 1\n"
+        "            if N is not None and seq >= N:\n"
+        "                break\n"
         "            if I > 0:\n"
         "                time.sleep(I)\n"
         "    send(sock, \"end-0.\" + D)\n"
         "    sock.close()\n"
-        "print(\"DNS_TUNNEL_SESSION_DONE\")\n"
     )
-    command = _python3_b64_exec_command(script)
+    inner = _python3_b64_exec_command(script)
+    pipeline = (
+        f"rm -f {shlex.quote(marker_output_path)}; "
+        f"{inner}; "
+        f"cat {shlex.quote(marker_output_path)} 2>/dev/null; "
+        f"printf '%s\\n' DNS_TUNNEL_SESSION_DONE"
+    )
+    command = wrap_remote_shell_command(pipeline)
     if suppress_errors:
         return f"{command} 2>/dev/null || true"
     return command
@@ -331,8 +353,12 @@ def dns_tunnel_session_command_evidence(
     mock_filename: str = MOCK_PAYLOAD_FILENAME,
     send_interval: float = SEND_INTERVAL_SEC,
     suppress_errors: bool = True,
+    max_chunks: int | None = None,
+    marker_output_path: str | None = None,
+    run_id: str = "",
 ) -> dict[str, Any]:
     """Metadata for a full remote DNS tunnel session command."""
+    marker_path = marker_output_path or dns_tunnel_sent_marker_output_path(run_id, target)
     command = dns_tunnel_session_command(
         target,
         payload_mb=payload_mb,
@@ -341,11 +367,15 @@ def dns_tunnel_session_command_evidence(
         mock_filename=mock_filename,
         send_interval=send_interval,
         suppress_errors=suppress_errors,
+        max_chunks=max_chunks,
+        marker_output_path=marker_path,
     )
     return {
         "dns_query_method": DNS_QUERY_METHOD,
         "remote_command": command,
         "execution_mode": "dns_tunnel_session",
+        "marker_output_path": marker_path,
+        "max_chunks": max_chunks,
     }
 
 

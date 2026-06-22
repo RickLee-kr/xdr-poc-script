@@ -15,6 +15,7 @@ VOLUME_PROFILES: dict[str, dict[str, Any]] = {
         "payload_mb": 2.0,
         "chunk_size": 30,
         "max_hosts": 1,
+        "max_chunks": 100,
     },
     "stress": {
         "payload_mb": 4.0,

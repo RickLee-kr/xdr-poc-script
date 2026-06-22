@@ -79,13 +79,15 @@ def test_webshell_dns_tunnel_one_http_dispatch_per_target(tmp_path) -> None:
     assert provider.run_remote_command.call_count == 1
     remote_command = provider.run_remote_command.call_args[0][0]
     assert "python3 -c" in remote_command
+    assert "cat " in remote_command
+    assert ".sent" in remote_command
 
     candidates = re.findall(r"[A-Za-z0-9+/=]{100,}", remote_command)
     assert candidates
     payload = max(candidates, key=len)
     script = base64.b64decode(payload.encode("ascii")).decode("utf-8")
     assert "DNS_TUNNEL_SENT:" in script
-    assert "DNS_TUNNEL_SESSION_DONE" in script
+    assert "MARKER" in script
     assert "04d" in script
     assert "sendto" in script
     assert "recvfrom" not in script

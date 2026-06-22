@@ -23,6 +23,7 @@ from dsp.execution.remote.command.shell import (
     tcp_probe_command,
 )
 from dsp.execution.remote.models import ScenarioExecutionRequest
+from dsp.execution.webshell.event_sync.bundle_content import normalize_webshell_command_output
 from dsp.protocols.dns.tunnel import (
     CHUNK_SIZE_DEFAULT,
     MOCK_PAYLOAD_FILENAME,
@@ -462,6 +463,8 @@ def _execute_dns_tunnel(
             mock_filename=mock_filename,
             send_interval=send_interval,
             suppress_errors=False,
+            max_chunks=int(max_chunks) if max_chunks is not None else None,
+            run_id=run_id,
         )
         dns_method = session_meta["dns_query_method"]
         if command_sample is None:
@@ -537,7 +540,7 @@ def _execute_dns_tunnel(
                 )
                 dispatch_transport_ok = True
                 dispatch_status = CommandStatus.COMPLETED.value
-                session_output = raw_output.decode("utf-8", errors="replace")
+                session_output = normalize_webshell_command_output(raw_output)
                 sent_fqdns = parse_dns_tunnel_session_sent_fqdns(session_output)
             except Exception as exc:
                 session_output = str(exc)

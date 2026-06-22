@@ -77,9 +77,11 @@ def test_dns_tunnel_command_evidence_includes_python_socket_method(tmp_path) -> 
 
     payload = _extract_b64_python_payload(remote_command)
     script = base64.b64decode(payload.encode("ascii")).decode("utf-8")
-    assert "DNS_TUNNEL_SESSION_DONE" in script
+    assert "DNS_TUNNEL_SENT:" in script
+    assert "MARKER" in script
     assert "sendto" in script
     assert "recvfrom" not in script
+    assert "DNS_TUNNEL_SESSION_DONE" in remote_command
 
 
 def test_dns_tunnel_dispatch_without_sendto_emits_no_query_sent(tmp_path) -> None:
@@ -112,6 +114,41 @@ def test_dns_tunnel_dispatch_without_sendto_emits_no_query_sent(tmp_path) -> Non
     assert not any(e.event == "dns_tunnel_query_sent" for e in events)
     completed = next(e for e in events if e.event == "dns_tunnel_completed")
     assert completed.evidence.get("dns_tunnel_query_sent_count") == 0
+
+
+def test_dns_tunnel_html_wrapped_markers_are_parsed(tmp_path) -> None:
+    ctx = _ctx(tmp_path)
+    provider = MagicMock()
+    fqdn = "idx-0000-abc.dns-tunnel.com"
+    provider.run_remote_command.return_value = (
+        f"<pre>DNS_TUNNEL_SENT:{fqdn}\nDNS_TUNNEL_SESSION_DONE</pre>".encode("utf-8")
+    )
+    plan = {
+        "type": "dns_tunnel",
+        "mode": "live",
+        "payload_mb": 0.0001,
+        "chunk_size": 30,
+        "domain": "dns-tunnel.com",
+        "mock_filename": "mock_exfil.dat",
+        "send_interval_sec": 0.01,
+        "session_id": "sess01",
+        "max_chunks": 1,
+        "queries": [
+            {
+                "target": "10.10.10.20",
+                "fqdn": fqdn,
+                "seq": 0,
+                "query_role": "idx_chunk",
+                "protocol": "dns_udp",
+                "port": 53,
+            },
+        ],
+    }
+    execute_command_plan(plan, provider, ctx, _request("dns_tunnel"))
+    completed = next(
+        e for e in ctx.event_store.list_events("run-val") if e.event == "dns_tunnel_completed"
+    )
+    assert completed.evidence.get("dns_tunnel_query_sent_count") == 1
 
 
 def test_dga_command_emits_validation_status_events(tmp_path) -> None:
