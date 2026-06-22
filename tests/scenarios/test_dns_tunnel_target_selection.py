@@ -11,7 +11,7 @@ import pytest
 
 from dsp.engine.scenario_engine import RunContext, TargetSet
 from dsp.event_store import EventQuery, EventStore
-from dsp.execution.remote.bundle.planner import _plan_dns_tunnel
+from dsp.execution.remote.command.scenario_plans import _plan_dns_tunnel
 from dsp.protocols.dns.client import build_query, encode_qname
 from dsp.protocols.dns.tunnel import select_tunnel_targets
 
@@ -152,60 +152,3 @@ def test_no_response_does_not_suppress_tunnel_query_sent(tmp_path) -> None:
         EventQuery(run_id="tunnel_err_run", scenario_id="dns_tunnel", event="dns_query_sent")
     ) == 4
 
-
-def test_remote_runner_encodes_full_tunnel_fqdn() -> None:
-    runner_path = (
-        Path(__file__).resolve().parents[2]
-        / "dsp"
-        / "execution"
-        / "remote"
-        / "bundle"
-        / "assets"
-        / "run_scenario.py"
-    )
-    spec = importlib.util.spec_from_file_location("run_scenario_asset", runner_path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    fqdn = "idx-0000-mfrggzdfmy.dns-tunnel.com"
-    _txn_id, packet = module._build_dns_query_packet(fqdn)
-    expected_txn, expected_packet = build_query(fqdn, 1)
-    assert packet[2:] == expected_packet[2:]
-    question = encode_qname(fqdn) + struct.pack("!HH", 1, 1)
-    assert question in packet
-
-
-def test_remote_runner_emits_dns_query_sent_per_query(tmp_path) -> None:
-    runner_path = (
-        Path(__file__).resolve().parents[2]
-        / "dsp"
-        / "execution"
-        / "remote"
-        / "bundle"
-        / "assets"
-        / "run_scenario.py"
-    )
-    spec = importlib.util.spec_from_file_location("run_scenario_events", runner_path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    log = module.EventLog(
-        run_id="r1",
-        scenario_id="dns_tunnel",
-        scenario_version="1.0.0",
-        schema_version="1.0.0",
-    )
-    plan = {
-        "mode": "mock",
-        "domain": "dns-tunnel.com",
-        "queries": [
-            {"target": "10.10.10.97", "seq": 0, "fqdn": "idx-0000-abc.dns-tunnel.com", "query_role": "idx_chunk"},
-            {"target": "10.10.10.97", "seq": 1, "fqdn": "idx-0001-def.dns-tunnel.com", "query_role": "idx_chunk"},
-        ],
-    }
-    module._run_dns_tunnel(log, plan)
-    events = [e["event"] for e in log.events]
-    assert events.count("dns_tunnel_query_sent") == 2
-    assert events.count("dns_query_sent") == 2

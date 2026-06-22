@@ -93,7 +93,7 @@ class TestNoRuntimeUpload:
         )
         provider = WebshellExecutionProvider(config, family_provider=mock_family)
         loader = PluginLoader()
-        record = loader.discover_and_load().get("dummy")
+        record = loader.discover_and_load().get("port_sweep")
         assert record is not None
         store = EventStore(":memory:")
         store.open_run("run01")
@@ -101,7 +101,10 @@ class TestNoRuntimeUpload:
             run_id="run01",
             target_net="10.10.10.0/24",
             event_store=store,
-            config=RunConfig(dry_run=True),
+            config=RunConfig(
+                dry_run=True,
+                scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 1}},
+            ),
             dry_run=True,
         )
         exec_ctx = ExecutionContext(
@@ -111,9 +114,8 @@ class TestNoRuntimeUpload:
             provider_type="webshell",
             execution_metadata={"traffic_origin_host": "remote"},
         )
-        with patch("dsp.execution.remote.bundle.runner.BundleScenarioRunner.run") as mock_bundle:
-            provider.execute(exec_ctx, record, run_ctx, MagicMock())
-            mock_bundle.assert_not_called()
+        provider.execute(exec_ctx, record, run_ctx, MagicMock())
+        assert exec_ctx.execution_metadata["remote_execution_mode"] == REMOTE_EXECUTION_MODE_COMMAND
 
     def test_live_path_never_uploads_forbidden_artifacts(
         self, tmp_path: Path,
@@ -499,14 +501,18 @@ def test_transport_failure_no_local_fallback(tmp_path: Path) -> None:
     manager = RunManager(runs_dir=tmp_path / "runs")
     with patch("dsp.engine.orchestrator.run_scenario") as mock_local:
         with patch.object(RunManager, "_create_execution_provider", return_value=provider):
-            run, run_dir, _ = manager.run(
-                scenario_ids=["port_sweep"],
-                target_net="10.10.10.0/24",
-                dry_run=True,
-                execution_provider="webshell",
-                webshell_family="jsp",
-                webshell_url="https://lab.example/shell.jsp",
-            )
+            with patch(
+                "dsp.runner.run_manager.run_webshell_phase1_non_standard_port_burst",
+                return_value={"planned_requests": 0, "requests_sent": 0},
+            ):
+                run, run_dir, _ = manager.run(
+                    scenario_ids=["port_sweep"],
+                    target_net="10.10.10.0/24",
+                    dry_run=True,
+                    execution_provider="webshell",
+                    webshell_family="jsp",
+                    webshell_url="https://lab.example/shell.jsp",
+                )
     mock_local.assert_not_called()
     store = EventStore.open_existing(run_dir / "events.db")
     try:

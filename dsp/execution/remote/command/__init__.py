@@ -7,7 +7,6 @@ from dsp.execution.remote.command.models import (
     FORBIDDEN_REMOTE_ARTIFACTS,
     REMOTE_EXECUTION_MODE_COMMAND,
 )
-from dsp.execution.remote.command.runner import CommandScenarioRunner
 
 __all__ = [
     "COMMAND_SCENARIOS",
@@ -17,3 +16,11 @@ __all__ = [
     "FORBIDDEN_REMOTE_ARTIFACTS",
     "REMOTE_EXECUTION_MODE_COMMAND",
 ]
+
+
+def __getattr__(name: str):
+    if name == "CommandScenarioRunner":
+        from dsp.execution.remote.command.runner import CommandScenarioRunner
+
+        return CommandScenarioRunner
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

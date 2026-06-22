@@ -1,4 +1,4 @@
-"""Self-contained target_net discovery and scenario planning for webshell bundle runs."""
+"""Webshell command-only discovery-based scenario planning."""
 
 from __future__ import annotations
 

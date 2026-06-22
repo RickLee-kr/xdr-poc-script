@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 from dsp.engine.scenario_engine import TargetSet
 from dsp.event_store import Event, EventStore, ValidationDecision
-from dsp.execution.remote.bundle.assets.remote_discovery import build_plan_from_discovery
-from dsp.execution.remote.bundle.planner import _plan_dns_tunnel as bundle_plan_dns_tunnel
+from dsp.execution.remote.command.discovery_plans import build_plan_from_discovery
+from dsp.execution.remote.command.scenario_plans import _plan_dns_tunnel as bundle_plan_dns_tunnel
 from dsp.execution.remote.command.planner import _plan_dns_tunnel as command_plan_dns_tunnel
 from dsp.plugins import PluginLoader
 from dsp.protocols.dns.tunnel import plan_dns_tunnel, select_tunnel_targets

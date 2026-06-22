@@ -8,7 +8,7 @@ import sys
 
 from dsp.engine.host_selection import cache_http_endpoint_selection
 from dsp.engine.scenario_engine import TargetSet
-from dsp.execution.remote.bundle.planner import _plan_http_followup, _plan_port_sweep, _plan_sql_injection
+from dsp.execution.remote.command.scenario_plans import _plan_http_followup, _plan_port_sweep, _plan_sql_injection
 from dsp.runtime.operational_profiles import build_operational_scenario_params, scenarios_for_profile
 from dsp.runtime.scenario_plan import apply_webshell_initial_compromise_plan, build_port_sweep_plan_view
 from dsp.runner.target_selection import resolve_scenario_targets

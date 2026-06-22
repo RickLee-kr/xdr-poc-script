@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dsp.execution.remote.bundle.planner import _plan_host_behavior_check
+from dsp.execution.remote.command.scenario_plans import _plan_host_behavior_check
 from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.protocols.host.behavior import build_host_behavior_plan
 from dsp.runner import RunManager

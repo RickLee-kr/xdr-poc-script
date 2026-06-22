@@ -1,115 +1,31 @@
-"""Build serializable execution manifests for webshell bundle mode."""
+"""Shared scenario plan builders for webshell command-only execution."""
 
 from __future__ import annotations
 
 import base64
 from typing import Any
 
-from dsp import EVENT_SCHEMA_VERSION
 from dsp.discovery.legacy_bash import DISCOVERY_MAX_HOSTS, FAST_SAFE_DISCOVERY_PORTS
 from dsp.engine.host_selection import resolve_http_endpoint_selection, select_hosts_for_capability
 from dsp.engine.scenario_engine import TargetSet
-from dsp.execution.remote.bundle.models import BUNDLE_SCENARIOS, RemoteScenarioSkip
-from dsp.execution.remote.bundle.timeout import (
-    apply_remote_execution_budget,
-    compute_bundle_execution_timeout_seconds,
-)
 from dsp.execution.remote.models import ScenarioExecutionRequest
-from dsp.execution.remote.paths import resolve_remote_bundle_path
-from dsp.plugins.models import PluginRecord
-from dsp.runtime.scenario_plan import (
-    build_port_sweep_plan_view,
-)
-from dsp.protocols.dns.tunnel import plan_dns_tunnel
-from dsp.protocols.http.sqli_payloads import plan_sqli_requests
-from dsp.protocols.http.non_standard_port_burst import plan_non_standard_port_burst
-from dsp.protocols.http.urls import MAX_HOSTS_DEFAULT, plan_followup_requests
-from dsp.protocols.recon import MAX_PORTS_DEFAULT, plan_port_sweep
-from dsp.protocols.ssh.attempts import SSH_PORT_DEFAULT, plan_ssh_attempts
+from dsp.protocols.dns.tunnel import plan_dns_tunnel as build_dns_tunnel_plan
 from dsp.protocols.host.behavior import build_host_behavior_plan
-from dsp.protocols.rare.attempts import plan_rare_protocol_activity
+from dsp.protocols.http.non_standard_port_burst import plan_non_standard_port_burst
+from dsp.protocols.http.sqli_payloads import plan_sqli_requests
+from dsp.protocols.http.urls import plan_followup_requests
+from dsp.protocols.rare.attempts import plan_rare_protocol_activity as build_rare_protocol_plans
+from dsp.protocols.recon import plan_port_sweep as build_port_sweep_plans
+from dsp.protocols.ssh.attempts import SSH_PORT_DEFAULT, plan_ssh_attempts
+from dsp.runtime.scenario_plan import build_port_sweep_plan_view
 
 
-def resolve_remote_run_dir(remote_work_dir: str, run_id: str) -> str:
-    base = remote_work_dir.rstrip("/")
-    return f"{base}/{run_id}"
-
-
-def build_manifest(
-    request: ScenarioExecutionRequest,
-    targets: TargetSet,
-    record: PluginRecord,
-) -> dict[str, Any]:
-    """Plan scenario traffic locally and serialize a remote execution manifest."""
-    if not request.run_id:
-        raise ValueError("run_id is required")
-    if request.scenario_id not in BUNDLE_SCENARIOS:
-        raise ValueError(f"unsupported bundle scenario: {request.scenario_id!r}")
-
-    work_dir = str(
-        request.execution_metadata.get("remote_work_dir") or "/tmp/dsp"
-    )
-    run_dir = resolve_remote_run_dir(work_dir, request.run_id)
-    bundle_path = str(
-        request.execution_metadata.get("remote_bundle_path")
-        or resolve_remote_bundle_path(work_dir, request.run_id)
-    )
-
-    manifest: dict[str, Any] = {
-        "run_id": request.run_id,
-        "scenario_id": request.scenario_id,
-        "scenario_version": record.manifest.version,
-        "schema_version": EVENT_SCHEMA_VERSION,
-        "target_net": request.target_net,
-        "dry_run": request.dry_run,
-        "paths": {
-            "work_dir": run_dir,
-            "bundle": bundle_path,
-            "traffic_summary": f"{run_dir}/traffic_summary.json",
-        },
-        "plan": _build_plan(request, targets),
-    }
-    manifest["plan"] = apply_remote_execution_budget(manifest["plan"])
-    manifest["execution_timeout_seconds"] = compute_bundle_execution_timeout_seconds(
-        manifest
-    )
-    return manifest
-
-
-def build_skip_manifest(
-    request: ScenarioExecutionRequest,
-    record: PluginRecord,
-    skip: RemoteScenarioSkip,
-) -> dict[str, Any]:
-    work_dir = str(request.execution_metadata.get("remote_work_dir") or "/tmp/dsp")
-    run_dir = resolve_remote_run_dir(work_dir, str(request.run_id))
-    bundle_path = str(
-        request.execution_metadata.get("remote_bundle_path")
-        or resolve_remote_bundle_path(work_dir, str(request.run_id))
-    )
-    return {
-        "run_id": request.run_id,
-        "scenario_id": request.scenario_id,
-        "scenario_version": record.manifest.version,
-        "schema_version": EVENT_SCHEMA_VERSION,
-        "target_net": request.target_net,
-        "dry_run": request.dry_run,
-        "paths": {
-            "work_dir": run_dir,
-            "bundle": bundle_path,
-            "traffic_summary": f"{run_dir}/traffic_summary.json",
-        },
-        "plan": {"type": "skip"},
-        **skip.to_manifest(),
-    }
-
-
-def _uses_remote_discovery(request: ScenarioExecutionRequest) -> bool:
-    """Webshell bundle scenarios discover target_net on the remote host."""
+def uses_remote_discovery(request: ScenarioExecutionRequest) -> bool:
+    """Webshell scenarios discover target_net on the remote host."""
     return request.execution_metadata.get("traffic_origin_host") == "remote"
 
 
-def _plan_remote_discovery_execute(
+def plan_remote_discovery_execute(
     request: ScenarioExecutionRequest,
     *,
     dry_run: bool,
@@ -129,33 +45,33 @@ def _plan_remote_discovery_execute(
     }
 
 
-def _build_plan(request: ScenarioExecutionRequest, targets: TargetSet) -> dict[str, Any]:
+def build_scenario_plan(request: ScenarioExecutionRequest, targets: TargetSet) -> dict[str, Any]:
     params = dict(request.scenario_params)
     scenario_id = request.scenario_id
-    if _uses_remote_discovery(request):
+    if uses_remote_discovery(request):
         if scenario_id == "host_behavior_check":
-            return _plan_host_behavior_check(request, params, dry_run=request.dry_run)
-        return _plan_remote_discovery_execute(request, dry_run=request.dry_run)
+            return plan_host_behavior_check(request, params, dry_run=request.dry_run)
+        return plan_remote_discovery_execute(request, dry_run=request.dry_run)
     if scenario_id == "port_sweep":
-        return _plan_port_sweep(targets, params, dry_run=request.dry_run)
+        return plan_port_sweep(targets, params, dry_run=request.dry_run)
     if scenario_id == "dns_tunnel":
-        return _plan_dns_tunnel(targets, params, dry_run=request.dry_run)
+        return plan_dns_tunnel(targets, params, dry_run=request.dry_run)
     if scenario_id == "http_followup":
-        return _plan_http_followup(targets, params, dry_run=request.dry_run)
+        return plan_http_followup(targets, params, dry_run=request.dry_run)
     if scenario_id == "sql_injection":
-        return _plan_sql_injection(targets, params, dry_run=request.dry_run)
+        return plan_sql_injection(targets, params, dry_run=request.dry_run)
     if scenario_id == "ssh_failure":
-        return _plan_ssh_failure(targets, params, dry_run=request.dry_run)
+        return plan_ssh_failure(targets, params, dry_run=request.dry_run)
     if scenario_id == "host_behavior_check":
-        return _plan_host_behavior_check(request, params, dry_run=request.dry_run)
+        return plan_host_behavior_check(request, params, dry_run=request.dry_run)
     if scenario_id == "rare_protocol_activity":
-        return _plan_rare_protocol_activity(targets, params, dry_run=request.dry_run)
+        return plan_rare_protocol_activity(targets, params, dry_run=request.dry_run)
     raise ValueError(f"unsupported scenario: {scenario_id!r}")
 
 
-def _plan_port_sweep(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+def plan_port_sweep(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     plan_view = build_port_sweep_plan_view(targets, params)
-    plans = plan_port_sweep(
+    plans = build_port_sweep_plans(
         plan_view.selected_hosts,
         max_hosts=plan_view.max_hosts,
         ports=plan_view.selected_ports,
@@ -174,11 +90,11 @@ def _plan_port_sweep(targets: TargetSet, params: dict[str, Any], *, dry_run: boo
     }
 
 
-def _plan_dns_tunnel(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    return plan_dns_tunnel(targets, params, dry_run=dry_run)
+def plan_dns_tunnel(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+    return build_dns_tunnel_plan(targets, params, dry_run=dry_run)
 
 
-def _plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+def plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
     selection = resolve_http_endpoint_selection(
         targets,
@@ -216,7 +132,7 @@ def _plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: 
     }
 
 
-def _plan_sql_injection(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+def plan_sql_injection(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
     selection = resolve_http_endpoint_selection(
         targets,
@@ -255,7 +171,7 @@ def _plan_sql_injection(targets: TargetSet, params: dict[str, Any], *, dry_run: 
     }
 
 
-def _plan_ssh_failure(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+def plan_ssh_failure(targets: TargetSet, params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
     max_hosts = int(params.get("max_hosts", 2))
     hosts = select_hosts_for_capability(
         targets, params, capability="ssh_hosts", max_hosts=max_hosts
@@ -287,7 +203,7 @@ def _plan_ssh_failure(targets: TargetSet, params: dict[str, Any], *, dry_run: bo
     }
 
 
-def _plan_host_behavior_check(
+def plan_host_behavior_check(
     request: ScenarioExecutionRequest,
     params: dict[str, Any],
     *,
@@ -307,13 +223,13 @@ def _plan_host_behavior_check(
     )
 
 
-def _plan_rare_protocol_activity(
+def plan_rare_protocol_activity(
     targets: TargetSet,
     params: dict[str, Any],
     *,
     dry_run: bool,
 ) -> dict[str, Any]:
-    plans = plan_rare_protocol_activity(targets, params)
+    plans = build_rare_protocol_plans(targets, params)
     if not plans:
         return {"type": "rare_protocol_activity", "mode": "skip", "reason": "no_probe_plans"}
     return {
@@ -332,3 +248,14 @@ def _plan_rare_protocol_activity(
             for plan in plans
         ],
     }
+
+_uses_remote_discovery = uses_remote_discovery
+_plan_remote_discovery_execute = plan_remote_discovery_execute
+_build_plan = build_scenario_plan
+_plan_port_sweep = plan_port_sweep
+_plan_dns_tunnel = plan_dns_tunnel
+_plan_http_followup = plan_http_followup
+_plan_sql_injection = plan_sql_injection
+_plan_ssh_failure = plan_ssh_failure
+_plan_host_behavior_check = plan_host_behavior_check
+_plan_rare_protocol_activity = plan_rare_protocol_activity

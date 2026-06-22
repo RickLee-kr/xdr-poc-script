@@ -35,12 +35,10 @@ from dsp.runtime.webshell_phase1 import (
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.providers.runtime.command.command_exceptions import CommandTransportError
-from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
 from dsp.execution.remote.command.discovery import prefetch_webshell_target_net_discovery
 from dsp.execution.remote.command.models import REMOTE_EXECUTION_MODE_COMMAND
 from dsp.execution.remote.command.planner import targets_dict_to_target_set
-from dsp.execution.remote.exceptions import RemoteArtifactUploadError
-from dsp.execution.remote.paths import resolve_remote_bundle_path
+from dsp.execution.remote.exceptions import RemoteArtifactUploadError, RemoteBundleExecutionError
 from dsp.execution.webshell_provider import WebshellExecutionProvider
 from dsp.event_store import Event, EventQuery, EventStore, Run, RunStatus, ValidationDecision
 from dsp.manual_verification import (
@@ -613,10 +611,6 @@ class RunManager:
         )
         if execution_provider == "webshell":
             exec_ctx.execution_metadata["remote_work_dir"] = remote_work_dir
-            exec_ctx.execution_metadata["remote_bundle_path"] = resolve_remote_bundle_path(
-                remote_work_dir,
-                run_id,
-            )
 
         if is_webshell:
             phase1 = run_webshell_phase1_attack(
@@ -754,7 +748,7 @@ class RunManager:
                     targets_payload["attack_target_net"] = target_net
                 emitter.emit("targets_selected", targets_payload)
 
-        collector = RemoteEventCollector() if execution_provider == "webshell" else None
+        collector = None
 
         summaries: dict[str, dict] = {}
         total_scenarios = len(scenario_ids)
@@ -790,7 +784,7 @@ class RunManager:
                         targets,
                         snapshot_dir=run_dir,
                     )
-                except (CommandTransportError, RemoteArtifactUploadError) as exc:
+                except (CommandTransportError, RemoteArtifactUploadError, RemoteBundleExecutionError) as exc:
                     if not is_webshell:
                         raise
                     _append_scenario_skipped(
@@ -827,8 +821,26 @@ class RunManager:
                         )
                     else:
                         emitter.on_scenario_completed()
-                        completed_metrics = summaries.get(sid, {}).get("metrics", {})
                         completed_evidence = _latest_completed_evidence(store, run_id, sid)
+                        completed_metrics = summaries.get(sid, {}).get("metrics", {})
+                        if is_webshell and not completed_metrics:
+                            from dsp.runtime.scenario_store_metrics import aggregate_scenario_metrics
+
+                            completed_metrics = aggregate_scenario_metrics(
+                                store,
+                                self.registry,
+                                run_id,
+                                sid,
+                            )
+                            if completed_metrics:
+                                summaries[sid] = {
+                                    "scenario_id": sid,
+                                    "metrics": completed_metrics,
+                                    "event_count": store.count(
+                                        EventQuery(run_id=run_id, scenario_id=sid)
+                                    ),
+                                    "notes": [],
+                                }
                         if sid == "http_followup" and completed_evidence:
                             _write_http_followup_artifacts(run_dir, completed_evidence)
                         if sid == "sql_injection" and completed_evidence:
@@ -843,34 +855,6 @@ class RunManager:
                             },
                         )
 
-                remote_mode = exec_ctx.execution_metadata.get("remote_execution_mode")
-                if (
-                    execution_provider == "webshell"
-                    and collector is not None
-                    and remote_mode != REMOTE_EXECUTION_MODE_COMMAND
-                ):
-                    if _scenario_executor_skipped(store, run_id, sid):
-                        continue
-                    if exec_ctx.execution_metadata.get("scenario_skipped"):
-                        continue
-                    assert isinstance(provider, WebshellExecutionProvider)
-                    remote_execution_id = exec_ctx.execution_metadata.get(
-                        "remote_execution_id",
-                        run_id,
-                    )
-                    remote_bundle_path = exec_ctx.execution_metadata["remote_bundle_path"]
-                    collection_result = collector.collect(
-                        RemoteEventCollectionRequest(
-                            remote_execution_id=str(remote_execution_id),
-                            remote_bundle_path=str(remote_bundle_path),
-                            diagnostics_dir=run_dir,
-                        ),
-                        provider,
-                        store,
-                    )
-                    exec_ctx.execution_metadata["events_imported"] = (
-                        collection_result.events_imported
-                    )
         finally:
             provider.cleanup(exec_ctx)
 

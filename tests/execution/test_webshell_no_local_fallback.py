@@ -127,7 +127,7 @@ def test_command_transport_error_dry_run_does_not_call_run_scenario() -> None:
     )
     provider = WebshellExecutionProvider(config, family_provider=mock_family)
     loader = PluginLoader()
-    record = loader.discover_and_load().get("dummy")
+    record = loader.discover_and_load().get("port_sweep")
     assert record is not None
 
     from dsp.engine import RunConfig, RunContext
@@ -138,7 +138,10 @@ def test_command_transport_error_dry_run_does_not_call_run_scenario() -> None:
         run_id="transport-fail",
         target_net="172.16.50.0/24",
         event_store=store,
-        config=RunConfig(dry_run=True),
+        config=RunConfig(
+            dry_run=True,
+            scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 1}},
+        ),
         dry_run=True,
     )
     exec_ctx = ExecutionContext(
@@ -148,7 +151,6 @@ def test_command_transport_error_dry_run_does_not_call_run_scenario() -> None:
         provider_type="webshell",
     )
     exec_ctx.execution_metadata["remote_work_dir"] = "/tmp/dsp"
-    exec_ctx.execution_metadata["remote_bundle_path"] = "/tmp/dsp/transport-fail/bundle.tgz"
     provider.prepare(exec_ctx)
 
     with patch("dsp.engine.orchestrator.run_scenario") as mock_run_scenario:
@@ -226,7 +228,6 @@ def test_remote_artifact_upload_error_does_not_call_run_scenario() -> None:
         provider_type="webshell",
     )
     exec_ctx.execution_metadata["remote_work_dir"] = "/tmp/dsp"
-    exec_ctx.execution_metadata["remote_bundle_path"] = "/tmp/dsp/upload-fail/bundle.tgz"
     provider.prepare(exec_ctx)
     run_ctx = RunContext(
         run_id="upload-fail",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dsp.engine.scenario_engine import TargetSet
 from dsp.engine.target_engine import resolve_targets
-from dsp.execution.remote.bundle.planner import _plan_http_followup, _plan_port_sweep, _plan_sql_injection
+from dsp.execution.remote.command.scenario_plans import _plan_http_followup, _plan_port_sweep, _plan_sql_injection
 from dsp.runner.target_selection import resolve_scenario_targets, scenario_start_metadata
 from dsp.runtime.operational_profiles import build_operational_scenario_params
 from dsp.runtime.scenario_plan import build_port_sweep_plan_view

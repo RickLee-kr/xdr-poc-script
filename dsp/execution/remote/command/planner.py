@@ -6,8 +6,8 @@ import base64
 from typing import Any
 
 from dsp.engine.scenario_engine import TargetSet
-from dsp.execution.remote.bundle.assets.remote_discovery import build_plan_from_discovery
-from dsp.execution.remote.bundle.planner import (
+from dsp.execution.remote.command.discovery_plans import build_plan_from_discovery
+from dsp.execution.remote.command.scenario_plans import (
     _plan_host_behavior_check,
     _plan_http_followup,
     _plan_port_sweep,

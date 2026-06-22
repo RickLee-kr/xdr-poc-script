@@ -468,6 +468,7 @@ def _execute_dns_tunnel(
                 "dns_query_method": dns_method,
                 "execution_mode": "dns_tunnel_session",
                 "session_id": session_id,
+                "target": target,
                 "target_selection": plan.get("target_selection", "alive_hosts"),
                 "send_interval_sec": send_interval,
                 "payload_mb": payload_mb,

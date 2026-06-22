@@ -7,7 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests.e2e.fixtures.bundle_helpers import remote_bundle_path_for_run
 from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
 
 DSP_ROOT = Path(__file__).resolve().parents[2]
@@ -153,26 +152,21 @@ def test_webshell_mode_creates_expected_files(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert "traffic_profile=low" in result.stdout
-    assert "events_imported" in result.stdout or "event_count=" in result.stdout
+    assert "event_count=" in result.stdout
     assert "manual_next_steps:" in result.stdout
 
-    expected = [
-        output_dir / "events.db",
-        output_dir / f"run_{RUN_ID}.json",
-        output_dir / f"run_{RUN_ID}.md",
-        output_dir / "verification_checklist.md",
-        output_dir / "investigation_notes.md",
-        output_dir / "evidence_summary_template.md",
-    ]
-    for path in expected:
-        assert path.is_file(), f"missing expected artifact: {path}"
-        assert path.stat().st_size > 0
+    run_id = _parse_run_id(result.stdout)
+    run_dir = output_dir / run_id
+    assert run_dir.is_dir(), f"missing run directory: {run_dir}"
+    assert (run_dir / "events.db").is_file()
+    assert (run_dir / "validation.json").is_file()
+    assert (run_dir / "traffic_summary.json").is_file()
 
     assert server.command_calls[:3] == ["whoami", "hostname", "pwd"]
-    assert any("run_scenario.py" in call for call in server.upload_calls)
-    assert any(call.startswith("python3 ") for call in server.command_calls)
+    assert not any("run_scenario.py" in call for call in server.upload_calls)
+    assert not any("manifest.json" in call for call in server.upload_calls)
     assert not any(call.startswith("dsp-remote-scenario ") for call in server.command_calls)
-    assert remote_bundle_path_for_run(RUN_ID) in server.download_calls
+    assert not any("python3 /tmp/dsp/" in call for call in server.command_calls)
 
 
 def test_webshell_mode_rejects_disallowed_command(tmp_path: Path) -> None:

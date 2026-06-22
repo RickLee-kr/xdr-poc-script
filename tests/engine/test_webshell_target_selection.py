@@ -11,11 +11,11 @@ import pytest
 
 from dsp.engine.host_selection import resolve_http_attack_endpoint_selection
 from dsp.engine.scenario_engine import TargetSet
-from dsp.execution.remote.bundle.assets.remote_discovery import (
+from dsp.execution.remote.command.discovery_plans import (
     build_plan_from_discovery,
     resolve_remote_discovery_plan,
 )
-from dsp.execution.remote.bundle.planner import _build_plan, _plan_remote_discovery_execute
+from dsp.execution.remote.command.scenario_plans import _build_plan, _plan_remote_discovery_execute
 from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.protocols.ssh.attempts import plan_ssh_attempts
 from dsp.runtime.scenario_plan import (
@@ -25,21 +25,9 @@ from dsp.runtime.scenario_plan import (
     webshell_server_endpoint,
 )
 from dsp.runtime.webshell_phase1 import run_webshell_phase1_attack
-from dsp.execution.remote.collection_models import RemoteEventCollectionResult
 from dsp.execution.webshell_provider import WebshellExecutionProvider
 from dsp.runner import RunManager
 from dsp.runner.console_output import OperationalConsole
-
-
-def _mock_collector() -> MagicMock:
-    collector = MagicMock()
-    collector.collect.return_value = RemoteEventCollectionResult(
-        remote_execution_id="test",
-        remote_bundle_path="/tmp/events.jsonl",
-        local_bundle_path="/tmp/local/events.jsonl",
-        events_imported=0,
-    )
-    return collector
 
 
 def _webshell_provider_mock() -> MagicMock:
@@ -123,15 +111,14 @@ def test_phase1_runs_before_prepare() -> None:
             create_provider.return_value = provider
 
             manager = RunManager(runs_dir=tmpdir / "runs")
-            with patch("dsp.runner.run_manager.RemoteEventCollector", return_value=_mock_collector()):
-                manager.run(
-                    scenario_ids=["http_followup"],
-                    target_net="10.10.10.0/24",
-                    dry_run=True,
-                    execution_provider="webshell",
-                    webshell_url="http://10.10.10.50:8080/shell.jsp",
-                    webshell_family="jsp",
-                )
+            manager.run(
+                scenario_ids=["http_followup"],
+                target_net="10.10.10.0/24",
+                dry_run=True,
+                execution_provider="webshell",
+                webshell_url="http://10.10.10.50:8080/shell.jsp",
+                webshell_family="jsp",
+            )
 
     assert call_order[:2] == ["phase1", "prepare"]
 
@@ -172,7 +159,7 @@ def test_webshell_discovery_runs_remote() -> None:
     assert plan["discovery"]["max_hosts"] == 254
 
     with patch(
-        "dsp.execution.remote.bundle.assets.remote_discovery._tcp_probe",
+        "dsp.execution.remote.command.discovery_plans._tcp_probe",
         return_value=True,
     ):
         resolved = resolve_remote_discovery_plan(plan)
@@ -259,16 +246,15 @@ def test_webshell_attack_chain_order(tmp_path: Path) -> None:
                 "dsp.execution.remote.command.runner.CommandScenarioRunner.run",
                 return_value=MagicMock(to_dict=lambda: {"remote_execution_id": "r1"}),
             ):
-                with patch("dsp.runner.run_manager.RemoteEventCollector", return_value=_mock_collector()):
-                    manager.run(
-                        scenario_ids=["http_followup"],
-                        target_net="10.10.10.0/24",
-                        dry_run=True,
-                        execution_provider="webshell",
-                        webshell_url="http://10.10.10.50:8080/shell.jsp",
-                        webshell_family="jsp",
-                        on_progress=_track,
-                    )
+                manager.run(
+                    scenario_ids=["http_followup"],
+                    target_net="10.10.10.0/24",
+                    dry_run=True,
+                    execution_provider="webshell",
+                    webshell_url="http://10.10.10.50:8080/shell.jsp",
+                    webshell_family="jsp",
+                    on_progress=_track,
+                )
 
     assert phase1_calls == ["phase1"]
     assert prepare_calls == ["prepare"]
@@ -551,15 +537,14 @@ def test_run_manager_skips_dsp_discovery_for_webshell(tmp_path: Path) -> None:
                 create_provider.return_value = provider
 
                 manager = RunManager(runs_dir=tmp_path / "runs")
-                with patch("dsp.runner.run_manager.RemoteEventCollector", return_value=_mock_collector()):
-                    manager.run(
-                        scenario_ids=["http_followup"],
-                        target_net="10.10.10.0/24",
-                        dry_run=True,
-                        execution_provider="webshell",
-                        webshell_url="http://10.10.10.50/shell.jsp",
-                        webshell_family="jsp",
-                    )
+                manager.run(
+                    scenario_ids=["http_followup"],
+                    target_net="10.10.10.0/24",
+                    dry_run=True,
+                    execution_provider="webshell",
+                    webshell_url="http://10.10.10.50/shell.jsp",
+                    webshell_family="jsp",
+                )
 
     resolve_targets.assert_called_once()
     assert resolve_targets.call_args.kwargs.get("discovery") is False

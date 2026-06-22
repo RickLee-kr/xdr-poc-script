@@ -10,7 +10,7 @@ from dsp.engine.host_selection import (
     resolve_http_endpoint_selection,
 )
 from dsp.engine.scenario_engine import TargetSet
-from dsp.execution.remote.bundle.assets.remote_discovery import build_plan_from_discovery
+from dsp.execution.remote.command.discovery_plans import build_plan_from_discovery
 from dsp.runtime.operational_profiles import (
     DISCOVERY_FIRST_SCENARIO_ORDER,
     HOST_BEHAVIOR_CHECK_SCENARIO_ID,

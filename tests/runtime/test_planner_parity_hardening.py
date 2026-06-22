@@ -5,7 +5,7 @@ from __future__ import annotations
 from dsp.discovery.legacy_bash import FAST_SAFE_DISCOVERY_PORTS, PORT_CAPABILITY_MAP
 from dsp.engine.host_selection import _discovered_http_endpoint_tuples
 from dsp.engine.scenario_engine import TargetSet
-from dsp.execution.remote.bundle.assets.remote_discovery import (
+from dsp.execution.remote.command.discovery_plans import (
     DISCOVERY_PORTS,
     _select_http_endpoints,
     build_plan_from_discovery,
@@ -206,8 +206,8 @@ def test_webshell_scenario_start_metadata_defers_target_selection() -> None:
 
 
 def test_rare_protocol_plan_parity_between_local_and_remote() -> None:
-    from dsp.execution.remote.bundle.assets.remote_discovery import build_plan_from_discovery
-    from dsp.execution.remote.bundle.planner import _plan_rare_protocol_activity
+    from dsp.execution.remote.command.discovery_plans import build_plan_from_discovery
+    from dsp.execution.remote.command.scenario_plans import _plan_rare_protocol_activity
 
     targets = _target_set()
     params = {"timeout": 3.0, "rtp_burst_count": 2}

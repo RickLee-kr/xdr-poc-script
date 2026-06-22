@@ -116,27 +116,14 @@ def test_run_manager_prefetches_discovery_before_scenario_execute() -> None:
                     create_provider.return_value = provider
 
                     manager = RunManager(runs_dir=tmpdir / "runs")
-                    with patch(
-                        "dsp.runner.run_manager.RemoteEventCollector",
-                        return_value=MagicMock(
-                            collect=MagicMock(
-                                return_value=MagicMock(
-                                    remote_execution_id="r1",
-                                    remote_bundle_path="/tmp/events.jsonl",
-                                    local_bundle_path="/tmp/local/events.jsonl",
-                                    events_imported=0,
-                                )
-                            )
-                        ),
-                    ):
-                        manager.run(
-                            scenario_ids=["http_followup"],
-                            target_net="10.10.10.0/24",
-                            dry_run=True,
-                            execution_provider="webshell",
-                            webshell_url="http://10.10.10.50:8080/shell.jsp",
-                            webshell_family="jsp",
-                        )
+                    manager.run(
+                        scenario_ids=["http_followup"],
+                        target_net="10.10.10.0/24",
+                        dry_run=True,
+                        execution_provider="webshell",
+                        webshell_url="http://10.10.10.50:8080/shell.jsp",
+                        webshell_family="jsp",
+                    )
 
     assert call_order.index("prefetch") < call_order.index("execute")
     assert call_order[:3] == ["phase1", "prepare", "prefetch"]

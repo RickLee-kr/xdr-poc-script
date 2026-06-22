@@ -23,6 +23,10 @@ from dsp.execution.providers.webshell.provider_factory import create_webshell_pr
 from dsp.execution.webshell_config import WebshellExecutionConfig
 from dsp.execution.webshell.transport.base import WebshellTransport
 from dsp.execution.webshell.transport.real_http_transport import RealHttpTransport
+from dsp.execution.webshell_execution_guard import (
+    assert_webshell_command_allowed,
+    assert_webshell_upload_allowed,
+)
 from dsp.execution.remote.command.models import REMOTE_EXECUTION_MODE_COMMAND
 from dsp.execution.remote.command.runner import CommandScenarioRunner
 from dsp.execution.remote.models import ScenarioExecutionRequest
@@ -193,6 +197,12 @@ class WebshellExecutionProvider(ExecutionProvider):
         timeout_seconds: int = 300,
     ) -> CommandResult:
         """Execute a command through the selected webshell family provider."""
+        if isinstance(command, str):
+            assert_webshell_command_allowed(command)
+        else:
+            assert_webshell_command_allowed(command.command)
+            for argument in command.arguments or ():
+                assert_webshell_command_allowed(str(argument))
         provider = self._require_family_provider()
         return provider.execute_command(
             command,
@@ -202,6 +212,7 @@ class WebshellExecutionProvider(ExecutionProvider):
 
     def upload_file(self, local_file: Path | str, remote_path: str) -> RuntimeArtifact:
         """Upload a local artifact through the selected webshell family provider."""
+        assert_webshell_upload_allowed(remote_path)
         provider = self._require_family_provider()
         return provider.upload_file(local_file, remote_path)
 

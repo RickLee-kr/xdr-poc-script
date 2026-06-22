@@ -14,18 +14,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-from dsp.engine import RunConfig, RunContext, resolve_targets
 from dsp.event_store import EventQuery, EventStore
 from dsp.evidence import EvidenceExportRequest, EvidenceExporter
 from dsp.execution import ExecutionContext, create_execution_provider
 from dsp.execution.providers.runtime.command.command_models import CommandRequest
-from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
-from dsp.execution.remote.paths import resolve_remote_bundle_path
+from dsp.execution.remote.command.models import REMOTE_EXECUTION_MODE_COMMAND
 from dsp.manual_verification import (
     ManualVerificationPackageGenerator,
     ManualVerificationRequest,
 )
-from dsp.plugins import PluginLoader
 from dsp.runner.run_manager import RunManager
 from dsp.runtime.traffic_profiles import (
     build_scenario_params,
@@ -198,17 +195,13 @@ def run_webshell_lab(
     remote_bundle_path: str | None = None,
     dry_run: bool = False,
 ) -> LabRunResult:
-    """Execute a scenario remotely via webshell and collect remote events."""
+    """Execute a scenario remotely via webshell command-only RunManager path."""
+    del remote_bundle_path  # legacy bundle collection removed
     profile = profile_for_scenario(scenario_id, traffic_profile)
-    scenario_params = profile.scenario_params
-    bundle_path = remote_bundle_path or resolve_remote_bundle_path(
-        remote_work_dir, run_id
-    )
+    scenario_params = build_scenario_params(scenario_id, traffic_profile)
 
-    run_dir = _ensure_output_dir(output_dir)
-    store = EventStore(run_dir / "events.db")
-    store.open_run(run_id)
-    generated: list[Path] = [run_dir / "events.db"]
+    output_dir = _ensure_output_dir(output_dir)
+    os.environ["DSP_RUNS_DIR"] = str(output_dir)
     command_results: list[dict[str, object]] = []
 
     provider = create_execution_provider(
@@ -225,10 +218,8 @@ def run_webshell_lab(
         provider_type="webshell",
         scenario_id=scenario_id,
     )
-
     try:
         provider.prepare(exec_ctx)
-
         for command in harmless_commands:
             result = provider.execute_command(CommandRequest.new(command))
             command_results.append(
@@ -238,47 +229,34 @@ def run_webshell_lab(
                     "command_id": result.command_id,
                 }
             )
+    finally:
+        provider.cleanup(exec_ctx)
 
-        loader = PluginLoader()
-        record = loader.discover_and_load().get(scenario_id)
-        if record is None:
-            raise ValueError(f"scenario not found: {scenario_id}")
-        targets = resolve_targets(target_net, discovery=False, dry_run=dry_run)
-        run_ctx = RunContext(
-            run_id=run_id,
-            target_net=target_net,
-            event_store=store,
-            config=RunConfig(scenario_params=scenario_params, dry_run=dry_run),
-            dry_run=dry_run,
-        )
-        exec_ctx.execution_metadata["remote_work_dir"] = remote_work_dir
-        exec_ctx.execution_metadata["remote_bundle_path"] = bundle_path
-        provider.execute(exec_ctx, record, run_ctx, targets)
-        command_results.append(
-            {
-                "command": "webshell-bundle",
-                "status": exec_ctx.execution_metadata.get("remote_scenario_result", {})
-                .get("command_metadata", {})
-                .get("command_status"),
-                "remote_execution_id": exec_ctx.execution_metadata.get("remote_execution_id"),
-            }
+    manager = RunManager(runs_dir=output_dir)
+    run, run_dir, exit_code = manager.run(
+        scenario_ids=[scenario_id],
+        target_net=target_net,
+        dry_run=dry_run,
+        scenario_params=scenario_params,
+        execution_provider="webshell",
+        webshell_family=webshell_family,
+        webshell_url=webshell_url,
+        remote_work_dir=remote_work_dir,
+        verify_tls=verify_tls,
+        operational_profile=traffic_profile,
+    )
+    if exit_code != 0:
+        raise ValueError(
+            f"webshell lab run failed with exit_code={exit_code} status={run.status.value}"
         )
 
-        collection_result = RemoteEventCollector().collect(
-            RemoteEventCollectionRequest(
-                remote_execution_id=run_id,
-                remote_bundle_path=bundle_path,
-            ),
-            provider,
-            store,
-        )
-        if collection_result.local_bundle_path:
-            generated.append(Path(collection_result.local_bundle_path).resolve())
-
-        event_count = store.count(EventQuery(run_id=run_id))
+    store = EventStore.open_existing(run_dir / "events.db")
+    try:
+        event_count = store.count(EventQuery(run_id=run.run_id))
+        generated = _collect_run_artifacts(run_dir)
         artifact_paths, artifact_metadata = _export_artifacts(
             store,
-            run_id=run_id,
+            run_id=run.run_id,
             output_dir=run_dir,
         )
         generated.extend(artifact_paths)
@@ -287,8 +265,8 @@ def run_webshell_lab(
             mode="webshell",
             scenario=scenario_id,
             traffic_profile=profile.name,
-            run_id=run_id,
-            output_dir=run_dir,
+            run_id=run.run_id,
+            output_dir=output_dir,
             run_dir=run_dir,
             event_count=event_count,
             generated_files=generated,
@@ -296,17 +274,16 @@ def run_webshell_lab(
                 "webshell_family": webshell_family,
                 "webshell_url": webshell_url,
                 "remote_work_dir": remote_work_dir,
-                "remote_bundle_path": bundle_path,
                 "harmless_commands": list(harmless_commands),
                 "command_results": command_results,
-                "events_imported": collection_result.events_imported,
-                "collection_metadata": dict(collection_result.collection_metadata),
-                "scenario_params": scenario_params,
+                "remote_execution_mode": REMOTE_EXECUTION_MODE_COMMAND,
+                "scenario_params": scenario_params.get(scenario_id, {}),
+                "dsp_exit_code": exit_code,
+                "run_status": run.status.value,
                 **artifact_metadata,
             },
         )
     finally:
-        provider.cleanup(exec_ctx)
         store.close()
 
 

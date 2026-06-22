@@ -18,6 +18,7 @@ from dsp.protocols.http.target_probe import (
 from dsp.protocols.http.urls import HTTP_DETECTION_PORTS, HTTP_PORT_PRIORITY
 from dsp.runtime.http_endpoint_selection import select_discovered_http_endpoint_tuples
 from dsp.runtime.scenario_plan import (
+    DISCOVERED_HTTP_SERVICE_FROM_WEBSHELL_DISCOVERY,
     DISCOVERED_HTTP_SERVICE_REASON,
     DISCOVERED_HTTPS_SERVICE_REASON,
     DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST,
@@ -292,6 +293,48 @@ def _attack_target_reason_for_discovery(selection: HttpFollowupSelection) -> str
     return DISCOVERED_HTTP_SERVICE_REASON
 
 
+def _discovered_http_hosts_selection_reason(targets: TargetSet) -> str:
+    """Pick HTTP target reason for webshell-mode discovery without DSP-side probe."""
+    meta = targets.discovery_meta or {}
+    if meta.get("discovery_origin") == "webshell_host":
+        return DISCOVERED_HTTP_SERVICE_FROM_WEBSHELL_DISCOVERY
+    return DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST
+
+
+def _reconcile_webshell_selection_reason(
+    selection: HttpFollowupSelection,
+    targets: TargetSet,
+) -> HttpFollowupSelection:
+    """Refresh cached selection reason labels without changing endpoints."""
+    if not selection.selected:
+        return selection
+    reason = _discovered_http_hosts_selection_reason(targets)
+    if selection.selected_http_target_reason == reason and all(
+        ep.selection_reason == reason for ep in selection.selected
+    ):
+        return selection
+    selected = [
+        replace(
+            ep,
+            selection_reason=reason,
+            rejection_reason="",
+        )
+        for ep in selection.selected
+    ]
+    annotated = (
+        annotate_probe_selection(selection.probed, selected)
+        if selection.probed
+        else selected
+    )
+    return HttpFollowupSelection(
+        probed=annotated,
+        selected=selected,
+        skip_reason=selection.skip_reason,
+        selected_http_target_reason=reason,
+        https_targets_skipped=selection.https_targets_skipped,
+    )
+
+
 def _discovered_http_endpoint_tuples(
     targets: TargetSet,
     config: dict,
@@ -352,13 +395,14 @@ def selection_from_discovered_http_hosts_unverified(
             https_targets_skipped=_https_targets_skipped_list(targets),
         )
 
+    selection_reason = _discovered_http_hosts_selection_reason(targets)
     selected = [
         HTTPEndpointProbeResult(
             host=host,
             port=port,
             scheme="http",
             selected=True,
-            selection_reason=DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST,
+            selection_reason=selection_reason,
             rejection_reason="",
         )
         for host, port in endpoint_tuples
@@ -367,7 +411,7 @@ def selection_from_discovered_http_hosts_unverified(
     return HttpFollowupSelection(
         probed=annotated,
         selected=selected,
-        selected_http_target_reason=DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST,
+        selected_http_target_reason=selection_reason,
         https_targets_skipped=_https_targets_skipped_list(targets),
     )
 
@@ -466,6 +510,11 @@ def resolve_discovery_http_selection(
     if cached:
         selection = selection_from_cache(cached)  # type: ignore[arg-type]
         if selection.selected:
+            if webshell_mode:
+                reconciled = _reconcile_webshell_selection_reason(selection, targets)
+                if reconciled.selected_http_target_reason != selection.selected_http_target_reason:
+                    config[HTTP_ENDPOINT_SELECTION_CACHE_KEY] = selection_to_cache(reconciled)
+                return reconciled
             return selection
 
     hosts_limit = max_hosts if max_hosts is not None else int(config.get("max_hosts", 2))

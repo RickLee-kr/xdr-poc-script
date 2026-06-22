@@ -1,4 +1,4 @@
-"""Real webshell bundle-mode E2E — local fake JSP server, real CLI/RunManager path."""
+"""Real webshell command-only E2E — local fake JSP server, real CLI/RunManager path."""
 
 from __future__ import annotations
 
@@ -10,10 +10,7 @@ from pathlib import Path
 import pytest
 
 from dsp.event_store import EventQuery, EventStore
-from dsp.execution.remote.exceptions import (
-    RemoteBundleExecutionError,
-    RemoteEventCollectionError,
-)
+from dsp.execution.remote.exceptions import RemoteArtifactUploadError
 from dsp.runner import RunManager
 from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
 
@@ -79,6 +76,20 @@ def _first_jsonl_line(path: Path) -> str:
     raise AssertionError(f"no non-empty lines in {path}")
 
 
+def _assert_no_forbidden_webshell_artifacts(server: WebshellTestServer) -> None:
+    joined_uploads = "\n".join(server.upload_calls)
+    joined_commands = "\n".join(server.command_calls)
+    for token in (
+        "manifest.json",
+        "run_scenario.py",
+        "remote_discovery.py",
+        "dsp-remote-scenario",
+        "python3 /tmp/dsp/",
+    ):
+        assert token not in joined_uploads, f"forbidden upload token: {token}"
+        assert token not in joined_commands, f"forbidden command token: {token}"
+
+
 @pytest.fixture
 def webshell_fixture(tmp_path: Path):
     server = WebshellTestServer(storage_dir=tmp_path / "remote-storage")
@@ -109,7 +120,7 @@ def _run_port_sweep_manager(
     )
 
 
-def test_real_webshell_bundle_mode_cli_success(webshell_fixture) -> None:
+def test_real_webshell_command_only_cli_success(webshell_fixture) -> None:
     server, remote_work_dir, runs_dir = webshell_fixture
     runs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -122,43 +133,12 @@ def test_real_webshell_bundle_mode_cli_success(webshell_fixture) -> None:
 
     run_dir = _latest_run_dir(runs_dir)
     run_id = run_dir.name
-    remote_run_dir = f"{remote_work_dir.rstrip('/')}/{run_id}"
-    remote_bundle_path = f"{remote_run_dir}/events.jsonl"
 
-    assert any(call.startswith("mkdir -p ") for call in server.command_calls)
-    assert f"{remote_run_dir}/manifest.json" in server.upload_calls
-    assert f"{remote_run_dir}/run_scenario.py" in server.upload_calls
-    assert any(
-        call.startswith("python3 ") and "run_scenario.py" in call
-        for call in server.command_calls
-    )
-    assert remote_bundle_path in server._files or (
-        Path(server.storage_dir or Path("/tmp")) / remote_bundle_path.lstrip("/")
-    ).exists()
+    _assert_no_forbidden_webshell_artifacts(server)
+    assert server.command_calls, "expected webshell command dispatch"
 
-    bundle_bytes = server._read_remote_file(remote_bundle_path)
-    assert bundle_bytes, "events.jsonl must exist remotely"
-    first_remote_line = next(
-        line for line in bundle_bytes.decode("utf-8").splitlines() if line.strip()
-    )
-    assert first_remote_line.startswith("{")
-
-    for name in (
-        "events.jsonl",
-        "events.db",
-        "report.json",
-        "validation.json",
-        "upload_manifest_result.txt",
-        "upload_script_result.txt",
-        "remote_ls_after_upload.txt",
-        "execution_stdout_stderr.txt",
-    ):
+    for name in ("events.db", "report.json", "validation.json", "traffic_summary.json"):
         assert (run_dir / name).is_file(), f"missing {name}"
-
-    exec_output = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
-    assert "Traceback" not in exec_output
-    parsed = json.loads(exec_output.strip().splitlines()[-1])
-    assert parsed.get("exit_code") == 0
 
     store = EventStore.open_existing(run_dir / "events.db")
     try:
@@ -170,12 +150,11 @@ def test_real_webshell_bundle_mode_cli_success(webshell_fixture) -> None:
     finally:
         store.close()
 
-    local_events = (run_dir / "events.jsonl").read_text(encoding="utf-8")
-    assert local_events.strip()
+    assert (run_dir / "events.jsonl").is_file()
     assert _first_jsonl_line(run_dir / "events.jsonl").startswith("{")
 
 
-def test_real_webshell_bundle_mode_run_manager_success(
+def test_real_webshell_command_only_run_manager_success(
     tmp_path: Path,
     webshell_fixture,
 ) -> None:
@@ -196,152 +175,20 @@ def test_real_webshell_bundle_mode_run_manager_success(
     assert run.status.value == "completed"
     assert (run_dir / "events.jsonl").is_file()
     assert (run_dir / "report.json").is_file()
-    assert not any(call.startswith("dsp-remote-scenario") for call in server.command_calls)
+    _assert_no_forbidden_webshell_artifacts(server)
 
-
-def test_upload_post_success_without_file_uses_base64_fallback(
-    tmp_path: Path,
-) -> None:
-    server = WebshellTestServer(
-        storage_dir=tmp_path / "storage",
-        ignore_multipart_upload=True,
+    traffic = json.loads((run_dir / "traffic_summary.json").read_text(encoding="utf-8"))
+    discovery = traffic.get("discovery") or {}
+    assert discovery.get("discovery_origin") == "webshell_host"
+    assert discovery.get("runner_upload") is False
+    http_followup = (traffic.get("scenarios") or {}).get("http_followup") or {}
+    assert (
+        http_followup.get("selected_http_target_reason")
+        == "discovered_http_service_from_webshell_discovery"
     )
-    server.start()
-    manager = RunManager(runs_dir=tmp_path / "runs")
-    try:
-        _, run_dir, exit_code = manager.run(
-            scenario_ids=["port_sweep"],
-            target_net="127.0.0.0/30",
-            dry_run=False,
-            scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
-            execution_provider="webshell",
-            webshell_family="jsp",
-            webshell_url=server.webshell_url,
-            remote_work_dir=str(tmp_path / "remote-work"),
-        )
-        assert exit_code == 0
-        script_report = (run_dir / "upload_script_result.txt").read_text(encoding="utf-8")
-        assert "method: base64" in script_report
-        assert (run_dir / "events.jsonl").is_file()
-    finally:
-        server.stop()
 
 
-def test_remote_path_html_download_uses_cat_fallback(
-    tmp_path: Path,
-) -> None:
-    server = WebshellTestServer(
-        storage_dir=tmp_path / "storage",
-        invalid_download_wrapper=True,
-    )
-    server.start()
-    manager = RunManager(runs_dir=tmp_path / "runs")
-    try:
-        _, run_dir, exit_code = manager.run(
-            scenario_ids=["port_sweep"],
-            target_net="127.0.0.0/30",
-            dry_run=False,
-            scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
-            execution_provider="webshell",
-            webshell_family="jsp",
-            webshell_url=server.webshell_url,
-            remote_work_dir=str(tmp_path / "remote-work"),
-        )
-        assert exit_code == 0
-        assert (run_dir / "events.jsonl").is_file()
-        assert _first_jsonl_line(run_dir / "events.jsonl").startswith("{")
-        assert any(call.startswith("cat ") for call in server.command_calls)
-    finally:
-        server.stop()
-
-
-def test_run_scenario_failure_surfaces_execution_output(
-    tmp_path: Path,
-) -> None:
-    server = WebshellTestServer(
-        storage_dir=tmp_path / "storage",
-        fail_script_execution=True,
-    )
-    server.start()
-    manager = RunManager(runs_dir=tmp_path / "runs")
-    try:
-        with pytest.raises(RemoteBundleExecutionError, match="remote bundle execution could not be verified"):
-            manager.run(
-                scenario_ids=["port_sweep"],
-                target_net="127.0.0.0/30",
-                dry_run=False,
-                scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
-                execution_provider="webshell",
-                webshell_family="jsp",
-                webshell_url=server.webshell_url,
-                remote_work_dir=str(tmp_path / "remote-work"),
-            )
-        run_dir = _latest_run_dir(tmp_path / "runs")
-        exec_output = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
-        assert "simulated remote bundle failure" in exec_output
-    finally:
-        server.stop()
-
-
-def test_events_jsonl_missing_raises_collection_error_with_diagnostics(
-    tmp_path: Path,
-) -> None:
-    from dsp.execution.providers.runtime.command import CommandExecutionPolicy
-    from dsp.execution.providers.runtime.transport import TransportRuntimeConfiguration
-    from dsp.execution.providers.webshell.jsp import JspWebshellProvider
-    from dsp.execution import WebshellExecutionProvider
-    from dsp.execution.remote import RemoteEventCollectionRequest, RemoteEventCollector
-    from dsp.execution.webshell.transport import RealHttpTransport, RetryPolicy
-    from dsp.execution.webshell_config import WebshellExecutionConfig
-    from tests.e2e.fixtures.bundle_helpers import remote_bundle_path_for_run
-
-    server = WebshellTestServer(storage_dir=tmp_path / "storage")
-    server.start()
-    transport = RealHttpTransport(retry_policy=RetryPolicy(max_retries=0))
-    family_provider = JspWebshellProvider(
-        transport=transport,
-        webshell_url=server.webshell_url,
-    )
-    family_provider.create_runtime(
-        config=TransportRuntimeConfiguration(
-            enable_healthcheck_on_connect=False,
-            command_policy=CommandExecutionPolicy(allow_command_execution=True),
-        ),
-    )
-    family_provider.connect()
-    provider = WebshellExecutionProvider(
-        WebshellExecutionConfig(provider_type="jsp", webshell_url=server.webshell_url),
-        transport=transport,
-        family_provider=family_provider,
-    )
-    run_id = "missing_events_run"
-    bundle_path = remote_bundle_path_for_run(run_id)
-    store = EventStore(":memory:")
-    store.open_run(run_id)
-    diag_dir = tmp_path / "collection-diag"
-
-    try:
-        with pytest.raises(RemoteEventCollectionError, match="events.jsonl missing") as exc_info:
-            RemoteEventCollector().collect(
-                RemoteEventCollectionRequest(
-                    remote_execution_id=run_id,
-                    remote_bundle_path=bundle_path,
-                    diagnostics_dir=diag_dir,
-                ),
-                provider,
-                store,
-            )
-        assert "Traceback" not in str(exc_info.value)
-        assert (diag_dir / "remote_ls_after_collection.txt").is_file()
-        assert (diag_dir / "collection_error.txt").is_file()
-        assert (diag_dir / "downloaded_events.cat.raw").is_file()
-    finally:
-        server.stop()
-
-
-def test_html_wrapped_command_output_still_uploads_and_collects(
-    tmp_path: Path,
-) -> None:
+def test_html_wrapped_command_output_still_records_events(tmp_path: Path) -> None:
     server = WebshellTestServer(
         storage_dir=tmp_path / "storage",
         wrap_command_output_in_html=True,
@@ -362,127 +209,43 @@ def test_html_wrapped_command_output_still_uploads_and_collects(
         )
         assert exit_code == 0
         assert (run_dir / "events.jsonl").is_file()
+        _assert_no_forbidden_webshell_artifacts(server)
     finally:
         server.stop()
 
 
-def test_command_timeout_with_valid_remote_artifacts_succeeds(tmp_path: Path) -> None:
-    server = WebshellTestServer(
-        storage_dir=tmp_path / "storage",
-        script_stdout_mode="command_timeout",
-    )
+def test_forbidden_manifest_upload_fail_fast(tmp_path: Path) -> None:
+    from dsp.execution.providers.runtime.command import CommandExecutionPolicy
+    from dsp.execution.providers.runtime.transport import TransportRuntimeConfiguration
+    from dsp.execution.providers.webshell.jsp import JspWebshellProvider
+    from dsp.execution import WebshellExecutionProvider
+    from dsp.execution.webshell.transport import RealHttpTransport, RetryPolicy
+    from dsp.execution.webshell_config import WebshellExecutionConfig
+
+    server = WebshellTestServer(storage_dir=tmp_path / "storage")
     server.start()
-    try:
-        _, run_dir, exit_code = _run_port_sweep_manager(
-            server=server,
-            remote_work_dir=str(tmp_path / "remote-work"),
-            runs_dir=tmp_path / "runs",
-        )
-        assert exit_code == 0
-        assert (run_dir / "events.jsonl").is_file()
-        exec_output = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
-        assert "command timeout" in exec_output
-    finally:
-        server.stop()
-
-
-def test_empty_stdout_with_valid_remote_artifacts_succeeds(tmp_path: Path) -> None:
-    server = WebshellTestServer(
-        storage_dir=tmp_path / "storage",
-        script_stdout_mode="empty",
+    transport = RealHttpTransport(retry_policy=RetryPolicy(max_retries=0))
+    family_provider = JspWebshellProvider(
+        transport=transport,
+        webshell_url=server.webshell_url,
     )
-    server.start()
-    try:
-        _, run_dir, exit_code = _run_port_sweep_manager(
-            server=server,
-            remote_work_dir=str(tmp_path / "remote-work"),
-            runs_dir=tmp_path / "runs",
-        )
-        assert exit_code == 0
-        assert (run_dir / "events.jsonl").is_file()
-        exec_output = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
-        assert '"exit_code": 0' not in exec_output
-    finally:
-        server.stop()
-
-
-def test_truncated_stdout_with_valid_remote_artifacts_succeeds(tmp_path: Path) -> None:
-    server = WebshellTestServer(
-        storage_dir=tmp_path / "storage",
-        script_stdout_mode="truncated",
+    family_provider.create_runtime(
+        config=TransportRuntimeConfiguration(
+            enable_healthcheck_on_connect=False,
+            command_policy=CommandExecutionPolicy(allow_command_execution=True),
+        ),
     )
-    server.start()
-    try:
-        _, run_dir, exit_code = _run_port_sweep_manager(
-            server=server,
-            remote_work_dir=str(tmp_path / "remote-work"),
-            runs_dir=tmp_path / "runs",
-        )
-        assert exit_code == 0
-        assert (run_dir / "events.jsonl").is_file()
-        exec_output = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
-        assert "partial output" in exec_output
-        assert '"exit_code": 0' not in exec_output
-    finally:
-        server.stop()
-
-
-def test_missing_stdout_marker_and_missing_events_raises(tmp_path: Path) -> None:
-    server = WebshellTestServer(
-        storage_dir=tmp_path / "storage",
-        script_stdout_mode="command_timeout",
-        suppress_events_bundle=True,
+    family_provider.connect()
+    provider = WebshellExecutionProvider(
+        WebshellExecutionConfig(provider_type="jsp", webshell_url=server.webshell_url),
+        transport=transport,
+        family_provider=family_provider,
     )
-    server.start()
-    manager = RunManager(runs_dir=tmp_path / "runs")
+    local = tmp_path / "manifest.json"
+    local.write_text("{}", encoding="utf-8")
     try:
-        with pytest.raises(
-            RemoteBundleExecutionError,
-            match="remote bundle execution could not be verified",
-        ):
-            manager.run(
-                scenario_ids=["port_sweep"],
-                target_net="127.0.0.0/30",
-                dry_run=False,
-                scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
-                execution_provider="webshell",
-                webshell_family="jsp",
-                webshell_url=server.webshell_url,
-                remote_work_dir=str(tmp_path / "remote-work"),
-            )
-        run_dir = _latest_run_dir(tmp_path / "runs")
-        assert (run_dir / "remote_ls_after_execution.txt").is_file()
-        assert (run_dir / "remote_events_wc_after_execution.txt").is_file()
-        error_text = (run_dir / "execution_stdout_stderr.txt").read_text(encoding="utf-8")
-        assert "command timeout" in error_text
-    finally:
-        server.stop()
-
-
-def test_missing_stdout_marker_and_invalid_summary_raises(tmp_path: Path) -> None:
-    server = WebshellTestServer(
-        storage_dir=tmp_path / "storage",
-        script_stdout_mode="empty",
-        corrupt_summary_run_id="wrong_run_id",
-    )
-    server.start()
-    manager = RunManager(runs_dir=tmp_path / "runs")
-    try:
-        with pytest.raises(
-            RemoteBundleExecutionError,
-            match="traffic_summary.json run_id mismatch",
-        ):
-            manager.run(
-                scenario_ids=["port_sweep"],
-                target_net="127.0.0.0/30",
-                dry_run=False,
-                scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 2}},
-                execution_provider="webshell",
-                webshell_family="jsp",
-                webshell_url=server.webshell_url,
-                remote_work_dir=str(tmp_path / "remote-work"),
-            )
-        run_dir = _latest_run_dir(tmp_path / "runs")
-        assert (run_dir / "remote_summary_after_execution.txt").is_file()
+        with pytest.raises(RemoteArtifactUploadError, match="forbidden webshell upload blocked"):
+            provider.upload_file(local, "/tmp/dsp/run01/manifest.json")
+        assert not server.upload_calls
     finally:
         server.stop()

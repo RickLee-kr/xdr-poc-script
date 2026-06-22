@@ -1,14 +1,8 @@
-"""Remote scenario execution and event collection."""
+"""Remote scenario execution — webshell command-only path."""
 
-from dsp.execution.remote.collector import RemoteEventCollector
-from dsp.execution.remote.collection_models import (
-    RemoteEventCollectionRequest,
-    RemoteEventCollectionResult,
-)
 from dsp.execution.remote.exceptions import (
     RemoteArtifactUploadError,
     RemoteBundleExecutionError,
-    RemoteEventCollectionError,
     RemoteScenarioRunnerError,
     UnsupportedRemoteProviderError,
 )
@@ -17,9 +11,6 @@ from dsp.execution.remote.models import (
     RemoteScenarioExecutionResult,
     ScenarioExecutionRequest,
 )
-from dsp.execution.remote.payload import REMOTE_SCENARIO_COMMAND, build_scenario_command
-from dsp.execution.remote.runner import RemoteScenarioRunner
-from dsp.execution.remote.bundle.runner import BundleScenarioRunner
 from dsp.execution.remote.command import (
     COMMAND_SCENARIOS,
     CommandScenarioRunner,
@@ -31,18 +22,10 @@ __all__ = [
     "CommandScenarioRunner",
     "REMOTE_EXECUTION_MODE_COMMAND",
     "FORBIDDEN_RESULT_FIELDS",
-    "REMOTE_SCENARIO_COMMAND",
-    "BundleScenarioRunner",
     "RemoteArtifactUploadError",
     "RemoteBundleExecutionError",
-    "RemoteEventCollectionError",
-    "RemoteEventCollectionRequest",
-    "RemoteEventCollectionResult",
-    "RemoteEventCollector",
     "RemoteScenarioExecutionResult",
-    "RemoteScenarioRunner",
     "RemoteScenarioRunnerError",
     "ScenarioExecutionRequest",
     "UnsupportedRemoteProviderError",
-    "build_scenario_command",
 ]

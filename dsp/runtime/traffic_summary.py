@@ -545,6 +545,11 @@ def build_traffic_summary(
                 or dns_dispatch.get("dns_query_method"),
                 "remote_command_sample": completed.get("remote_command_sample")
                 or dns_dispatch.get("remote_command"),
+                "target_selection": started.get("target_selection")
+                or completed.get("target_selection", "alive_hosts"),
+                "selected_target": started.get("target")
+                or completed.get("target")
+                or dns_dispatch.get("target"),
             })
         elif sid == "dga":
             scenario_summary.update({

@@ -24,7 +24,7 @@ from dsp.execution.webshell.event_sync.bundle_content import (
     content_preview,
     normalize_webshell_command_output,
 )
-from dsp.execution.remote.bundle.assets.remote_discovery import (
+from dsp.execution.remote.command.discovery_plans import (
     DISCOVERY_PORTS,
     PORT_CAPABILITY_MAP,
     expand_target_net_hosts,

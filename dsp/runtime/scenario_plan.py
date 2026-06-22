@@ -17,6 +17,9 @@ WEBSHELL_EXECUTION_KEY = "_webshell_execution"
 WEBSHELL_SERVER_ATTACK_SCENARIOS = frozenset({"host_behavior_check"})
 DISCOVERED_HTTP_SERVICE_REASON = "discovered_http_service"
 DISCOVERED_HTTPS_SERVICE_REASON = "discovered_https_service"
+DISCOVERED_HTTP_SERVICE_FROM_WEBSHELL_DISCOVERY = (
+    "discovered_http_service_from_webshell_discovery"
+)
 DISCOVERED_HTTP_SERVICE_UNVERIFIED_FROM_DSP_HOST = (
     "discovered_http_service_unverified_from_dsp_host"
 )

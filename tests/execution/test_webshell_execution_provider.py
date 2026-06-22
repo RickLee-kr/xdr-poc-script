@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dsp.engine import RunConfig, RunContext
+from dsp.engine import RunConfig, RunContext, resolve_targets
 from dsp.event_store import EventStore
 from dsp.execution import (
     ExecutionContext,
@@ -275,7 +275,7 @@ def test_prepare_sets_execution_metadata():
     assert ctx.execution_metadata["execution_provider"] == "webshell"
 
 
-def test_execute_scenario_via_remote_runner():
+def test_execute_scenario_via_command_runner():
     mock_family = MagicMock()
     mock_family.execute_command.return_value = CommandResult.new(
         "cmd01",
@@ -288,7 +288,7 @@ def test_execute_scenario_via_remote_runner():
     )
     provider = WebshellExecutionProvider(config, family_provider=mock_family)
     loader = PluginLoader()
-    record = loader.discover_and_load().get("dummy")
+    record = loader.discover_and_load().get("port_sweep")
     assert record is not None
     store = EventStore(":memory:")
     store.open_run("defer01")
@@ -296,7 +296,10 @@ def test_execute_scenario_via_remote_runner():
         run_id="defer01",
         target_net="10.10.10.0/24",
         event_store=store,
-        config=RunConfig(dry_run=True),
+        config=RunConfig(
+            dry_run=True,
+            scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 1}},
+        ),
         dry_run=True,
     )
     exec_ctx = ExecutionContext(
@@ -305,9 +308,11 @@ def test_execute_scenario_via_remote_runner():
         dry_run=True,
         provider_type="webshell",
     )
-    summary = provider.execute(exec_ctx, record, run_ctx, MagicMock())
+    summary = provider.execute(
+        exec_ctx, record, run_ctx, resolve_targets("10.10.10.0/24", dry_run=True)
+    )
     assert summary is None
-    mock_family.execute_command.assert_called_once()
+    assert mock_family.execute_command.called
     assert "remote_scenario_result" in exec_ctx.execution_metadata
 
 
@@ -324,23 +329,31 @@ def test_webshell_provider_execute_stores_remote_execution_id():
     )
     provider = WebshellExecutionProvider(config, family_provider=mock_family)
     loader = PluginLoader()
-    record = loader.discover_and_load().get("dummy")
+    record = loader.discover_and_load().get("port_sweep")
     assert record is not None
     run_ctx = RunContext(
         run_id="w5note01",
         target_net="10.10.10.0/24",
         event_store=EventStore(":memory:"),
-        config=RunConfig(),
-        dry_run=False,
+        config=RunConfig(
+            dry_run=True,
+            scenario_params={"port_sweep": {"max_hosts": 1, "max_ports": 1}},
+        ),
+        dry_run=True,
     )
     run_ctx.event_store.open_run("w5note01")
     exec_ctx = ExecutionContext(
         run_id="w5note01",
         target_net="10.10.10.0/24",
-        dry_run=False,
+        dry_run=True,
         provider_type="webshell",
     )
-    provider.execute(exec_ctx, record, run_ctx, MagicMock())
+    provider.execute(
+        exec_ctx,
+        record,
+        run_ctx,
+        resolve_targets("10.10.10.0/24", dry_run=True),
+    )
     assert exec_ctx.execution_metadata["remote_execution_id"]
     assert "remote_scenario_result" in exec_ctx.execution_metadata
 

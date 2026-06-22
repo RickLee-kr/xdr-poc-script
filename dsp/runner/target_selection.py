@@ -221,7 +221,12 @@ def scenario_start_metadata(
             if selection.selected:
                 meta["selected_targets"] = format_selected_target_labels(selection.selected)
                 meta["target_count"] = len(selection.selected)
+                meta["selected_http_target_reason"] = selection.selected_http_target_reason
+                meta["probe_summaries"] = selection.probe_summaries
+                meta["target_probe"] = selection.probe_summaries
                 meta["selection_deferred"] = False
+            elif selection.skip_reason:
+                meta["skip_reason"] = selection.skip_reason
         if scenario_id == "port_sweep":
             meta["selection_reason"] = "alive_hosts_from_remote_discovery"
         return meta

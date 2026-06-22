@@ -13,7 +13,6 @@ from tests.e2e.conftest import (
     assert_evidence_exports_exist,
     assert_manual_verification_package_exists,
 )
-from tests.e2e.fixtures.bundle_helpers import remote_bundle_path_for_run
 from tests.e2e.fixtures.webshell_test_server import WebshellTestServer
 
 
@@ -49,9 +48,7 @@ def test_run_manager_webshell_path_produces_full_artifacts(
     assert not any("run_scenario.py" in call for call in webshell_server.upload_calls)
     assert not any("manifest.json" in call for call in webshell_server.upload_calls)
     assert not any("remote_discovery.py" in call for call in webshell_server.upload_calls)
-
-    remote_bundle_path = remote_bundle_path_for_run(run.run_id)
-    assert remote_bundle_path not in webshell_server.download_calls
+    assert not any("dsp-remote-scenario" in call for call in webshell_server.command_calls)
 
     assert (run_dir / "events.db").exists()
     assert (run_dir / "validation.json").exists()
