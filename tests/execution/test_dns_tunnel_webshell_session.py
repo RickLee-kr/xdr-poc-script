@@ -157,3 +157,62 @@ def test_two_mb_plan_idx_count() -> None:
     total = plan_chunk_count(PAYLOAD_MB_DEFAULT, CHUNK_SIZE_DEFAULT)
     assert total == (2 * 1024 * 1024 + CHUNK_SIZE_DEFAULT - 1) // CHUNK_SIZE_DEFAULT
     assert total >= 69900
+
+
+def test_webshell_high_profile_queries_sent_nonzero(tmp_path) -> None:
+    """Operational high profile must cap chunks and record queries_sent > 0."""
+    from dsp.runtime.traffic_profiles import scenario_params_for_profile
+    from dsp.runtime.traffic_summary import build_traffic_summary
+
+    alive = [f"221.139.249.{h}" for h in (101, 102, 103, 110, 113, 116, 118, 122, 126)]
+    targets = TargetSet(
+        target_net="221.139.249.0/24",
+        hosts=alive,
+        service_hosts={"dns_hosts": [], "http_targets": alive[:1]},
+        discovery_enabled=True,
+        discovery_meta={"alive_hosts": alive},
+    )
+    params = scenario_params_for_profile("dns_tunnel", "high")
+    plan = plan_dns_tunnel(targets, params, dry_run=False)
+    assert plan.get("max_chunks") == 500
+    assert len(plan["queries"]) == 502  # strt + 500 idx + end
+
+    store = EventStore(tmp_path / "events.db")
+    store.open_run("run-high")
+    ctx = RunContext(
+        run_id="run-high",
+        target_net="221.139.249.0/24",
+        event_store=store,
+        config=RunConfig(dry_run=False),
+        dry_run=False,
+    )
+    provider = MagicMock()
+    session_output = "\n".join(
+        f"DNS_TUNNEL_SENT:{item['fqdn']}" for item in plan["queries"]
+    ) + "\nDNS_TUNNEL_SESSION_DONE\n"
+    provider.run_remote_command.return_value = session_output.encode("utf-8")
+
+    execute_command_plan(
+        plan,
+        provider,
+        ctx,
+        ScenarioExecutionRequest(
+            run_id="run-high",
+            scenario_id="dns_tunnel",
+            target_net="221.139.249.0/24",
+            dry_run=False,
+            scenario_params={"dns_tunnel": params},
+            execution_metadata={},
+        ),
+    )
+
+    summary = build_traffic_summary(
+        store,
+        run_id="run-high",
+        scenario_ids=["dns_tunnel"],
+        targets=targets,
+        traffic_profile="high",
+    )
+    queries_sent = summary["scenarios"]["dns_tunnel"]["queries_sent"]
+    assert queries_sent > 0
+    assert queries_sent == 502

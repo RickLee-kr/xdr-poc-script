@@ -162,6 +162,7 @@ def test_build_operational_scenario_params_high_dns_tunnel_profile() -> None:
     )
     assert params["dns_tunnel"]["payload_mb"] == 4.0
     assert params["dns_tunnel"]["max_hosts"] == 2
+    assert params["dns_tunnel"]["max_chunks"] == 500
     params = build_operational_scenario_params(
         "high",
         ["http_followup"],
