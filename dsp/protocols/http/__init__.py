@@ -48,9 +48,12 @@ from dsp.protocols.http.sqli_events import (
 from dsp.protocols.http.sqli_payloads import (
     SQLI_PATHS,
     SQLI_PAYLOADS,
+    SQLI_REPEATS_PER_PATH,
+    SQLI_REQUESTS_PER_HOST,
     PlannedSqliRequest,
     build_sqli_url,
     plan_sqli_requests,
+    sql_injection_request_items,
 )
 from dsp.protocols.http.sqli_reporting import build_sql_injection_report_section, sql_injection_report_profile
 from dsp.protocols.http.sqli_validation import SQL_INJECTION_METRIC_NAMES, sql_injection_validation_profile
@@ -72,6 +75,8 @@ __all__ = [
     "PORT_PRIORITY",
     "SQLI_PATHS",
     "SQLI_PAYLOADS",
+    "SQLI_REPEATS_PER_PATH",
+    "SQLI_REQUESTS_PER_HOST",
     "SQL_INJECTION_COMPLETED",
     "SQL_INJECTION_METRIC_NAMES",
     "SQL_INJECTION_STARTED",
@@ -105,6 +110,7 @@ __all__ = [
     "http_followup_validation_profile",
     "plan_followup_requests",
     "plan_sqli_requests",
+    "sql_injection_request_items",
     "sql_injection_report_profile",
     "sql_injection_validation_profile",
     "select_port_for_host",

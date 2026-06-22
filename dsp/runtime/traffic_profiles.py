@@ -96,9 +96,9 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
         "high": {"max_hosts": 2, "max_per_host": 300, "max_total": 300, "timeout": 5.0},
     },
     "sql_injection": {
-        "low": {"max_hosts": 1, "max_per_host": 3, "max_total": 5, "timeout": 15.0},
-        "normal": {"max_hosts": 2, "max_per_host": 400, "max_total": 800, "timeout": 10.0},
-        "high": {"max_hosts": 3, "max_per_host": 25, "max_total": 50, "timeout": 5.0},
+        "low": {"max_hosts": 1, "max_per_host": 159, "max_total": 159, "timeout": 15.0},
+        "normal": {"max_hosts": 2, "max_per_host": 159, "max_total": 318, "timeout": 10.0},
+        "high": {"max_hosts": 3, "max_per_host": 159, "max_total": 477, "timeout": 5.0},
     },
     "port_sweep": {
         "low": {"max_hosts": 1, "max_ports": 10, "timeout": 0.5, "concurrency": 32},

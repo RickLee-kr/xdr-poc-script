@@ -57,7 +57,22 @@ def resolve_scenario_targets(
     """Return host IPs selected for a scenario using its executor selector."""
     max_hosts = int(params.get("max_hosts", 2))
     if scenario_id == "rare_protocol_activity":
-        return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
+        from dsp.protocols.rare.attempts import plan_rare_protocol_activity
+
+        plans = plan_rare_protocol_activity(targets, params)
+        if not plans:
+            return []
+        seen: set[str] = set()
+        hosts: list[str] = []
+        for plan in plans:
+            host = str(plan.host)
+            if host in seen:
+                continue
+            seen.add(host)
+            hosts.append(host)
+            if len(hosts) >= max_hosts:
+                break
+        return hosts
     spec = _SELECTOR_SPECS.get(scenario_id)
     if spec is None:
         return []
@@ -105,90 +120,8 @@ def resolve_webshell_discovered_targets_by_protocol(
     targets: TargetSet,
     scenario_params: dict[str, dict[str, Any]],
 ) -> dict[str, list[str]]:
-    """Group discovery bucket targets for webshell console — no DSP-side reprobe."""
-    grouped: dict[str, set[str]] = {}
-    for scenario_id in scenario_ids:
-        protocol = _PROTOCOL_GROUPS.get(scenario_id)
-        if protocol is None:
-            continue
-        params = scenario_params.get(scenario_id, {})
-        hosts = _discovered_targets_for_scenario(scenario_id, targets, params)
-        if not hosts:
-            continue
-        grouped.setdefault(protocol, set()).update(hosts)
-
-    ordered: dict[str, list[str]] = {}
-    for protocol in _PROTOCOL_ORDER:
-        if protocol in grouped:
-            ordered[protocol] = sorted(grouped[protocol])
-    for protocol in sorted(grouped):
-        if protocol not in ordered:
-            ordered[protocol] = sorted(grouped[protocol])
-    return ordered
-
-
-def _discovered_targets_for_scenario(
-    scenario_id: str,
-    targets: TargetSet,
-    params: dict[str, Any],
-) -> list[str]:
-    max_hosts = int(params.get("max_hosts", 2))
-    if scenario_id in ("http_followup", "sql_injection"):
-        from dsp.engine.host_selection import (
-            HTTP_ENDPOINT_SELECTION_CACHE_KEY,
-            format_selected_target_labels,
-            selection_from_cache,
-        )
-
-        cached = params.get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
-        if cached:
-            selection = selection_from_cache(cached)  # type: ignore[arg-type]
-            if selection.selected:
-                return format_selected_target_labels(selection.selected)
-        http_eps = list(targets.service_endpoints.get("http_targets") or [])
-        https_eps = list(targets.service_endpoints.get("https_targets") or [])
-        labels = [f"{host}:{port}" for host, port in (http_eps + https_eps)[:max_hosts]]
-        if labels:
-            return labels
-        return [str(host) for host in targets.service_hosts.get("http_targets", [])[:max_hosts]]
-    if scenario_id == "dga":
-        dns_hosts = list(targets.service_hosts.get("dns_hosts") or [])
-        if dns_hosts:
-            return [str(dns_hosts[0])]
-        return []
-    if scenario_id == "dns_tunnel":
-        from dsp.protocols.dns.tunnel import select_tunnel_targets
-
-        return select_tunnel_targets(targets, params, max_hosts=max_hosts)
-    capability_map = {
-        "ssh_failure": "ssh_hosts",
-        "ldap_enumeration": "ldap_hosts",
-        "smb_login_failure": "smb_hosts",
-        "kerberos_failure": "kerberos_hosts",
-    }
-    capability = capability_map.get(scenario_id)
-    if capability:
-        return [str(h) for h in list(targets.service_hosts.get(capability) or [])[:max_hosts]]
-    if scenario_id == "port_sweep":
-        return [str(h) for h in list(targets.hosts or [])[:max_hosts]]
-    if scenario_id == "rare_protocol_activity":
-        from dsp.protocols.rare.attempts import plan_rare_protocol_activity
-
-        plans = plan_rare_protocol_activity(targets, params)
-        if not plans:
-            return []
-        seen: set[str] = set()
-        hosts: list[str] = []
-        for plan in plans:
-            host = str(plan.host)
-            if host in seen:
-                continue
-            seen.add(host)
-            hosts.append(host)
-            if len(hosts) >= max_hosts:
-                break
-        return hosts
-    return resolve_scenario_targets(scenario_id, targets, params)
+    """Group discovery targets by protocol — same rules as local execution."""
+    return resolve_selected_targets_by_protocol(scenario_ids, targets, scenario_params)
 
 
 def scenario_start_metadata(
@@ -200,39 +133,11 @@ def scenario_start_metadata(
     webshell_mode: bool = False,
 ) -> dict[str, Any]:
     """Build metadata lines for scenario STARTED progress output."""
-    if webshell_mode:
-        meta: dict[str, Any] = {
-            "discovery_origin": "webshell_host",
-            "target_net": targets.target_net,
-            "selection_deferred": True,
-        }
-        if scenario_id in ("http_followup", "sql_injection"):
-            meta["remote_discovery"] = "remote_discovery_execute"
-            from dsp.engine.host_selection import (
-                format_selected_target_labels,
-                resolve_discovery_http_selection,
-            )
-
-            selection = resolve_discovery_http_selection(
-                targets,
-                params,
-                webshell_mode=True,
-            )
-            if selection.selected:
-                meta["selected_targets"] = format_selected_target_labels(selection.selected)
-                meta["target_count"] = len(selection.selected)
-                meta["selected_http_target_reason"] = selection.selected_http_target_reason
-                meta["probe_summaries"] = selection.probe_summaries
-                meta["target_probe"] = selection.probe_summaries
-                meta["selection_deferred"] = False
-            elif selection.skip_reason:
-                meta["skip_reason"] = selection.skip_reason
-        if scenario_id == "port_sweep":
-            meta["selection_reason"] = "alive_hosts_from_remote_discovery"
-        return meta
-
     hosts = resolve_scenario_targets(scenario_id, targets, params)
     meta: dict[str, Any] = {"targets": len(hosts)}
+    if webshell_mode:
+        meta["discovery_origin"] = "webshell_host"
+        meta["target_net"] = targets.target_net
     if scenario_id == "port_sweep":
         plan = build_port_sweep_plan_view(targets, params)
         meta["targets"] = len(plan.selected_hosts)

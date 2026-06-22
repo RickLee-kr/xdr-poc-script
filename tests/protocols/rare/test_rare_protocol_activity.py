@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -99,6 +100,33 @@ def test_validation_profile_matches_events() -> None:
     result = engine.validate(run_id, "rare_protocol_activity")
     assert result.decision == ValidationDecision.SUCCESS
     assert result.metrics["rare_protocol_probe_attempt_count"] == 1
+
+
+def test_validation_skipped_when_no_probe_plans() -> None:
+    from dsp.event_store import Event
+    from dsp.protocols.rare.events import RARE_PROTOCOL_ACTIVITY_SKIPPED
+
+    store = EventStore(":memory:")
+    run_id = "rare-skip-1"
+    store.open_run(run_id)
+    store.append(
+        Event(
+            run_id=run_id,
+            scenario_id="rare_protocol_activity",
+            timestamp=datetime.now(timezone.utc),
+            stage="executor",
+            event=RARE_PROTOCOL_ACTIVITY_SKIPPED,
+            status="info",
+            source="local",
+            evidence={"reason": "no_probe_plans"},
+        )
+    )
+    loader = PluginLoader()
+    registry = loader.discover_and_load()
+    engine = ValidationEngine(store, registry)
+    result = engine.validate(run_id, "rare_protocol_activity")
+    assert result.decision == ValidationDecision.SKIPPED
+    assert result.reason == "scenario_skipped"
 
 
 def test_report_section_contains_protocol_summary() -> None:

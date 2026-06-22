@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dsp.engine.host_selection import resolve_http_attack_endpoint_selection
 from dsp.engine.scenario_engine import TargetSet
 from dsp.execution.remote.command.discovery_plans import (
     build_plan_from_discovery,
@@ -21,6 +20,7 @@ from dsp.protocols.ssh.attempts import plan_ssh_attempts
 from dsp.runtime.scenario_plan import (
     WEBSHELL_EXECUTION_KEY,
     apply_webshell_initial_compromise_plan,
+    build_scenario_execution_plan,
     parse_initial_compromise_endpoint,
     webshell_server_endpoint,
 )
@@ -186,6 +186,8 @@ def test_webshell_target_selection_uses_remote_discovery() -> None:
 
 
 def test_local_and_webshell_have_same_behavior_different_origin() -> None:
+    from dsp.engine.host_selection import cache_http_endpoint_selection
+
     targets = TargetSet(
         target_net="10.10.10.0/24",
         hosts=["10.10.10.97"],
@@ -193,12 +195,20 @@ def test_local_and_webshell_have_same_behavior_different_origin() -> None:
         service_endpoints={"http_targets": [("10.10.10.97", 8080)]},
         discovery_enabled=True,
     )
-    params = {"max_hosts": 1, "max_total": 4, "max_per_host": 2, "timeout": 2.0}
-
-    local_selection = resolve_http_attack_endpoint_selection(
-        targets,
+    params: dict[str, dict] = {
+        "http_followup": {"max_hosts": 1, "max_total": 4, "max_per_host": 2, "timeout": 2.0},
+    }
+    cache_http_endpoint_selection(
         params,
-        max_hosts=1,
+        scenario_ids=["http_followup"],
+        targets=targets,
+        dry_run=True,
+        webshell_mode=False,
+    )
+    local_plan = build_scenario_execution_plan(
+        "http_followup",
+        targets,
+        params["http_followup"],
         dry_run=True,
     )
     remote_plan = build_plan_from_discovery(
@@ -210,12 +220,16 @@ def test_local_and_webshell_have_same_behavior_different_origin() -> None:
             "service_endpoints": {
                 key: list(value) for key, value in targets.service_endpoints.items()
             },
+            "discovery_enabled": True,
         },
-        params,
+        params["http_followup"],
         dry_run=True,
     )
 
-    local_hosts = {ep.host for ep in local_selection.selected}
+    local_hosts = {
+        item["url"].split("://", 1)[1].split(":", 1)[0].split("/", 1)[0]
+        for item in local_plan["requests"]
+    }
     remote_hosts = {
         item["url"].split("://", 1)[1].split(":", 1)[0].split("/", 1)[0]
         for item in remote_plan["requests"]
@@ -362,15 +376,16 @@ def test_followup_skipped_when_discovery_capability_missing(
     assert plan.get("mode") == "skip"
 
 
-def test_port_sweep_skipped_without_alive_hosts() -> None:
+def test_port_sweep_uses_target_net_when_no_alive_hosts() -> None:
     plan = build_plan_from_discovery(
         "port_sweep",
         {"target_net": "10.10.10.0/24", "hosts": [], "service_hosts": {}, "service_endpoints": {}},
         {"max_hosts": 1, "max_ports": 1},
         dry_run=True,
     )
-    assert plan["mode"] == "skip"
-    assert plan["reason"] == "no_alive_hosts"
+    assert plan["mode"] == "mock"
+    assert plan["probes"]
+    assert plan["probes"][0]["host"].startswith("10.10.10.")
 
 
 def test_dns_tunnel_uses_alive_hosts_when_no_dns_server() -> None:
@@ -431,6 +446,24 @@ def test_dga_skipped_without_discovered_dns_hosts() -> None:
     )
     assert plan["mode"] == "skip"
     assert plan["reason"] == "no_dns_hosts"
+
+
+def test_rare_protocol_skipped_without_discovered_endpoints() -> None:
+    targets = {
+        "target_net": "10.10.10.0/24",
+        "hosts": ["10.10.10.97"],
+        "service_hosts": {"http_targets": ["10.10.10.97"]},
+        "service_endpoints": {"http_targets": [("10.10.10.97", 8080)]},
+        "discovery_enabled": True,
+    }
+    plan = build_plan_from_discovery(
+        "rare_protocol_activity",
+        targets,
+        {"timeout": 3.0},
+        dry_run=True,
+    )
+    assert plan["mode"] == "skip"
+    assert plan["reason"] == "no_probe_plans"
 
 
 def test_webshell_sql_injection_targets_discovered_http_hosts() -> None:

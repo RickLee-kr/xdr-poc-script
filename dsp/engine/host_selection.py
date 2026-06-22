@@ -506,6 +506,7 @@ def resolve_discovery_http_selection(
     timeout: float = 10.0,
 ) -> HttpFollowupSelection:
     """Resolve HTTP follow-up selection from shared cache or discovery buckets."""
+    del dry_run, timeout  # planning uses discovery buckets when discovery ran
     cached = config.get(HTTP_ENDPOINT_SELECTION_CACHE_KEY)
     if cached:
         selection = selection_from_cache(cached)  # type: ignore[arg-type]
@@ -518,7 +519,7 @@ def resolve_discovery_http_selection(
             return selection
 
     hosts_limit = max_hosts if max_hosts is not None else int(config.get("max_hosts", 2))
-    if webshell_mode:
+    if targets.discovery_enabled:
         return selection_from_discovered_http_hosts_unverified(
             targets,
             config,
@@ -529,8 +530,8 @@ def resolve_discovery_http_selection(
         targets,
         config,
         max_hosts=hosts_limit,
-        dry_run=dry_run,
-        timeout=timeout,
+        dry_run=False,
+        timeout=10.0,
     )
 
 
@@ -577,14 +578,13 @@ def cache_http_endpoint_selection(
         int(scenario_params.get(sid, {}).get("max_hosts", 2))
         for sid in http_scenarios
     )
-    timeout = float(ref_params.get("timeout", 10.0))
     selection = resolve_discovery_http_selection(
         targets,
         ref_params,
         max_hosts=max_hosts,
         dry_run=dry_run,
         webshell_mode=webshell_mode,
-        timeout=timeout,
+        timeout=float(ref_params.get("timeout", 10.0)),
     )
     cache = selection_to_cache(selection)
     for sid in http_scenarios:

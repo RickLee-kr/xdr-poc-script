@@ -57,19 +57,45 @@ def _target_set() -> TargetSet:
 
 
 def test_shared_http_endpoint_selection_matches_local_and_remote() -> None:
+    from dsp.engine.host_selection import cache_http_endpoint_selection
+
     targets = _target_set()
-    params = {"max_hosts": 2}
-    local = _discovered_http_endpoint_tuples(targets, params, max_hosts=2)
-    remote = _select_http_endpoints(_discovery_dict(), params)
+    params: dict[str, dict] = {"http_followup": {"max_hosts": 2}}
+    cache_http_endpoint_selection(
+        params,
+        scenario_ids=["http_followup"],
+        targets=targets,
+        dry_run=True,
+        webshell_mode=False,
+    )
+    local = _discovered_http_endpoint_tuples(targets, params["http_followup"], max_hosts=2)
+    remote = _select_http_endpoints(_discovery_dict(), params["http_followup"])
     assert local == remote == [("10.10.10.50", 80), ("10.10.10.97", 8080)]
 
 
 def test_http_followup_path_parity_between_local_and_remote_planner() -> None:
     import random
 
+    from dsp.engine.host_selection import cache_http_endpoint_selection
+
     targets_dict = _discovery_dict()
-    params = {"max_hosts": 1, "max_per_host": 5, "max_total": 5, "include_attack_paths": True}
-    endpoints = _select_http_endpoints(targets_dict, params)
+    targets = _target_set()
+    params: dict[str, dict] = {
+        "http_followup": {
+            "max_hosts": 1,
+            "max_per_host": 5,
+            "max_total": 5,
+            "include_attack_paths": True,
+        },
+    }
+    cache_http_endpoint_selection(
+        params,
+        scenario_ids=["http_followup"],
+        targets=targets,
+        dry_run=True,
+        webshell_mode=False,
+    )
+    endpoints = _select_http_endpoints(targets_dict, params["http_followup"])
     random.seed(7)
     local_plans = plan_followup_requests(
         endpoints=endpoints,
@@ -82,7 +108,7 @@ def test_http_followup_path_parity_between_local_and_remote_planner() -> None:
     remote_plan = build_plan_from_discovery(
         "http_followup",
         targets_dict,
-        params,
+        params["http_followup"],
         dry_run=True,
     )
     local_urls = {plan.url for plan in local_plans}
@@ -91,24 +117,28 @@ def test_http_followup_path_parity_between_local_and_remote_planner() -> None:
 
 
 def test_sql_injection_uses_plan_sqli_requests_on_remote() -> None:
-    import random
+    from dsp.engine.host_selection import cache_http_endpoint_selection
+    from dsp.protocols.http.sqli_payloads import SQLI_REQUESTS_PER_HOST
 
-    params = {"max_hosts": 1, "max_total": 3}
-    endpoints = _select_http_endpoints(_discovery_dict(), params)
-    random.seed(42)
-    expected = plan_sqli_requests(
-        endpoints=endpoints,
-        max_hosts=1,
-        max_total=3,
+    targets = _target_set()
+    params: dict[str, dict] = {"sql_injection": {"max_hosts": 1}}
+    cache_http_endpoint_selection(
+        params,
+        scenario_ids=["sql_injection"],
+        targets=targets,
+        dry_run=True,
+        webshell_mode=False,
     )
-    random.seed(42)
+    endpoints = _select_http_endpoints(_discovery_dict(), params["sql_injection"])
+    expected = plan_sqli_requests(endpoints=endpoints, max_hosts=1)
     plan = build_plan_from_discovery(
         "sql_injection",
         _discovery_dict(),
-        params,
+        params["sql_injection"],
         dry_run=True,
     )
-    assert len(plan["requests"]) == len(expected)
+    assert len(expected) == SQLI_REQUESTS_PER_HOST
+    assert len(plan["requests"]) == SQLI_REQUESTS_PER_HOST
     assert {item["url"] for item in plan["requests"]} == {item.url for item in expected}
 
 
@@ -176,33 +206,47 @@ def test_select_discovered_http_endpoint_tuples_port_ranking() -> None:
     assert endpoints == [("10.10.10.5", 80)]
 
 
-def test_webshell_scenario_start_metadata_defers_target_selection() -> None:
+def test_webshell_scenario_start_metadata_matches_local_selection() -> None:
+    from dsp.engine.host_selection import cache_http_endpoint_selection
     from dsp.runner.target_selection import scenario_start_metadata
 
     targets = TargetSet(
         target_net="172.16.50.0/24",
-        hosts=["10.10.10.97"],
-        service_hosts={"http_targets": ["10.10.10.97"]},
-        service_endpoints={"http_targets": [("10.10.10.97", 8080)]},
+        hosts=["10.10.10.97", "10.10.10.98"],
+        service_hosts={"http_targets": ["10.10.10.97", "10.10.10.98"]},
+        service_endpoints={
+            "http_targets": [
+                ("10.10.10.97", 8080),
+                ("10.10.10.98", 80),
+            ],
+        },
         discovery_enabled=True,
+        discovery_meta={"discovery_origin": "webshell_host"},
     )
-    meta = scenario_start_metadata(
-        "http_followup",
-        targets,
-        {"max_hosts": 1},
+    params: dict[str, dict] = {
+        "http_followup": {"max_hosts": 2},
+    }
+    cache_http_endpoint_selection(
+        params,
+        scenario_ids=["http_followup"],
+        targets=targets,
+        dry_run=True,
         webshell_mode=True,
     )
-    assert meta["discovery_origin"] == "webshell_host"
-    assert meta["remote_discovery"] == "remote_discovery_execute"
-    assert meta["target_net"] == "172.16.50.0/24"
-    assert meta["selected_targets"]
-    assert meta["target_count"] == 1
-    endpoints = select_discovered_http_endpoint_tuples(
-        http_hosts=["10.10.10.5"],
-        http_endpoints=[("10.10.10.5", 8080), ("10.10.10.5", 80)],
-        max_hosts=1,
+    local_meta = scenario_start_metadata(
+        "http_followup",
+        targets,
+        params["http_followup"],
+        webshell_mode=False,
     )
-    assert endpoints == [("10.10.10.5", 80)]
+    remote_meta = scenario_start_metadata(
+        "http_followup",
+        targets,
+        params["http_followup"],
+        webshell_mode=True,
+    )
+    assert local_meta["selected_targets"] == remote_meta["selected_targets"]
+    assert remote_meta["discovery_origin"] == "webshell_host"
 
 
 def test_rare_protocol_plan_parity_between_local_and_remote() -> None:
@@ -218,6 +262,10 @@ def test_rare_protocol_plan_parity_between_local_and_remote() -> None:
         params,
         dry_run=True,
     )
+    assert local.get("mode") == remote.get("mode")
+    if local.get("mode") == "skip":
+        assert local.get("reason") == remote.get("reason")
+        return
     local_probes = {
         (p["protocol"], p["host"], p["port"], p["transport"])
         for p in local["probes"]

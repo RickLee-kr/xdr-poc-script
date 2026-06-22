@@ -2,12 +2,172 @@
 
 from __future__ import annotations
 
+import json
+
+from dsp.engine.host_selection import cache_http_endpoint_selection
 from dsp.engine.scenario_engine import TargetSet
 from dsp.engine.target_engine import resolve_targets
+from dsp.execution.remote.command.discovery_plans import build_plan_from_discovery
 from dsp.execution.remote.command.scenario_plans import _plan_http_followup, _plan_port_sweep, _plan_sql_injection
 from dsp.runner.target_selection import resolve_scenario_targets, scenario_start_metadata
-from dsp.runtime.operational_profiles import build_operational_scenario_params
-from dsp.runtime.scenario_plan import build_port_sweep_plan_view
+from dsp.runtime.operational_profiles import build_operational_scenario_params, scenarios_for_profile
+from dsp.runtime.scenario_plan import (
+    build_scenario_execution_plan,
+    build_port_sweep_plan_view,
+    scenario_plan_parity_view,
+)
+
+
+def _lab_discovery_targets() -> TargetSet:
+    """Lab-style discovery snapshot — same buckets for local and webshell planning."""
+    return TargetSet(
+        target_net="221.139.249.0/24",
+        hosts=[
+            "221.139.249.110",
+            "221.139.249.113",
+            "221.139.249.118",
+        ],
+        service_hosts={
+            "http_targets": [
+                "221.139.249.110",
+                "221.139.249.113",
+                "221.139.249.118",
+            ],
+            "ssh_hosts": ["221.139.249.110"],
+            "dns_hosts": ["221.139.249.110"],
+        },
+        service_endpoints={
+            "http_targets": [
+                ("221.139.249.110", 80),
+                ("221.139.249.110", 8080),
+                ("221.139.249.113", 80),
+                ("221.139.249.118", 8080),
+            ],
+            "ssh_hosts": [("221.139.249.110", 22)],
+            "dns_hosts": [("221.139.249.110", 53)],
+        },
+        discovery_enabled=True,
+        discovery_meta={
+            "alive_hosts": [
+                "221.139.249.110",
+                "221.139.249.113",
+                "221.139.249.118",
+            ],
+            "open_endpoints": 6,
+        },
+    )
+
+
+def _targets_dict(targets: TargetSet) -> dict:
+    return {
+        "target_net": targets.target_net,
+        "hosts": targets.hosts,
+        "service_hosts": targets.service_hosts,
+        "service_endpoints": {
+            key: list(value) for key, value in targets.service_endpoints.items()
+        },
+        "discovery_enabled": targets.discovery_enabled,
+        "discovery_meta": targets.discovery_meta,
+    }
+
+
+def _prepare_shared_params(
+    profile: str,
+    *,
+    webshell: bool,
+) -> tuple[list[str], dict[str, dict]]:
+    scenario_ids = scenarios_for_profile(profile)
+    params = build_operational_scenario_params(
+        profile,
+        scenario_ids,
+        target_net="221.139.249.0/24",
+    )
+    targets = _lab_discovery_targets()
+    if webshell:
+        from dsp.runtime.scenario_plan import apply_webshell_initial_compromise_plan
+
+        apply_webshell_initial_compromise_plan(
+            params,
+            scenario_ids,
+            "http://10.10.10.50:8080/shell.jsp",
+        )
+    cache_http_endpoint_selection(
+        params,
+        scenario_ids=scenario_ids,
+        targets=targets,
+        dry_run=True,
+        webshell_mode=webshell,
+    )
+    return scenario_ids, params
+
+
+def _local_plan(scenario_id: str, targets: TargetSet, params: dict) -> dict:
+    return build_scenario_execution_plan(scenario_id, targets, params, dry_run=True)
+
+
+def _webshell_plan(scenario_id: str, targets: TargetSet, params: dict) -> dict:
+    return build_plan_from_discovery(
+        scenario_id,
+        _targets_dict(targets),
+        params,
+        dry_run=True,
+    )
+
+
+def test_local_and_webshell_scenario_plan_parity_normal_profile() -> None:
+    """Same discovery result must yield identical plans for local and webshell."""
+    targets = _lab_discovery_targets()
+    local_ids, local_params = _prepare_shared_params("normal", webshell=False)
+    _, webshell_params = _prepare_shared_params("normal", webshell=True)
+    assert local_ids == scenarios_for_profile("normal")
+
+    parity_checks = {
+        "port_sweep": "Recon",
+        "dns_tunnel": "DNS",
+        "dga": "DNS",
+        "http_followup": "HTTP",
+        "sql_injection": "HTTP",
+        "ssh_failure": "SSH",
+        "rare_protocol_activity": "Rare",
+    }
+
+    local_plans: dict[str, dict] = {}
+    webshell_plans: dict[str, dict] = {}
+    for scenario_id in parity_checks:
+        sid_params = dict(local_params.get(scenario_id, {}))
+        local_plans[scenario_id] = scenario_plan_parity_view(
+            _local_plan(scenario_id, targets, sid_params)
+        )
+        webshell_plans[scenario_id] = scenario_plan_parity_view(
+            _webshell_plan(scenario_id, targets, dict(webshell_params.get(scenario_id, {})))
+        )
+
+    assert local_plans == webshell_plans
+
+    http_endpoints = local_plans["http_followup"]["endpoints"]
+    assert "221.139.249.110" in http_endpoints
+    assert "221.139.249.113" in http_endpoints
+    assert local_plans["port_sweep"]["probe_count"] == webshell_plans["port_sweep"]["probe_count"]
+    assert local_plans["port_sweep"]["probe_count"] == 20
+
+    grouped_local = {}
+    grouped_webshell = {}
+    from dsp.runner.target_selection import resolve_selected_targets_by_protocol
+
+    grouped_local = resolve_selected_targets_by_protocol(
+        list(parity_checks),
+        targets,
+        local_params,
+    )
+    grouped_webshell = resolve_selected_targets_by_protocol(
+        list(parity_checks),
+        targets,
+        webshell_params,
+    )
+    assert grouped_local == grouped_webshell
+
+    # JSON round-trip sanity for operator plan diff workflows
+    assert json.loads(json.dumps(local_plans)) == json.loads(json.dumps(webshell_plans))
 
 
 def _targets_with_alive(*alive: str) -> TargetSet:

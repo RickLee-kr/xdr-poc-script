@@ -12,7 +12,12 @@ from dsp.runner import RunManager
 
 RARE_TEST_PARAMS = {
     "rare_protocol_activity": {
-        "probe_hosts": ["10.10.10.20"],
+        "targets": [
+            {"protocol": "TELNET", "host": "10.10.10.20", "port": 23},
+            {"protocol": "RTSP", "host": "10.10.10.20", "port": 554},
+            {"protocol": "SIP", "host": "10.10.10.20", "port": 5060},
+            {"protocol": "RTP", "host": "10.10.10.20", "port": 5004},
+        ],
         "timeout": 1.0,
         "rtp_burst_count": 3,
     }
@@ -83,3 +88,25 @@ def test_rare_protocol_activity_plugins_list():
     record = registry.get("rare_protocol_activity")
     assert record is not None
     assert record.status == PluginStatus.ACTIVE
+
+
+def test_rare_protocol_activity_skipped_without_probe_plans(tmp_runs_dir):
+    manager = RunManager(runs_dir=tmp_runs_dir)
+    run, run_dir, exit_code = manager.run(
+        scenario_ids=["rare_protocol_activity"],
+        target_net="10.10.10.0/24",
+        dry_run=True,
+    )
+
+    assert run.status.value == "completed"
+    assert exit_code == 0
+
+    validation = json.loads((run_dir / "validation.json").read_text())
+    result = validation["results"][0]
+    assert result["scenario_id"] == "rare_protocol_activity"
+    assert result["decision"] == "skipped"
+    assert result["reason"] == "scenario_skipped"
+
+    events = (run_dir / "events.jsonl").read_text()
+    assert "rare_protocol_activity_skipped" in events
+    assert "rare_protocol_probe_attempt" not in events

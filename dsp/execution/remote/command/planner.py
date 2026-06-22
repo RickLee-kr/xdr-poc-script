@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from typing import Any
 
 from dsp.engine.scenario_engine import TargetSet
@@ -24,12 +23,10 @@ from dsp.protocols.dns.dga import (
     generate_resolvable_fqdn,
 )
 from dsp.protocols.dns.tunnel import plan_dns_tunnel
-from dsp.protocols.http.sqli_payloads import plan_sqli_requests
 from dsp.protocols.http.urls import plan_followup_requests
 from dsp.protocols.kerberos.attempts import plan_kerberos_attempts
 from dsp.protocols.ldap.attempts import plan_ldap_enumeration
 from dsp.protocols.smb.attempts import plan_smb_attempts
-from dsp.engine.host_selection import resolve_http_endpoint_selection, select_hosts_for_capability
 from dsp.runtime.http_endpoint_selection import select_discovered_http_endpoint_tuples
 from dsp.runtime.scenario_plan import webshell_server_endpoint
 
@@ -54,51 +51,39 @@ def build_command_plan(
     record: PluginRecord,
 ) -> dict[str, Any]:
     """Build an executable scenario plan for command dispatch."""
+    from dsp.execution.remote.command.scenario_plans import build_scenario_execution_plan
+
     if isinstance(targets, dict):
         target_set = targets_dict_to_target_set(targets)
-        targets_dict = targets
     else:
         target_set = targets
-        targets_dict = {
-            "target_net": targets.target_net,
-            "hosts": targets.hosts,
-            "service_hosts": targets.service_hosts,
-            "service_endpoints": {
-                key: list(value) for key, value in targets.service_endpoints.items()
-            },
-            "discovery_meta": targets.discovery_meta,
-        }
 
     params = dict(request.scenario_params)
     scenario_id = request.scenario_id
     dry_run = request.dry_run
 
     if scenario_id == "host_behavior_check":
-        return _plan_host_behavior_check(request, params, dry_run=dry_run)
+        from dsp.execution.remote.command.scenario_plans import plan_host_behavior_check
+
+        return plan_host_behavior_check(request, params, dry_run=dry_run)
+
+    if _uses_remote_discovery(request) and not target_set.discovery_enabled and not target_set.hosts:
+        return build_plan_from_discovery(scenario_id, {}, params, dry_run=dry_run)
 
     if _uses_remote_discovery(request):
-        if scenario_id == "host_behavior_check":
-            if webshell_server_endpoint(params) is None:
-                return {
-                    "type": scenario_id,
-                    "mode": "skip",
-                    "reason": "no_webshell_url",
-                }
-            return build_plan_from_discovery(scenario_id, {}, params, dry_run=dry_run)
+        targets_dict = {
+            "target_net": target_set.target_net,
+            "hosts": target_set.hosts,
+            "service_hosts": target_set.service_hosts,
+            "service_endpoints": {
+                key: list(value) for key, value in target_set.service_endpoints.items()
+            },
+            "discovery_meta": target_set.discovery_meta,
+            "discovery_enabled": target_set.discovery_enabled,
+        }
         return build_plan_from_discovery(scenario_id, targets_dict, params, dry_run=dry_run)
 
-    builders = {
-        "port_sweep": lambda: _plan_port_sweep(target_set, params, dry_run=dry_run),
-        "http_followup": lambda: _plan_http_followup(target_set, params, dry_run=dry_run),
-        "ssh_failure": lambda: _plan_ssh_failure(target_set, params, dry_run=dry_run),
-    }
-    builder = builders.get(scenario_id)
-    if builder is not None:
-        return builder()
-    extended = _extended_plan(scenario_id, targets_dict, params, dry_run=dry_run)
-    if extended is not None:
-        return extended
-    return {"type": "skip", "mode": "skip", "reason": f"unsupported_scenario:{scenario_id}"}
+    return build_scenario_execution_plan(scenario_id, target_set, params, dry_run=dry_run)
 
 
 def _extended_plan(
@@ -127,42 +112,9 @@ def _hosts_for(targets: dict[str, Any], capability: str) -> list[str]:
 
 
 def _plan_sql_injection(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    max_hosts = int(params.get("max_hosts", 2))
-    target_set = targets_dict_to_target_set(targets)
-    selection = resolve_http_endpoint_selection(
-        target_set,
-        params,
-        max_hosts=max_hosts,
-        dry_run=dry_run,
-        timeout=float(params.get("timeout", 10.0)),
-    )
-    if not selection.selected:
-        return {"type": "sql_injection", "mode": "skip", "reason": "no_http_endpoints"}
-    endpoints = [(ep.host, ep.port) for ep in selection.selected]
-    plans = plan_sqli_requests(
-        endpoints=endpoints,
-        max_hosts=max_hosts,
-        max_per_host=int(params.get("max_per_host", 10)),
-        max_total=int(params.get("max_total", 20)),
-    )
-    requests: list[dict[str, Any]] = []
-    for plan in plans:
-        item: dict[str, Any] = {
-            "url": plan.url,
-            "method": plan.method,
-            "payload_category": plan.payload_category,
-            "parameter": plan.parameter,
-        }
-        if plan.body is not None:
-            item["body_b64"] = base64.b64encode(plan.body).decode("ascii")
-            item["content_type"] = plan.content_type
-        requests.append(item)
-    return {
-        "type": "sql_injection",
-        "mode": "mock" if dry_run else "live",
-        "timeout": float(params.get("timeout", 10.0)),
-        "requests": requests,
-    }
+    from dsp.execution.remote.command.scenario_plans import plan_sql_injection
+
+    return plan_sql_injection(targets_dict_to_target_set(targets), params, dry_run=dry_run)
 
 
 def _plan_dns_tunnel(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:

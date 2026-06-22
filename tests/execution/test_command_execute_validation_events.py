@@ -247,3 +247,19 @@ def test_rare_protocol_command_emits_probe_attempt_events(tmp_path) -> None:
     attempts = [e for e in events if e.event == "rare_protocol_probe_attempt"]
     assert len(attempts) == 1
     assert attempts[0].status == "sent"
+
+
+def test_rare_protocol_skip_plan_emits_skipped_events(tmp_path) -> None:
+    ctx = _ctx(tmp_path)
+    provider = MagicMock()
+    plan = {
+        "type": "rare_protocol_activity",
+        "mode": "skip",
+        "reason": "no_probe_plans",
+    }
+    dispatched = execute_command_plan(plan, provider, ctx, _request("rare_protocol_activity"))
+    assert dispatched == 0
+    provider.execute_command.assert_not_called()
+    events = [e.event for e in ctx.event_store.list_events("run-val")]
+    assert "rare_protocol_activity_skipped" in events
+    assert "rare_protocol_probe_attempt" not in events

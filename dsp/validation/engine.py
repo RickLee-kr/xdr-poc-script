@@ -17,6 +17,7 @@ _SCENARIO_SKIP_EVENTS = frozenset({
     "http_followup_skipped",
     "sql_injection_skipped",
     "ssh_failure_skipped",
+    "rare_protocol_activity_skipped",
 })
 
 

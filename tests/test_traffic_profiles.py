@@ -99,8 +99,8 @@ def test_normal_profile_http_followup_dual_target_v139() -> None:
     assert params["abnormal_ua_ratio"] == 0.10
 
 
-def test_normal_profile_sql_injection_800_requests_v139() -> None:
+def test_normal_profile_sql_injection_318_requests_v139() -> None:
     params = scenario_params_for_profile("sql_injection", "normal")
-    assert params["max_total"] == 800
-    assert params["max_per_host"] == 400
+    assert params["max_total"] == 318
+    assert params["max_per_host"] == 159
     assert params["max_hosts"] == 2

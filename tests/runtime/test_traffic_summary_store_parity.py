@@ -252,3 +252,78 @@ def test_traffic_summary_excludes_phase1_counts_but_keeps_attack_metadata(tmp_pa
     assert http["responses_received"] == 1
     assert http["requests_planned"] == 2
     assert http["selected_targets"]
+
+
+def test_traffic_summary_dns_tunnel_matches_validation_across_targets(tmp_path) -> None:
+    """queries_sent must total all targets — not last dns_tunnel_completed evidence."""
+    store = EventStore(tmp_path / "dns_tunnel.db")
+    run_id = "dns_tunnel_parity"
+    store.open_run(run_id)
+    registry = PluginLoader().discover_and_load()
+
+    per_target = 102
+    targets = ["10.10.10.97", "10.10.10.98"]
+    for target in targets:
+        for seq in range(1, per_target + 1):
+            fqdn = f"idx-{seq:04d}-{target.replace('.', '-')}.dns-tunnel.com"
+            _append(
+                store,
+                run_id=run_id,
+                scenario_id="dns_tunnel",
+                event="dns_tunnel_query_sent",
+                status="sent",
+                target=target,
+                artifact=fqdn,
+                evidence={"fqdn": fqdn, "seq": seq},
+            )
+            _append(
+                store,
+                run_id=run_id,
+                scenario_id="dns_tunnel",
+                event="dns_tunnel_chunk_created",
+                status="info",
+                target=target,
+                artifact=fqdn,
+                evidence={"fqdn": fqdn, "seq": seq},
+            )
+        _append(
+            store,
+            run_id=run_id,
+            scenario_id="dns_tunnel",
+            event="dns_tunnel_completed",
+            evidence={
+                "target": target,
+                "queries_sent": per_target,
+                "dns_tunnel_query_sent_count": per_target,
+            },
+        )
+
+    _append(
+        store,
+        run_id=run_id,
+        scenario_id="dns_tunnel",
+        event="dns_tunnel_started",
+        evidence={"planned_chunks": per_target * len(targets), "target_selection": "alive_hosts"},
+    )
+
+    summary = build_traffic_summary(
+        store,
+        run_id=run_id,
+        scenario_ids=["dns_tunnel"],
+        targets=TargetSet(
+            target_net="10.10.10.0/24",
+            hosts=targets,
+            discovery_enabled=True,
+        ),
+        traffic_profile="normal",
+        registry=registry,
+    )
+    validation = ValidationEngine(store, registry).validate(run_id, "dns_tunnel")
+
+    expected = per_target * len(targets)
+    assert expected == 204
+    assert validation.metrics["dns_tunnel_query_sent_count"] == expected
+    dns = summary["scenarios"]["dns_tunnel"]
+    assert dns["dns_tunnel_query_sent_count"] == expected
+    assert dns["queries_sent"] == expected
+    assert dns["dns_tunnel_chunk_created_count"] == expected

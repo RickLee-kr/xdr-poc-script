@@ -533,13 +533,17 @@ def build_traffic_summary(
             })
         elif sid == "dns_tunnel":
             dns_dispatch = _last_evidence(events, sid, "webshell_command_dispatched")
+            if use_store_metrics:
+                queries_sent = int(store_metrics.get("dns_tunnel_query_sent_count", 0))
+                chunks_created = int(store_metrics.get("dns_tunnel_chunk_created_count", 0))
+            else:
+                queries_sent = _count_events(events, sid, "dns_tunnel_query_sent")
+                chunks_created = _count_events(events, sid, "dns_tunnel_chunk_created")
             scenario_summary.update({
                 "queries_planned": started.get("planned_chunks", 0),
-                "dns_tunnel_query_sent_count": _count_events(events, sid, "dns_tunnel_query_sent"),
-                "dns_tunnel_chunk_created_count": _count_events(events, sid, "dns_tunnel_chunk_created"),
-                "queries_sent": completed.get("queries_sent")
-                or completed.get("dns_tunnel_query_sent_count")
-                or _count_events(events, sid, "dns_tunnel_query_sent"),
+                "dns_tunnel_query_sent_count": queries_sent,
+                "dns_tunnel_chunk_created_count": chunks_created,
+                "queries_sent": queries_sent,
                 "dns_query_method": completed.get("dns_query_method")
                 or started.get("dns_query_method")
                 or dns_dispatch.get("dns_query_method"),

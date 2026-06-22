@@ -8,11 +8,12 @@ import pytest
 
 from dsp.runner import RunManager
 
+from dsp.protocols.http.sqli_payloads import SQLI_REQUESTS_PER_HOST
+
 SQLI_TEST_PARAMS = {
     "sql_injection": {
         "endpoints": [["10.10.10.20", 8080]],
-        "max_total": 5,
-        "max_per_host": 5,
+        "max_hosts": 1,
     }
 }
 
@@ -36,13 +37,13 @@ def test_sql_injection_dry_run_e2e(tmp_runs_dir):
     result = validation["results"][0]
     assert result["scenario_id"] == "sql_injection"
     assert result["decision"] == "success"
-    assert result["metrics"]["sql_payload_generated_count"] == 5
-    assert result["metrics"]["sql_request_sent_count"] == 5
+    assert result["metrics"]["sql_payload_generated_count"] == SQLI_REQUESTS_PER_HOST
+    assert result["metrics"]["sql_request_sent_count"] == SQLI_REQUESTS_PER_HOST
 
     report = (run_dir / "report.md").read_text()
     assert "## SQL Injection Details" in report
     assert "sql_payload_generated_count" in report
-    assert "/login" in report or "UNION" in report or "OR" in report
+    assert "raygun4wp" in report or "dvwa" in report or "suspected_query" in report
 
 
 def test_sql_injection_live_e2e(tmp_runs_dir, mock_curl_http):
@@ -60,7 +61,7 @@ def test_sql_injection_live_e2e(tmp_runs_dir, mock_curl_http):
     validation = json.loads((run_dir / "validation.json").read_text())
     result = validation["results"][0]
     assert result["decision"] == "success"
-    assert result["metrics"]["sql_request_sent_count"] == 5
+    assert result["metrics"]["sql_request_sent_count"] == SQLI_REQUESTS_PER_HOST
 
 
 def test_sql_injection_plugins_list():

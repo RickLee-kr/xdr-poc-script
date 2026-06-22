@@ -149,3 +149,72 @@ def build_port_sweep_plan_view(
         max_hosts=max_hosts,
         max_ports=max_ports,
     )
+
+
+def build_scenario_execution_plan(
+    scenario_id: str,
+    targets: TargetSet,
+    params: dict[str, Any],
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Provider-independent scenario plan from discovery ``TargetSet`` only."""
+    from dsp.execution.remote.command.scenario_plans import build_scenario_execution_plan as _build
+
+    return _build(scenario_id, targets, params, dry_run=dry_run)
+
+
+def scenario_plan_parity_view(plan: dict[str, Any]) -> dict[str, Any]:
+    """Extract comparable target fields for local/webshell plan parity checks."""
+    plan_type = str(plan.get("type") or "")
+    mode = plan.get("mode")
+    if mode == "skip" or plan_type == "skip":
+        return {"type": plan_type, "mode": "skip", "reason": plan.get("reason")}
+
+    view: dict[str, Any] = {"type": plan_type, "mode": mode}
+    if plan_type == "port_sweep":
+        probes = plan.get("probes") or []
+        hosts = sorted({str(p["host"]) for p in probes})
+        ports = sorted({int(p["port"]) for p in probes})
+        view.update(
+            {
+                "hosts": hosts,
+                "ports": ports,
+                "probe_count": len(probes),
+            }
+        )
+    elif plan_type in ("http_followup", "sql_injection"):
+        requests = plan.get("requests") or []
+        endpoints = sorted(
+            {
+                item["url"].split("://", 1)[1].split("/", 1)[0]
+                for item in requests
+                if item.get("url")
+            }
+        )
+        view["endpoints"] = endpoints
+        view["request_count"] = len(requests)
+    elif plan_type == "ssh_failure":
+        attempts = plan.get("attempts") or []
+        view["hosts"] = sorted({str(a["host"]) for a in attempts})
+        view["attempt_count"] = len(attempts)
+    elif plan_type == "dns_tunnel":
+        queries = plan.get("queries") or []
+        view["targets"] = sorted({str(q.get("target") or q.get("host") or "") for q in queries})
+        view["query_count"] = len(queries)
+    elif plan_type == "dga":
+        domains = plan.get("domains") or []
+        view["resolver"] = plan.get("resolver")
+        view["domain_count"] = len(domains)
+    elif plan_type == "rare_protocol_activity":
+        probes = plan.get("probes") or []
+        view["probes"] = sorted(
+            (p["protocol"], p["host"], p["port"], p["transport"]) for p in probes
+        )
+        view["probe_count"] = len(probes)
+    elif plan_type in ("ldap_enumeration", "smb_login_failure", "kerberos_failure"):
+        key = "actions" if plan_type == "ldap_enumeration" else "attempts"
+        items = plan.get(key) or []
+        view["hosts"] = sorted({str(item["host"]) for item in items})
+        view["item_count"] = len(items)
+    return view

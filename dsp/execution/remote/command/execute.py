@@ -1040,6 +1040,14 @@ def _execute_rare_protocol_activity(
     store = ctx.event_store
     run_id = str(request.run_id)
     scenario_id = request.scenario_id
+    if plan.get("mode") == "skip":
+        cmd_events.append_scenario_skipped(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            reason=str(plan.get("reason") or "no_probe_plans"),
+        )
+        return 0
     probes = plan.get("probes") or []
     timeout = float(plan.get("timeout", 3.0))
     mock = plan.get("mode") == "mock"

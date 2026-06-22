@@ -9,7 +9,6 @@ import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from dsp.protocols.http.sqli_payloads import plan_sqli_requests
 from dsp.protocols.http.urls import plan_followup_requests
 from dsp.protocols.http.user_agents import attach_followup_user_agents
 from dsp.protocols.dns.dga import (
@@ -212,38 +211,6 @@ def _plan_http_followup(targets: dict[str, Any], params: dict[str, Any], *, dry_
             for plan in enriched_plans
         ],
         "non_standard_port_burst": {"enabled": False},
-        **selection_fields,
-    }
-
-
-def _plan_sql_injection(targets: dict[str, Any], params: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    endpoints, selection_fields = _resolve_http_plan_endpoints(targets, params, dry_run=dry_run)
-    if not endpoints:
-        return {"type": "sql_injection", "mode": "skip", "reason": "no_http_endpoints"}
-    max_hosts = int(params.get("max_hosts", 2))
-    plans = plan_sqli_requests(
-        endpoints=endpoints,
-        max_hosts=max_hosts,
-        max_per_host=int(params.get("max_per_host", 10)),
-        max_total=int(params.get("max_total", 20)),
-    )
-    requests: list[dict[str, Any]] = []
-    for plan in plans:
-        item: dict[str, Any] = {
-            "url": plan.url,
-            "method": plan.method,
-            "payload_category": plan.payload_category,
-            "parameter": plan.parameter,
-        }
-        if plan.body is not None:
-            item["body_b64"] = base64.b64encode(plan.body).decode("ascii")
-            item["content_type"] = plan.content_type
-        requests.append(item)
-    return {
-        "type": "sql_injection",
-        "mode": "mock" if dry_run else "live",
-        "timeout": float(params.get("timeout", 10.0)),
-        "requests": requests,
         **selection_fields,
     }
 
@@ -496,25 +463,16 @@ def build_plan_from_discovery(
     *,
     dry_run: bool,
 ) -> dict[str, Any]:
-    """Build an executable scenario plan from remote discovery results."""
-    builders = {
-        "http_followup": _plan_http_followup,
-        "sql_injection": _plan_sql_injection,
-        "ssh_failure": _plan_ssh_failure,
-        "port_sweep": _plan_port_sweep,
-        "dns_tunnel": _plan_dns_tunnel,
-        "dga": _plan_dga,
-        "ldap_enumeration": _plan_ldap_enumeration,
-        "smb_login_failure": _plan_smb_login_failure,
-        "kerberos_failure": _plan_kerberos_failure,
-        "rare_protocol_activity": _plan_rare_protocol_activity,
-    }
-    if scenario_id == "host_behavior_check":
-        return _plan_host_behavior_check(params, dry_run=dry_run)
-    builder = builders.get(scenario_id)
-    if builder is None:
-        return {"type": "skip", "mode": "skip", "reason": f"unsupported_scenario:{scenario_id}"}
-    return builder(targets, params, dry_run=dry_run)
+    """Build an executable scenario plan from discovery results — provider-independent."""
+    from dsp.execution.remote.command.scenario_plans import build_scenario_execution_plan
+
+    target_set = _targets_to_target_set(targets)
+    return build_scenario_execution_plan(
+        scenario_id,
+        target_set,
+        params,
+        dry_run=dry_run,
+    )
 
 
 def resolve_remote_discovery_plan(plan: dict[str, Any]) -> dict[str, Any]:
