@@ -31,10 +31,22 @@ from dsp.protocols.dns.tunnel import (
     TUNNEL_DOMAIN_DEFAULT,
     compute_dns_tunnel_session_timeout_sec,
     dns_tunnel_query_evidence,
+    dns_tunnel_session_script_completed,
+    parse_dns_tunnel_session_sent_fqdns,
 )
 
 if TYPE_CHECKING:
     from dsp.execution.webshell_provider import WebshellExecutionProvider
+
+
+DGA_SENT_LINE_PREFIX = "DGA_SENT:"
+
+
+def _parse_dga_sent_marker(text: str) -> bool:
+    for line in text.splitlines():
+        if line.strip().startswith(DGA_SENT_LINE_PREFIX):
+            return True
+    return False
 
 
 def execute_command_plan(
@@ -498,6 +510,14 @@ def _execute_dns_tunnel(
         if mock:
             command = mock_noop_command()
             timeout_seconds = 30
+            dispatch_status = _dispatch(provider, command, timeout_seconds=timeout_seconds)
+            dispatch_transport_ok = dispatch_status == CommandStatus.COMPLETED.value
+            session_output = ""
+            sent_fqdns = (
+                frozenset(str(item["fqdn"]) for item in target_queries)
+                if dispatch_transport_ok
+                else frozenset()
+            )
         else:
             command = session_meta["remote_command"]
             timeout_seconds = compute_dns_tunnel_session_timeout_sec(
@@ -506,26 +526,43 @@ def _execute_dns_tunnel(
                 send_interval,
                 max_chunks=int(max_chunks) if max_chunks is not None else None,
             )
+            dispatch_status = CommandStatus.FAILED.value
+            dispatch_transport_ok = False
+            session_output = ""
+            sent_fqdns = frozenset()
+            try:
+                raw_output = provider.run_remote_command(
+                    command,
+                    timeout_seconds=float(timeout_seconds),
+                )
+                dispatch_transport_ok = True
+                dispatch_status = CommandStatus.COMPLETED.value
+                session_output = raw_output.decode("utf-8", errors="replace")
+                sent_fqdns = parse_dns_tunnel_session_sent_fqdns(session_output)
+            except Exception as exc:
+                session_output = str(exc)
 
-        result = _dispatch_command_result(
-            provider,
-            command,
-            timeout_seconds=timeout_seconds,
-        )
-        dispatch_status = str(result.status.value)
-        session_ok = mock or dispatch_status == CommandStatus.COMPLETED.value
         outcome_payload = {
             **dispatch_payload,
-            "dispatch_phase": "completed" if session_ok else "failed",
+            "dispatch_phase": "completed" if dispatch_transport_ok else "failed",
             "dispatch_status": dispatch_status,
             "timeout_seconds": timeout_seconds,
+            "dns_tunnel_sendto_success_count": len(sent_fqdns),
+            "dns_tunnel_planned_queries": len(target_queries),
+            "dns_tunnel_session_script_completed": (
+                dns_tunnel_session_script_completed(session_output)
+                if session_output
+                else False
+            ),
         }
+        if session_output:
+            outcome_payload["session_output_preview"] = session_output[:500]
         cmd_events.append_event(
             store,
             run_id=run_id,
             scenario_id=scenario_id,
-            event="dns_tunnel_dispatch_completed" if session_ok else "dns_tunnel_dispatch_failed",
-            status="info" if session_ok else "error",
+            event="dns_tunnel_dispatch_completed" if dispatch_transport_ok else "dns_tunnel_dispatch_failed",
+            status="info" if dispatch_transport_ok else "error",
             target=target,
             artifact=session_artifact,
             evidence=outcome_payload,
@@ -545,43 +582,46 @@ def _execute_dns_tunnel(
         http_dispatches += 1
 
         target_query_events = 0
-        if session_ok:
-            for item in target_queries:
-                fqdn = str(item["fqdn"])
-                traffic_evidence = dns_tunnel_query_evidence(item)
-                query_payload = {
-                    **traffic_evidence,
-                    **session_meta,
-                    "session_id": session_id,
-                    "outcome": "session_dispatched" if not mock else "mock",
-                    "dispatch_status": dispatch_status,
-                }
-                cmd_events.append_event(
-                    store,
-                    run_id=run_id,
-                    scenario_id=scenario_id,
-                    event="dns_tunnel_chunk_created",
-                    status="info",
-                    target=target,
-                    artifact=fqdn,
-                    evidence=query_payload,
-                )
-                cmd_events.append_event(
-                    store,
-                    run_id=run_id,
-                    scenario_id=scenario_id,
-                    event="dns_tunnel_query_sent",
-                    status="sent",
-                    target=target,
-                    artifact=fqdn,
-                    evidence=query_payload,
-                )
-                target_query_events += 1
+        for item in target_queries:
+            fqdn = str(item["fqdn"])
+            if fqdn not in sent_fqdns:
+                continue
+            traffic_evidence = dns_tunnel_query_evidence(item)
+            query_payload = {
+                **traffic_evidence,
+                **session_meta,
+                "session_id": session_id,
+                "outcome": "sendto_success",
+                "dispatch_status": dispatch_status,
+            }
+            cmd_events.append_event(
+                store,
+                run_id=run_id,
+                scenario_id=scenario_id,
+                event="dns_tunnel_chunk_created",
+                status="info",
+                target=target,
+                artifact=fqdn,
+                evidence=query_payload,
+            )
+            cmd_events.append_event(
+                store,
+                run_id=run_id,
+                scenario_id=scenario_id,
+                event="dns_tunnel_query_sent",
+                status="sent",
+                target=target,
+                artifact=fqdn,
+                evidence=query_payload,
+            )
+            target_query_events += 1
 
         completed_evidence: dict[str, Any] = {
-            "queries_sent": target_query_events if session_ok else 0,
-            "dns_tunnel_query_sent_count": target_query_events if session_ok else 0,
-            "dns_tunnel_chunk_created_count": target_query_events if session_ok else 0,
+            "queries_sent": target_query_events,
+            "dns_tunnel_query_sent_count": target_query_events,
+            "dns_tunnel_chunk_created_count": target_query_events,
+            "dns_tunnel_sendto_success_count": len(sent_fqdns),
+            "dns_tunnel_planned_queries": len(target_queries),
             "webshell_http_dispatches": http_dispatches,
             "dns_query_method": dns_method,
             "execution_mode": "dns_tunnel_session",
@@ -638,13 +678,35 @@ def _execute_dga(
             target,
             fqdn,
             timeout=max(timeout, 1.0),
+            sent_marker_prefix=DGA_SENT_LINE_PREFIX,
+            suppress_errors=False,
         )
         command = (
             mock_noop_command()
             if mock
             else query_evidence["remote_command"]
         )
-        status = _dispatch(provider, command, timeout_seconds=10)
+        dispatch_status = CommandStatus.FAILED.value
+        dispatch_transport_ok = False
+        command_output = ""
+        marker_observed = False
+        if mock:
+            status = _dispatch(provider, command, timeout_seconds=10)
+            dispatch_transport_ok = status == CommandStatus.COMPLETED.value
+            dispatch_status = status
+            marker_observed = dispatch_transport_ok
+        else:
+            try:
+                raw_output = provider.run_remote_command(
+                    command,
+                    timeout_seconds=float(10),
+                )
+                dispatch_transport_ok = True
+                dispatch_status = CommandStatus.COMPLETED.value
+                command_output = raw_output.decode("utf-8", errors="replace")
+                marker_observed = _parse_dga_sent_marker(command_output)
+            except Exception as exc:
+                command_output = str(exc)
         phase_name = str(item.get("phase_name") or "")
         domain_evidence = {
             "phase": item.get("phase"),
@@ -669,11 +731,23 @@ def _execute_dga(
             command_category="dga_query",
             target=target,
             protocol="dns",
-            dispatch_status=status,
+            dispatch_status=dispatch_status,
             artifact=fqdn,
             traffic_event=None,
-            evidence=domain_evidence,
+            evidence={
+                **domain_evidence,
+                "dispatch_transport_ok": dispatch_transport_ok,
+                "dga_sent_marker_observed": marker_observed,
+                **(
+                    {"command_output_preview": command_output[:500]}
+                    if command_output and not marker_observed
+                    else {}
+                ),
+            },
         )
+        if not marker_observed:
+            dispatched += 1
+            continue
         if phase_name == "nxdomain":
             cmd_events.append_event(
                 store,

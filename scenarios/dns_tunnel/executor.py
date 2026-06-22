@@ -150,6 +150,8 @@ def run(
                 )
                 if result.evidence.get("bytes_sent") is not None:
                     query_evidence["bytes_sent"] = result.evidence["bytes_sent"]
+                if result.outcome != "sent":
+                    continue
                 ctx.event_store.append(
                     build_tunnel_query_sent_event(
                         run_id=ctx.run_id,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import re
 from unittest.mock import MagicMock
 
 from dsp.engine import RunConfig, RunContext
@@ -52,7 +54,12 @@ def test_webshell_dns_tunnel_one_http_dispatch_per_target(tmp_path) -> None:
     }
     plan = plan_dns_tunnel(_targets(), params, dry_run=False)
     provider = MagicMock()
-    provider.execute_command.return_value = MagicMock(status=MagicMock(value="completed"))
+    queries = plan["queries"]
+    session_output = "\n".join(
+        [f"DNS_TUNNEL_SENT:{item['fqdn']}" for item in queries]
+        + ["DNS_TUNNEL_SESSION_DONE"]
+    )
+    provider.run_remote_command.return_value = session_output.encode("utf-8")
 
     http_calls = execute_command_plan(
         plan,
@@ -69,13 +76,20 @@ def test_webshell_dns_tunnel_one_http_dispatch_per_target(tmp_path) -> None:
     )
 
     assert http_calls == 1
-    assert provider.execute_command.call_count == 1
-    remote_command = provider.execute_command.call_args[0][0].command
+    assert provider.run_remote_command.call_count == 1
+    remote_command = provider.run_remote_command.call_args[0][0]
     assert "python3 -c" in remote_command
-    assert "sendto" in remote_command
-    assert "recvfrom" not in remote_command
-    assert "DNS_TUNNEL_SESSION_DONE" in remote_command
-    assert "04d" in remote_command
+
+    candidates = re.findall(r"[A-Za-z0-9+/=]{100,}", remote_command)
+    assert candidates
+    payload = max(candidates, key=len)
+    script = base64.b64decode(payload.encode("ascii")).decode("utf-8")
+    assert "DNS_TUNNEL_SENT:" in script
+    assert "DNS_TUNNEL_SESSION_DONE" in script
+    assert "04d" in script
+    assert "sendto" in script
+    assert "recvfrom" not in script
+    compile(script, "<dns_tunnel_remote_python>", "exec")
 
     dispatched = store.count(
         EventQuery(run_id="run-session", scenario_id="dns_tunnel", event="webshell_command_dispatched")

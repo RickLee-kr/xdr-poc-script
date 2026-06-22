@@ -117,7 +117,7 @@ def test_live_executor_sends_udp_for_every_planned_query(tmp_path) -> None:
     assert dns_sent == 5
 
 
-def test_no_response_does_not_suppress_tunnel_query_sent(tmp_path) -> None:
+def test_sendto_failure_does_not_emit_tunnel_query_sent(tmp_path) -> None:
     mock_sock = MagicMock()
     mock_sock.sendto.side_effect = OSError("network unreachable")
 
@@ -147,8 +147,8 @@ def test_no_response_does_not_suppress_tunnel_query_sent(tmp_path) -> None:
 
     assert store.count(
         EventQuery(run_id="tunnel_err_run", scenario_id="dns_tunnel", event="dns_tunnel_query_sent")
-    ) == 4
+    ) == 0
     assert store.count(
         EventQuery(run_id="tunnel_err_run", scenario_id="dns_tunnel", event="dns_query_sent")
-    ) == 4
+    ) == 0
 

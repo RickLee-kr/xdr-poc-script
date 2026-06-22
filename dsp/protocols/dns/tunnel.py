@@ -411,6 +411,27 @@ def transmit_planned_queries(
     return sent
 
 
+DNS_TUNNEL_SENT_LINE_PREFIX = "DNS_TUNNEL_SENT:"
+DNS_TUNNEL_SESSION_DONE_MARKER = "DNS_TUNNEL_SESSION_DONE"
+
+
+def parse_dns_tunnel_session_sent_fqdns(text: str) -> frozenset[str]:
+    """Return FQDNs reported as successfully sendto'd by the remote session script."""
+    sent: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(DNS_TUNNEL_SENT_LINE_PREFIX):
+            fqdn = stripped[len(DNS_TUNNEL_SENT_LINE_PREFIX) :].strip()
+            if fqdn:
+                sent.add(fqdn)
+    return frozenset(sent)
+
+
+def dns_tunnel_session_script_completed(text: str) -> bool:
+    """Return True when remote session script printed its completion marker."""
+    return DNS_TUNNEL_SESSION_DONE_MARKER in text
+
+
 def dns_tunnel_query_evidence(item: dict[str, Any]) -> dict[str, Any]:
     """Return standardized evidence fields for dns_tunnel_query_sent events."""
     fqdn = str(item.get("fqdn") or item.get("query") or "")

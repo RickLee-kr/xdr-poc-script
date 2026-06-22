@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import re
 from unittest.mock import MagicMock
 
 from dsp.engine import RunConfig, RunContext
@@ -37,7 +39,10 @@ def _request(scenario_id: str) -> ScenarioExecutionRequest:
 def test_dns_tunnel_command_evidence_includes_python_socket_method(tmp_path) -> None:
     ctx = _ctx(tmp_path)
     provider = MagicMock()
-    provider.execute_command.return_value = MagicMock(status=MagicMock(value="completed"))
+    fqdn = "idx-0000-abc.dns-tunnel.com"
+    provider.run_remote_command.return_value = (
+        f"DNS_TUNNEL_SENT:{fqdn}\nDNS_TUNNEL_SESSION_DONE\n".encode("utf-8")
+    )
     plan = {
         "type": "dns_tunnel",
         "mode": "live",
@@ -65,19 +70,54 @@ def test_dns_tunnel_command_evidence_includes_python_socket_method(tmp_path) -> 
     assert completed.evidence.get("dns_tunnel_query_sent_count") == 1
     assert completed.evidence.get("webshell_http_dispatches") == 1
     assert http_calls == 1
-    assert provider.execute_command.call_count == 1
+    assert provider.run_remote_command.call_count == 1
     dispatched = next(e for e in events if e.event == "webshell_command_dispatched")
     remote_command = str(dispatched.evidence.get("remote_command"))
     assert "python3 -c" in remote_command
-    assert "sendto" in remote_command
-    assert "recvfrom" not in remote_command
-    assert "DNS_TUNNEL_SESSION_DONE" in remote_command
+
+    payload = _extract_b64_python_payload(remote_command)
+    script = base64.b64decode(payload.encode("ascii")).decode("utf-8")
+    assert "DNS_TUNNEL_SESSION_DONE" in script
+    assert "sendto" in script
+    assert "recvfrom" not in script
+
+
+def test_dns_tunnel_dispatch_without_sendto_emits_no_query_sent(tmp_path) -> None:
+    ctx = _ctx(tmp_path)
+    provider = MagicMock()
+    provider.run_remote_command.return_value = b"DNS_TUNNEL_SESSION_DONE\n"
+    plan = {
+        "type": "dns_tunnel",
+        "mode": "live",
+        "payload_mb": 0.0001,
+        "chunk_size": 30,
+        "domain": "dns-tunnel.com",
+        "mock_filename": "mock_exfil.dat",
+        "send_interval_sec": 0.01,
+        "session_id": "sess01",
+        "queries": [
+            {
+                "target": "10.10.10.20",
+                "fqdn": "idx-0000-abc.dns-tunnel.com",
+                "seq": 0,
+                "query_role": "idx_chunk",
+                "protocol": "dns_udp",
+                "port": 53,
+            },
+        ],
+    }
+    execute_command_plan(plan, provider, ctx, _request("dns_tunnel"))
+    events = ctx.event_store.list_events("run-val")
+    assert any(e.event == "dns_tunnel_dispatch_completed" for e in events)
+    assert not any(e.event == "dns_tunnel_query_sent" for e in events)
+    completed = next(e for e in events if e.event == "dns_tunnel_completed")
+    assert completed.evidence.get("dns_tunnel_query_sent_count") == 0
 
 
 def test_dga_command_emits_validation_status_events(tmp_path) -> None:
     ctx = _ctx(tmp_path)
     provider = MagicMock()
-    provider.execute_command.return_value = MagicMock(status=MagicMock(value="completed"))
+    provider.run_remote_command.return_value = b"DGA_SENT:abcd1234567890.xdr.ooo\nDGA_SENT:abcd1234567890.live.xdr.ooo\n"
     plan = {
         "type": "dga",
         "mode": "live",
@@ -96,6 +136,55 @@ def test_dga_command_emits_validation_status_events(tmp_path) -> None:
     assert nx[0].status == "nxdomain"
     assert len(resolved) == 1
     assert resolved[0].status == "response"
+
+
+def test_dga_http_transport_ok_but_no_marker_emits_zero_observed(tmp_path) -> None:
+    ctx = _ctx(tmp_path)
+    provider = MagicMock()
+    provider.run_remote_command.return_value = b"SyntaxError: invalid syntax\n"
+    plan = {
+        "type": "dga",
+        "mode": "live",
+        "resolver": "10.10.10.20",
+        "timeout": 1.0,
+        "domains": [
+            {"fqdn": "abcd1234567890.xdr.ooo", "phase": 1, "phase_name": "nxdomain", "seq": 1},
+            {"fqdn": "abcd1234567890.live.xdr.ooo", "phase": 2, "phase_name": "resolvable", "seq": 2},
+        ],
+    }
+    execute_command_plan(plan, provider, ctx, _request("dga"))
+    events = ctx.event_store.list_events("run-val")
+    assert not any(e.event == "dga_nxdomain_observed" for e in events)
+    assert not any(e.event == "dga_resolved_observed" for e in events)
+
+
+def _extract_b64_python_payload(command: str) -> str:
+    # command is shell-quoted; shlex.quote may introduce '"'"' sequences.
+    # Instead of trying to parse quotes, extract the longest base64-ish token.
+    candidates = re.findall(r"[A-Za-z0-9+/=]{100,}", command)
+    assert candidates, command
+    return max(candidates, key=len)
+
+
+def test_dga_generated_python_compiles(tmp_path) -> None:
+    ctx = _ctx(tmp_path)
+    provider = MagicMock()
+    provider.run_remote_command.return_value = b""
+    plan = {
+        "type": "dga",
+        "mode": "live",
+        "resolver": "10.10.10.20",
+        "timeout": 1.0,
+        "domains": [
+            {"fqdn": "abcd1234567890.xdr.ooo", "phase": 1, "phase_name": "nxdomain", "seq": 1},
+        ],
+    }
+    execute_command_plan(plan, provider, ctx, _request("dga"))
+    dispatched = next(e for e in ctx.event_store.list_events("run-val") if e.event == "webshell_command_dispatched")
+    remote_command = str((dispatched.evidence or {}).get("remote_command") or "")
+    payload = _extract_b64_python_payload(remote_command)
+    script = base64.b64decode(payload.encode("ascii")).decode("utf-8")
+    compile(script, "<dga_remote_python>", "exec")
 
 
 def test_rare_protocol_command_emits_probe_attempt_events(tmp_path) -> None:

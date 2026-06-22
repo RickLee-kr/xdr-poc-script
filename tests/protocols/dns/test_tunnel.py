@@ -16,9 +16,11 @@ from dsp.protocols.dns.tunnel import (
     build_tunnel_fqdn,
     build_tunnel_start_fqdn,
     chunk_to_b32_label,
+    dns_tunnel_session_script_completed,
     generate_mock_payload_bytes,
     is_valid_tunnel_fqdn,
     iter_payload_chunks,
+    parse_dns_tunnel_session_sent_fqdns,
     plan_burst_schedule,
     plan_chunk_count,
     write_mock_payload_file,
@@ -103,3 +105,15 @@ def test_write_mock_payload_file(tmp_path):
     path = write_mock_payload_file(tmp_path / "mock.dat", 0.0001)
     assert path.is_file()
     assert path.stat().st_size >= CHUNK_SIZE_DEFAULT
+
+
+def test_parse_dns_tunnel_session_sent_fqdns():
+    text = (
+        "DNS_TUNNEL_SENT:strt-mock.dns-tunnel.com\n"
+        "DNS_TUNNEL_SENT:idx-0000-abc.dns-tunnel.com\n"
+        "DNS_TUNNEL_SESSION_DONE\n"
+    )
+    assert parse_dns_tunnel_session_sent_fqdns(text) == frozenset(
+        {"strt-mock.dns-tunnel.com", "idx-0000-abc.dns-tunnel.com"}
+    )
+    assert dns_tunnel_session_script_completed(text)
