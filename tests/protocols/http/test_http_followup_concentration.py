@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from dsp.protocols.http.urls import PAYLOAD_RECON_PATHS, compute_requests_per_target, plan_followup_requests
-from dsp.protocols.http.user_agents import attach_followup_user_agents, is_abnormal_user_agent
+from dsp.protocols.http.user_agents import (
+    URL_SCAN_USER_AGENT_POLICY,
+    attach_followup_user_agents,
+    is_abnormal_user_agent,
+)
 from dsp.runtime.traffic_profiles import scenario_params_for_profile
 from dsp.runner import RunManager
 
@@ -31,7 +35,7 @@ def test_normal_profile_http_followup_dual_target_scaling():
     assert params["max_hosts"] == 2
     assert params["max_total"] == 300
     assert params["max_per_host"] == 150
-    assert params["abnormal_ua_ratio"] == 0.10
+    assert "abnormal_ua_ratio" not in params
 
 
 def test_compute_requests_per_target_two_hosts_150_each():
@@ -55,7 +59,7 @@ def test_plan_followup_dual_target_150_requests_each():
     assert counts["10.0.0.2:8080"] == 150
 
 
-def test_attach_followup_user_agents_ratio_10_percent():
+def test_attach_followup_user_agents_all_suspicious():
     plans = plan_followup_requests(
         endpoints=[("10.0.0.1", 80), ("10.0.0.2", 80)],
         max_hosts=2,
@@ -63,17 +67,18 @@ def test_attach_followup_user_agents_ratio_10_percent():
         max_total=300,
         include_attack_paths=True,
     )
-    enriched, stats = attach_followup_user_agents(plans, abnormal_ratio=0.10)
+    enriched, stats = attach_followup_user_agents(plans)
     assert len(enriched) == 300
-    assert stats["abnormal_user_agents_planned"] == 30
-    assert stats["normal_user_agents_planned"] == 270
-    assert stats["abnormal_ua_ratio"] == 0.10
+    assert stats["user_agent_policy"] == URL_SCAN_USER_AGENT_POLICY
+    assert stats["abnormal_user_agents_planned"] == 300
+    assert stats["normal_user_agents_planned"] == 0
+    assert stats["abnormal_user_agent_ratio"] == 1.0
     abnormal = sum(
         1
         for plan in enriched
         if is_abnormal_user_agent((plan.headers or {}).get("User-Agent", ""))
     )
-    assert abnormal == 30
+    assert abnormal == 300
 
 
 def test_payload_recon_paths_include_required_scan_paths():
@@ -91,11 +96,10 @@ def test_http_followup_writes_per_target_summary_fields(tmp_runs_dir):
         dry_run=True,
         scenario_params={
             "http_followup": {
-                "endpoints": [["10.10.10.20", 8080], ["10.10.10.21", 9000]],
-                "max_hosts": 2,
-                "max_per_host": 150,
-                "max_total": 300,
-                "abnormal_ua_ratio": 0.10,
+                "endpoints": [["10.10.10.20", 8080]],
+                "max_hosts": 1,
+                "max_per_host": 5,
+                "max_total": 5,
             }
         },
     )
@@ -111,11 +115,11 @@ def test_http_followup_writes_per_target_summary_fields(tmp_runs_dir):
             break
 
     assert completed is not None
-    assert completed["target_count"] == 2
-    assert completed["abnormal_user_agent_ratio"] == 0.10
-    assert completed["abnormal_user_agents"] == 30
-    assert completed["normal_user_agents"] == 270
-    assert completed["payload_only_ua"] == 0
+    assert completed["target_count"] == 1
+    assert completed["user_agent_policy"] == URL_SCAN_USER_AGENT_POLICY
+    assert completed["abnormal_user_agent_ratio"] == 1.0
+    assert completed["abnormal_user_agents"] == 5
+    assert completed["normal_user_agents"] == 0
     assert "per_target_request_count" in completed
     assert "per_target_error_count" in completed
-    assert sum(completed["per_target_request_count"].values()) == 300
+    assert sum(completed["per_target_request_count"].values()) == 5

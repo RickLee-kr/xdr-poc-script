@@ -8,6 +8,10 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+# URL scan follow-up uses suspected malicious UA on every request (Product Charter:
+# URL Scan + detectable abnormal User-Agent). Normal browser UA is not mixed in.
+URL_SCAN_USER_AGENT_POLICY = "suspicious_ua_all_requests"
+
 _UA_NORMAL = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -68,9 +72,7 @@ def pick_rare_user_agent() -> str:
 
 
 def pick_user_agent() -> str:
-    """10% normal browser UA, 90% Stellar suspected malicious UA."""
-    if random.randrange(100) < 10:
-        return pick_normal_user_agent()
+    """Pick a suspected malicious UA for HTTP attack traffic."""
     return pick_abnormal_user_agent()
 
 
@@ -101,33 +103,27 @@ def is_abnormal_user_agent(ua: str) -> bool:
     return not is_normal_user_agent(ua)
 
 
-def attach_followup_user_agents(
-    plans: list,
-    *,
-    abnormal_ratio: float = 0.10,
-) -> tuple[list, dict[str, int | float]]:
+def attach_followup_user_agents(plans: list) -> tuple[list, dict[str, int | float | str]]:
     """
-    Assign User-Agent per planned request — abnormal scanner UA vs normal browser UA.
+    Assign suspected malicious User-Agent to every URL scan request.
 
-    Attack paths/queries stay on every request; only UA mix changes detection volume.
+    Attack paths/queries stay on every request. UA mixing ratios are not part of
+    the product requirement — all follow-up URL scan traffic carries detectable UA.
     """
     from dsp.protocols.http.urls import PlannedHttpRequest
 
     total = len(plans)
     if total == 0:
         return [], {
+            "user_agent_policy": URL_SCAN_USER_AGENT_POLICY,
             "abnormal_user_agents_planned": 0,
             "normal_user_agents_planned": 0,
-            "abnormal_ua_ratio": abnormal_ratio,
+            "abnormal_user_agent_ratio": 0.0,
         }
 
-    ratio = max(0.0, min(1.0, abnormal_ratio))
-    abnormal_count = max(0, min(total, round(total * ratio)))
-    abnormal_indices = set(random.sample(range(total), abnormal_count))
-
     enriched: list[PlannedHttpRequest] = []
-    for idx, plan in enumerate(plans):
-        ua = pick_url_scan_user_agent() if idx in abnormal_indices else pick_normal_user_agent()
+    for plan in plans:
+        ua = pick_url_scan_user_agent()
         enriched.append(
             PlannedHttpRequest(
                 host=plan.host,
@@ -140,9 +136,10 @@ def attach_followup_user_agents(
         )
 
     return enriched, {
-        "abnormal_user_agents_planned": abnormal_count,
-        "normal_user_agents_planned": total - abnormal_count,
-        "abnormal_ua_ratio": ratio,
+        "user_agent_policy": URL_SCAN_USER_AGENT_POLICY,
+        "abnormal_user_agents_planned": total,
+        "normal_user_agents_planned": 0,
+        "abnormal_user_agent_ratio": 1.0,
     }
 
 

@@ -72,11 +72,27 @@ def _discovered_rare_endpoints(targets: TargetSet) -> list[tuple[str, int, str]]
     return found
 
 
+def _alive_probe_hosts(targets: TargetSet, params: dict[str, Any]) -> list[str]:
+    """One discovery alive host for rare-protocol fallback, excluding the webshell origin."""
+    execution_host = _execution_host(targets, params)
+    meta = targets.discovery_meta or {}
+    raw_alive = meta.get("alive_hosts") or targets.hosts or []
+    alive = [str(h) for h in raw_alive if str(h) != execution_host]
+    if alive:
+        return [alive[0]]
+    if raw_alive:
+        return [str(raw_alive[0])]
+    return []
+
+
 def _probe_fallback_hosts(targets: TargetSet, params: dict[str, Any]) -> list[str]:
     if params.get("probe_hosts"):
         return [str(h) for h in params["probe_hosts"]]
     if params.get("hosts"):
         return [str(h) for h in params["hosts"]]
+    alive = _alive_probe_hosts(targets, params)
+    if alive:
+        return alive
     return [_execution_host(targets, params)]
 
 

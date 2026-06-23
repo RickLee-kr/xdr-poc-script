@@ -29,6 +29,7 @@ from dsp.protocols.http.followup_evidence import (
     build_dispatch_request_evidence,
     summarize_http_followup_evidence,
 )
+from dsp.protocols.http.user_agents import URL_SCAN_USER_AGENT_POLICY
 from dsp.protocols.http.non_standard_port_burst import burst_connection_success
 from dsp.protocols.dns.tunnel import (
     CHUNK_SIZE_DEFAULT,
@@ -354,6 +355,7 @@ def _execute_http_followup(
         "requests_planned": len(requests_list),
         "planned_requests": len(requests_list),
         "mode": plan.get("mode", "live"),
+        "user_agent_policy": URL_SCAN_USER_AGENT_POLICY,
         **selection_fields,
     }
     cmd_events.append_event(
@@ -443,6 +445,7 @@ def _execute_http_followup(
             "abnormal_user_agents": abnormal_user_agents,
             "normal_user_agents": int(request_dump_summary.get("normal_user_agents", 0)),
             "abnormal_user_agent_ratio": request_dump_summary.get("abnormal_user_agent_ratio", 0.0),
+            "user_agent_policy": URL_SCAN_USER_AGENT_POLICY,
             "target_distribution": target_distribution,
             "target_count": len(target_distribution),
             "per_target_request_count": dict(target_distribution),

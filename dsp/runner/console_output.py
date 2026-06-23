@@ -296,7 +296,7 @@ class OperationalConsole:
             "concurrency",
             "targets",
             "ports",
-            "abnormal_ua_ratio",
+            "user_agent_policy",
             "selection_reason",
             "full_sweep_requested",
             "profile",

@@ -153,10 +153,15 @@ def test_build_traffic_summary_mixed_event_inputs():
     assert summary["scenarios"]["smb_login_failure"]["auth_attempts"] == 0
 
 
-def test_pick_user_agent_not_fixed_dsp_http_followup():
+def test_pick_user_agent_uses_malicious_pool():
+    from dsp.protocols.http.user_agents import is_abnormal_user_agent, malicious_user_agents
+
+    pool = set(malicious_user_agents())
     samples = {pick_user_agent() for _ in range(30)}
     assert "dsp-http-followup/1.0" not in samples
     assert len(samples) > 1
+    assert samples <= pool
+    assert all(is_abnormal_user_agent(ua) for ua in samples)
 
 
 def test_classify_user_agent_distribution_categories():

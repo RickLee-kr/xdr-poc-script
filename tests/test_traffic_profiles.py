@@ -96,7 +96,7 @@ def test_normal_profile_http_followup_dual_target_v139() -> None:
     assert params["max_hosts"] == 2
     assert params["max_total"] == 300
     assert params["max_per_host"] == 150
-    assert params["abnormal_ua_ratio"] == 0.10
+    assert "abnormal_ua_ratio" not in params
 
 
 def test_normal_profile_sql_injection_318_requests_v139() -> None:

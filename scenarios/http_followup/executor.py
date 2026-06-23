@@ -38,6 +38,7 @@ from dsp.protocols.http.urls import (
 from dsp.protocols.http.burst_executor import run_non_standard_port_burst
 from dsp.protocols.http.non_standard_port_burst import plan_non_standard_port_burst
 from dsp.protocols.http.user_agents import (
+    URL_SCAN_USER_AGENT_POLICY,
     attach_followup_user_agents,
     classify_user_agent,
     is_abnormal_user_agent,
@@ -118,7 +119,6 @@ def _requests_per_target(plans: list[PlannedHttpRequest]) -> dict[str, int]:
 def _print_http_followup_started(
     *,
     requests_per_target: dict[str, int],
-    abnormal_ua_ratio: float,
 ) -> None:
     print("HTTP follow-up STARTED:")
     print("HTTP:")
@@ -126,7 +126,7 @@ def _print_http_followup_started(
         print(f"  {target} requests={count}")
     print(f"selected_targets: {sorted(requests_per_target)}")
     print(f"requests_per_target: {requests_per_target}")
-    print(f"abnormal_ua_ratio: {abnormal_ua_ratio:.0%}")
+    print(f"user_agent_policy: {URL_SCAN_USER_AGENT_POLICY}")
     print(f"expected_url_scan_distribution: {requests_per_target}")
 
 
@@ -275,7 +275,6 @@ def run(
     max_per_host = int(params.get("max_per_host", MAX_REQUESTS_PER_HOST_DEFAULT))
     max_total = int(params.get("max_total", MAX_REQUESTS_TOTAL_DEFAULT))
     min_requests_per_target = int(params.get("min_requests_per_target", 100))
-    abnormal_ua_ratio = float(params.get("abnormal_ua_ratio", 0.10))
     include_attack_paths = bool(params.get("include_attack_paths", True))
     write_wire_evidence = bool(params.get("write_wire_evidence", False))
     concurrency = max(1, int(params.get("concurrency", DEFAULT_CONCURRENCY)))
@@ -322,17 +321,11 @@ def run(
         max_total=max_total,
         include_attack_paths=include_attack_paths,
     )
-    plans, ua_plan_stats = attach_followup_user_agents(
-        raw_plans,
-        abnormal_ratio=abnormal_ua_ratio,
-    )
+    plans, ua_plan_stats = attach_followup_user_agents(raw_plans)
     requests_per_target = _requests_per_target(plans)
     selected_targets = format_selected_target_labels(endpoints)
     concentrated_target = selected_targets[0].split(" ", 1)[0] if len(selected_targets) == 1 else ""
-    _print_http_followup_started(
-        requests_per_target=requests_per_target,
-        abnormal_ua_ratio=abnormal_ua_ratio,
-    )
+    _print_http_followup_started(requests_per_target=requests_per_target)
 
     paths_planned = sorted({p.full_path for p in plans})
     ports_used = sorted({plan.port for plan in plans})
@@ -387,7 +380,7 @@ def run(
                 "selected_targets": selected_targets,
                 "concentrated_target": concentrated_target,
                 "requests_per_target": requests_per_target,
-                "abnormal_ua_ratio": abnormal_ua_ratio,
+                "user_agent_policy": URL_SCAN_USER_AGENT_POLICY,
                 "expected_url_scan_distribution": dict(requests_per_target),
                 "abnormal_user_agents_planned": ua_plan_stats["abnormal_user_agents_planned"],
                 "normal_user_agents_planned": ua_plan_stats["normal_user_agents_planned"],
@@ -615,7 +608,7 @@ def run(
                 "per_target_request_count": per_target_request_count,
                 "per_target_error_count": per_target_error_count,
                 "requests_per_target": dict(target_distribution),
-                "abnormal_ua_ratio": abnormal_ua_ratio,
+                "user_agent_policy": URL_SCAN_USER_AGENT_POLICY,
                 "expected_url_scan_distribution": dict(target_distribution),
                 "https_fallback": False,
                 "https_targets_skipped": selection.https_targets_skipped,

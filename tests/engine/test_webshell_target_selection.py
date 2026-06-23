@@ -495,7 +495,7 @@ def test_phase2_http_followup_attaches_abnormal_user_agents() -> None:
     plan = build_plan_from_discovery(
         "http_followup",
         _discovery_dict(),
-        {"max_hosts": 1, "max_total": 4, "max_per_host": 4, "abnormal_ua_ratio": 1.0},
+        {"max_hosts": 1, "max_total": 4, "max_per_host": 4},
         dry_run=True,
     )
     from dsp.protocols.http.user_agents import is_abnormal_user_agent

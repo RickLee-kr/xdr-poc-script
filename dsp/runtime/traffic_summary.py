@@ -492,8 +492,8 @@ def build_traffic_summary(
                 "normal_user_agents": completed.get("normal_user_agents", 0),
                 "abnormal_user_agent_ratio": completed.get("abnormal_user_agent_ratio", 0.0),
                 "payload_only_ua": completed.get("payload_only_ua", 0),
-                "abnormal_ua_ratio": completed.get("abnormal_ua_ratio")
-                or started.get("abnormal_ua_ratio", 0.0),
+                "user_agent_policy": completed.get("user_agent_policy")
+                or started.get("user_agent_policy"),
                 "expected_url_scan_distribution": (
                     completed.get("per_target_request_count")
                     or completed.get("target_distribution")

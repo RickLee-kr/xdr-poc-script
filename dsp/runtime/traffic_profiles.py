@@ -76,7 +76,6 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
             "timeout": 2.0,
             "concurrency": 32,
             "include_attack_paths": True,
-            "abnormal_ua_ratio": 0.10,
             "non_standard_burst_min": 50,
             "non_standard_burst_max": 200,
         },

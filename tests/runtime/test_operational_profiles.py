@@ -88,7 +88,7 @@ def test_build_operational_scenario_params_caps_hosts_for_normal() -> None:
     assert params["http_followup"]["max_hosts"] == 2
     assert params["http_followup"]["max_per_host"] == 150
     assert params["http_followup"]["max_total"] == 300
-    assert params["http_followup"]["abnormal_ua_ratio"] == 0.10
+    assert "abnormal_ua_ratio" not in params["http_followup"]
     assert params["dns_tunnel"]["traffic_profile"] == "normal"
     assert params["dns_tunnel"]["payload_mb"] == 2.0
     assert params["dns_tunnel"]["max_hosts"] == 2

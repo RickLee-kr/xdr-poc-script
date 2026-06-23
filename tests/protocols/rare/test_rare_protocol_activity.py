@@ -38,19 +38,24 @@ def test_plan_uses_probe_hosts_for_fallback() -> None:
     assert all(plan.host == "10.10.10.20" for plan in plans)
 
 
-def test_plan_uses_webshell_execution_host_for_fallback() -> None:
-    targets = TargetSet.stub("10.10.10.0/24")
+def test_plan_uses_alive_hosts_for_fallback_not_webshell_host() -> None:
+    targets = TargetSet(
+        target_net="10.10.10.0/24",
+        hosts=["10.10.10.97", "10.10.10.50"],
+        discovery_enabled=True,
+        discovery_meta={"alive_hosts": ["10.10.10.97", "10.10.10.50"]},
+    )
     plans = plan_rare_protocol_activity(
         targets,
         {
             "_webshell_execution": {
-                "execution_host": "10.10.10.20",
-                "webshell_url": "http://10.10.10.20:8080/shell.jsp",
+                "execution_host": "10.10.10.50",
+                "webshell_url": "http://10.10.10.50:8080/shell.jsp",
             }
         },
     )
     assert len(plans) == 4
-    assert all(plan.host == "10.10.10.20" for plan in plans)
+    assert all(plan.host == "10.10.10.97" for plan in plans)
 
 
 def test_plan_uses_discovered_rare_port_endpoints() -> None:

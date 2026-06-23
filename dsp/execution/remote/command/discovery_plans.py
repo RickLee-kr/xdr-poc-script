@@ -196,8 +196,7 @@ def _plan_http_followup(targets: dict[str, Any], params: dict[str, Any], *, dry_
         max_total=int(params.get("max_total", 20)),
         include_attack_paths=bool(params.get("include_attack_paths", True)),
     )
-    abnormal_ratio = float(params.get("abnormal_ua_ratio", 0.10))
-    enriched_plans, _ = attach_followup_user_agents(plans, abnormal_ratio=abnormal_ratio)
+    enriched_plans, _ = attach_followup_user_agents(plans)
     return {
         "type": "http_followup",
         "mode": "mock" if dry_run else "live",

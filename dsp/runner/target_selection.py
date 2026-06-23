@@ -161,7 +161,6 @@ def scenario_start_metadata(
         max_per_host = int(params.get("max_per_host", 150))
         max_total = int(params.get("max_total", 300))
         min_requests_per_target = int(params.get("min_requests_per_target", 100))
-        abnormal_ua_ratio = float(params.get("abnormal_ua_ratio", 0.25))
         timeout = float(params.get("timeout", 2.0))
         selection = resolve_http_endpoint_selection(
             targets,
@@ -199,7 +198,9 @@ def scenario_start_metadata(
                 requests_per_target[key] = requests_per_target.get(key, 0) + 1
             meta["selected_targets"] = format_selected_target_labels(selection.selected)
             meta["requests_per_target"] = requests_per_target
-            meta["abnormal_ua_ratio"] = f"{abnormal_ua_ratio:.0%}"
+            from dsp.protocols.http.user_agents import URL_SCAN_USER_AGENT_POLICY
+
+            meta["user_agent_policy"] = URL_SCAN_USER_AGENT_POLICY
             meta["expected_url_scan_distribution"] = requests_per_target
             meta["targets"] = len(requests_per_target)
             meta["planned_requests"] = len(planned)

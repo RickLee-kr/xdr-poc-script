@@ -305,8 +305,7 @@ def plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: b
         max_total=int(params.get("max_total", 20)),
         include_attack_paths=bool(params.get("include_attack_paths", True)),
     )
-    abnormal_ratio = float(params.get("abnormal_ua_ratio", 0.10))
-    enriched_plans, _ = attach_followup_user_agents(plans, abnormal_ratio=abnormal_ratio)
+    enriched_plans, _ = attach_followup_user_agents(plans)
     burst_plan = plan_non_standard_port_burst(targets, followup_hosts, params)
     return {
         "type": "http_followup",
