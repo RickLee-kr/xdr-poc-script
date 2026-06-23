@@ -4,17 +4,18 @@ from __future__ import annotations
 
 from dsp.protocols.http.target_probe import HttpEndpointProbeStats, is_eligible_url_scan_target
 from dsp.protocols.http.user_agents import (
-    is_payload_only_user_agent,
-    is_scanner_user_agent,
+    is_abnormal_user_agent,
+    malicious_user_agents,
     pick_url_scan_user_agent,
 )
 
 
-def test_pick_url_scan_user_agent_never_payload_only():
+def test_pick_url_scan_user_agent_from_csv_pool():
+    pool = set(malicious_user_agents())
     for _ in range(100):
         ua = pick_url_scan_user_agent()
-        assert is_scanner_user_agent(ua)
-        assert not is_payload_only_user_agent(ua)
+        assert ua in pool
+        assert is_abnormal_user_agent(ua)
 
 
 def test_redirect_only_probe_stats():

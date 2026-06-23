@@ -159,10 +159,22 @@ def test_two_mb_plan_idx_count() -> None:
     assert total >= 69900
 
 
-def test_webshell_high_profile_queries_sent_nonzero(tmp_path) -> None:
-    """Operational high profile must cap chunks and record queries_sent > 0."""
+def test_normal_profile_payload_mb_drives_full_volume() -> None:
+    """Operational normal profile must not cap chunks; payload_mb=2.0 sets volume."""
     from dsp.runtime.traffic_profiles import scenario_params_for_profile
-    from dsp.runtime.traffic_summary import build_traffic_summary
+
+    params = scenario_params_for_profile("dns_tunnel", "normal")
+    plan = plan_dns_tunnel(_targets(), params, dry_run=False)
+    expected_idx = plan_chunk_count(PAYLOAD_MB_DEFAULT, CHUNK_SIZE_DEFAULT)
+    assert plan.get("max_chunks") is None
+    idx_count = sum(1 for q in plan["queries"] if q.get("query_role") == "idx_chunk")
+    assert idx_count == expected_idx
+    assert len(plan["queries"]) == expected_idx + 2
+
+
+def test_webshell_high_profile_payload_mb_drives_volume() -> None:
+    """Operational high profile must not cap chunks; payload_mb=4.0 sets volume."""
+    from dsp.runtime.traffic_profiles import scenario_params_for_profile
 
     alive = [f"221.139.249.{h}" for h in (101, 102, 103, 110, 113, 116, 118, 122, 126)]
     targets = TargetSet(
@@ -174,8 +186,33 @@ def test_webshell_high_profile_queries_sent_nonzero(tmp_path) -> None:
     )
     params = scenario_params_for_profile("dns_tunnel", "high")
     plan = plan_dns_tunnel(targets, params, dry_run=False)
-    assert plan.get("max_chunks") == 500
-    assert len(plan["queries"]) == 502  # strt + 500 idx + end
+    expected_idx = plan_chunk_count(4.0, CHUNK_SIZE_DEFAULT)
+    assert plan.get("max_chunks") is None
+    idx_count = sum(1 for q in plan["queries"] if q.get("query_role") == "idx_chunk")
+    assert idx_count == expected_idx
+
+
+def test_webshell_high_profile_queries_sent_nonzero(tmp_path) -> None:
+    """Operational high profile records queries_sent when remote markers match plan."""
+    from dsp.runtime.traffic_profiles import scenario_params_for_profile
+    from dsp.runtime.traffic_summary import build_traffic_summary
+
+    alive = [f"221.139.249.{h}" for h in (101, 102, 103, 110, 113, 116, 118, 122, 126)]
+    targets = TargetSet(
+        target_net="221.139.249.0/24",
+        hosts=alive,
+        service_hosts={"dns_hosts": [], "http_targets": alive[:1]},
+        discovery_enabled=True,
+        discovery_meta={"alive_hosts": alive},
+    )
+    params = {
+        **scenario_params_for_profile("dns_tunnel", "high"),
+        "payload_mb": 0.0001,
+        "max_chunks": 3,
+    }
+    plan = plan_dns_tunnel(targets, params, dry_run=False)
+    assert plan.get("max_chunks") == 3
+    assert len(plan["queries"]) == 5
 
     store = EventStore(tmp_path / "events.db")
     store.open_run("run-high")
@@ -215,4 +252,4 @@ def test_webshell_high_profile_queries_sent_nonzero(tmp_path) -> None:
     )
     queries_sent = summary["scenarios"]["dns_tunnel"]["queries_sent"]
     assert queries_sent > 0
-    assert queries_sent == 502
+    assert queries_sent == 5

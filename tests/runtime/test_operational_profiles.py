@@ -92,6 +92,7 @@ def test_build_operational_scenario_params_caps_hosts_for_normal() -> None:
     assert params["dns_tunnel"]["traffic_profile"] == "normal"
     assert params["dns_tunnel"]["payload_mb"] == 2.0
     assert params["dns_tunnel"]["max_hosts"] == 2
+    assert "max_chunks" not in params["dns_tunnel"]
 
 
 def test_build_operational_scenario_params_uses_all_hosts_for_high() -> None:
@@ -162,7 +163,7 @@ def test_build_operational_scenario_params_high_dns_tunnel_profile() -> None:
     )
     assert params["dns_tunnel"]["payload_mb"] == 4.0
     assert params["dns_tunnel"]["max_hosts"] == 2
-    assert params["dns_tunnel"]["max_chunks"] == 500
+    assert "max_chunks" not in params["dns_tunnel"]
     params = build_operational_scenario_params(
         "high",
         ["http_followup"],

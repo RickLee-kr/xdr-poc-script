@@ -448,7 +448,7 @@ def test_dga_skipped_without_discovered_dns_hosts() -> None:
     assert plan["reason"] == "no_dns_hosts"
 
 
-def test_rare_protocol_skipped_without_discovered_endpoints() -> None:
+def test_rare_protocol_uses_fallback_without_discovered_endpoints() -> None:
     targets = {
         "target_net": "10.10.10.0/24",
         "hosts": ["10.10.10.97"],
@@ -462,8 +462,15 @@ def test_rare_protocol_skipped_without_discovered_endpoints() -> None:
         {"timeout": 3.0},
         dry_run=True,
     )
-    assert plan["mode"] == "skip"
-    assert plan["reason"] == "no_probe_plans"
+    assert plan["mode"] == "mock"
+    assert len(plan["probes"]) == 4
+    assert {probe["protocol"] for probe in plan["probes"]} == {
+        "TELNET",
+        "RTSP",
+        "SIP",
+        "RTP",
+    }
+    assert all(probe["host"] == "10.10.10.97" for probe in plan["probes"])
 
 
 def test_webshell_sql_injection_targets_discovered_http_hosts() -> None:

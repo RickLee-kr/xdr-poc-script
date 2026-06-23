@@ -163,8 +163,8 @@ def test_classify_user_agent_distribution_categories():
     assert classify_user_agent(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
     ) == "normal"
-    assert classify_user_agent("ReconEngine/5.4") == "rare"
-    assert classify_user_agent("'; OR 1=1--") == "payload_sqli"
+    assert classify_user_agent("ReconEngine/5.4 ${jndi:ldap://127.0.0.1/a}") == "rare_with_payload"
+    assert classify_user_agent("' OR 1=1--") == "payload_sqli"
 
 
 def test_ssh_invaliduser_burst_default_150():

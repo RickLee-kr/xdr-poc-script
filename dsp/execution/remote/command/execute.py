@@ -29,6 +29,7 @@ from dsp.protocols.http.followup_evidence import (
     build_dispatch_request_evidence,
     summarize_http_followup_evidence,
 )
+from dsp.protocols.http.non_standard_port_burst import burst_connection_success
 from dsp.protocols.dns.tunnel import (
     CHUNK_SIZE_DEFAULT,
     MOCK_PAYLOAD_FILENAME,
@@ -190,6 +191,147 @@ def _plan_selection_fields(plan: dict[str, Any]) -> dict[str, Any]:
     return {key: plan[key] for key in keys if key in plan}
 
 
+def _execute_non_standard_port_burst(
+    burst_plan: dict[str, Any],
+    *,
+    provider: WebshellExecutionProvider,
+    store: Any,
+    run_id: str,
+    scenario_id: str,
+    primary_target: str,
+    timeout: float,
+    mock: bool,
+) -> tuple[dict[str, Any], int]:
+    """Dispatch non-standard port burst commands and append burst lifecycle events."""
+    requests = list(burst_plan.get("requests") or [])
+    if not burst_plan.get("enabled") or not requests:
+        return {"enabled": False}, 0
+
+    ports = list(burst_plan.get("ports") or [])
+    targets = list(burst_plan.get("targets") or [])
+    t0 = time.monotonic()
+    mode = "mock" if mock else "live"
+
+    cmd_events.append_event(
+        store,
+        run_id=run_id,
+        scenario_id=scenario_id,
+        event="non_standard_port_burst_started",
+        status="info",
+        target=primary_target,
+        artifact="non_standard_port_burst",
+        evidence={
+            "attempts_planned": len(requests),
+            "ports": ports,
+            "targets": targets,
+            "mode": mode,
+        },
+    )
+
+    attempts = 0
+    successes = 0
+    failures = 0
+    dispatched = 0
+
+    for item in requests:
+        host = str(item["host"])
+        port = int(item["port"])
+        url = str(item.get("url") or "")
+        user_agent = str(item.get("user_agent") or "Mozilla/5.0")
+        seq = item.get("seq")
+        command = (
+            mock_noop_command()
+            if mock
+            else curl_request_command(url, method="GET", user_agent=user_agent, timeout=timeout)
+        )
+        dispatch_status = _dispatch(provider, command, timeout_seconds=int(timeout) + 5)
+        dispatched += 1
+
+        if mock:
+            outcome = "response"
+            status_code = 200 if int(seq) % 3 else 404
+        elif dispatch_status == "completed":
+            outcome = "response"
+            status_code = 200
+        else:
+            outcome = "error"
+            status_code = None
+
+        base_evidence = {
+            "seq": seq,
+            "host": host,
+            "port": port,
+            "url": url,
+            "method": "GET",
+            "user_agent": user_agent,
+            "discovered": item.get("discovered"),
+            "probe": item.get("probe"),
+            "outcome": outcome,
+            "dispatch_status": dispatch_status,
+        }
+        if status_code is not None:
+            base_evidence["status_code"] = status_code
+
+        cmd_events.append_event(
+            store,
+            run_id=run_id,
+            scenario_id=scenario_id,
+            event="non_standard_port_connection_attempt",
+            status="info",
+            target=host,
+            artifact="non_standard_port_connection",
+            evidence=dict(base_evidence),
+        )
+        attempts += 1
+
+        if burst_connection_success(outcome, status_code):
+            successes += 1
+            cmd_events.append_event(
+                store,
+                run_id=run_id,
+                scenario_id=scenario_id,
+                event="non_standard_port_connection_success",
+                status="info",
+                target=host,
+                artifact="non_standard_port_connection",
+                evidence=dict(base_evidence),
+            )
+        else:
+            failures += 1
+            cmd_events.append_event(
+                store,
+                run_id=run_id,
+                scenario_id=scenario_id,
+                event="non_standard_port_connection_failure",
+                status="error",
+                target=host,
+                artifact="non_standard_port_connection",
+                evidence=dict(base_evidence),
+            )
+
+    elapsed = round(time.monotonic() - t0, 3)
+    summary = {
+        "enabled": True,
+        "ports": ports,
+        "targets": targets,
+        "attempts": attempts,
+        "success": successes,
+        "failure": failures,
+        "duration_sec": elapsed,
+    }
+    cmd_events.append_event(
+        store,
+        run_id=run_id,
+        scenario_id=scenario_id,
+        event="non_standard_port_burst_completed",
+        status="info",
+        target=primary_target,
+        artifact="non_standard_port_burst",
+        evidence=dict(summary),
+    )
+    return summary, dispatched
+
+
 def _execute_http_followup(
     plan: dict[str, Any],
     provider: WebshellExecutionProvider,
@@ -265,11 +407,25 @@ def _execute_http_followup(
             evidence={"url": url, "method": method, "user_agent": user_agent},
         )
         dispatched += 1
+    burst_plan = dict(plan.get("non_standard_port_burst") or {})
+    burst_summary, burst_dispatched = _execute_non_standard_port_burst(
+        burst_plan,
+        provider=provider,
+        store=store,
+        run_id=run_id,
+        scenario_id=scenario_id,
+        primary_target=primary_target,
+        timeout=timeout,
+        mock=mock,
+    )
+    requests_sent = len(request_evidence)
+    dispatched += burst_dispatched
     request_dump, request_dump_summary = summarize_http_followup_evidence(
         request_evidence,
         response_tracking=WEBSHELL_RESPONSE_TRACKING,
     )
     abnormal_user_agents = int(request_dump_summary.get("abnormal_user_agents", 0))
+    target_distribution = dict(request_dump_summary.get("target_distribution") or {})
     cmd_events.append_event(
         store,
         run_id=run_id,
@@ -278,8 +434,8 @@ def _execute_http_followup(
         status="info",
         target=primary_target,
         evidence={
-            "requests_sent": dispatched,
-            "request_count": dispatched,
+            "requests_sent": requests_sent,
+            "request_count": requests_sent,
             "request_evidence": request_evidence,
             "request_dump": request_dump,
             "request_dump_summary": request_dump_summary,
@@ -287,8 +443,12 @@ def _execute_http_followup(
             "abnormal_user_agents": abnormal_user_agents,
             "normal_user_agents": int(request_dump_summary.get("normal_user_agents", 0)),
             "abnormal_user_agent_ratio": request_dump_summary.get("abnormal_user_agent_ratio", 0.0),
-            "target_distribution": request_dump_summary.get("target_distribution", {}),
-            "target_count": len(request_dump_summary.get("target_distribution", {})),
+            "target_distribution": target_distribution,
+            "target_count": len(target_distribution),
+            "per_target_request_count": dict(target_distribution),
+            "requests_per_target": dict(target_distribution),
+            "expected_url_scan_distribution": dict(target_distribution),
+            "non_standard_port_burst": burst_summary,
             **selection_fields,
         },
     )

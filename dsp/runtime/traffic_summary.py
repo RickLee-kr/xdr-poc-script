@@ -477,9 +477,16 @@ def build_traffic_summary(
                 "selected_targets": completed.get("selected_targets")
                 or started.get("selected_targets", [])
                 or skipped.get("selected_targets", []),
-                "requests_per_target": completed.get("requests_per_target")
-                or started.get("requests_per_target", {}),
-                "per_target_request_count": completed.get("per_target_request_count", {}),
+                "requests_per_target": (
+                    completed.get("per_target_request_count")
+                    or completed.get("target_distribution")
+                    or completed.get("requests_per_target")
+                    or started.get("requests_per_target", {})
+                ),
+                "per_target_request_count": (
+                    completed.get("per_target_request_count")
+                    or completed.get("target_distribution", {})
+                ),
                 "per_target_error_count": completed.get("per_target_error_count", {}),
                 "abnormal_user_agents": completed.get("abnormal_user_agents", 0),
                 "normal_user_agents": completed.get("normal_user_agents", 0),
@@ -487,8 +494,12 @@ def build_traffic_summary(
                 "payload_only_ua": completed.get("payload_only_ua", 0),
                 "abnormal_ua_ratio": completed.get("abnormal_ua_ratio")
                 or started.get("abnormal_ua_ratio", 0.0),
-                "expected_url_scan_distribution": completed.get("expected_url_scan_distribution")
-                or started.get("expected_url_scan_distribution", {}),
+                "expected_url_scan_distribution": (
+                    completed.get("per_target_request_count")
+                    or completed.get("target_distribution")
+                    or completed.get("expected_url_scan_distribution")
+                    or started.get("expected_url_scan_distribution", {})
+                ),
             })
             burst = (
                 completed.get("non_standard_port_burst")

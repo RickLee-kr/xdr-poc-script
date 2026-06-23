@@ -51,7 +51,6 @@ _SCENARIO_PROFILE_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
             "volume_profile": "stress",
             "payload_mb": _PROFILE_DNS_TUNNEL_PAYLOAD_MB["high"],
             "chunk_size": 30,
-            "max_chunks": 500,
             "max_duration_sec": 120,
             "timeout": 0.05,
         },

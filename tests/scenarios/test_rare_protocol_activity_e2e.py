@@ -90,7 +90,7 @@ def test_rare_protocol_activity_plugins_list():
     assert record.status == PluginStatus.ACTIVE
 
 
-def test_rare_protocol_activity_skipped_without_probe_plans(tmp_runs_dir):
+def test_rare_protocol_activity_fallback_without_discovered_endpoints(tmp_runs_dir):
     manager = RunManager(runs_dir=tmp_runs_dir)
     run, run_dir, exit_code = manager.run(
         scenario_ids=["rare_protocol_activity"],
@@ -104,9 +104,11 @@ def test_rare_protocol_activity_skipped_without_probe_plans(tmp_runs_dir):
     validation = json.loads((run_dir / "validation.json").read_text())
     result = validation["results"][0]
     assert result["scenario_id"] == "rare_protocol_activity"
-    assert result["decision"] == "skipped"
-    assert result["reason"] == "scenario_skipped"
+    assert result["decision"] == "success"
+    assert result["metrics"]["rare_protocol_probe_attempt_count"] >= 4
 
     events = (run_dir / "events.jsonl").read_text()
-    assert "rare_protocol_activity_skipped" in events
-    assert "rare_protocol_probe_attempt" not in events
+    assert "rare_protocol_activity_started" in events
+    assert "rare_protocol_probe_attempt" in events
+    assert "rare_protocol_activity_completed" in events
+    assert "rare_protocol_activity_skipped" not in events

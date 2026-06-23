@@ -13,6 +13,7 @@ from dsp.protocols.host.behavior import build_host_behavior_plan
 from dsp.protocols.http.non_standard_port_burst import plan_non_standard_port_burst
 from dsp.protocols.http.sqli_payloads import plan_sqli_requests, sql_injection_request_items
 from dsp.protocols.http.urls import plan_followup_requests
+from dsp.protocols.http.user_agents import attach_followup_user_agents
 from dsp.protocols.rare.attempts import plan_rare_protocol_activity as build_rare_protocol_plans
 from dsp.protocols.recon import plan_port_sweep as build_port_sweep_plans
 from dsp.protocols.ssh.attempts import SSH_PORT_DEFAULT, plan_ssh_attempts
@@ -304,6 +305,8 @@ def plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: b
         max_total=int(params.get("max_total", 20)),
         include_attack_paths=bool(params.get("include_attack_paths", True)),
     )
+    abnormal_ratio = float(params.get("abnormal_ua_ratio", 0.10))
+    enriched_plans, _ = attach_followup_user_agents(plans, abnormal_ratio=abnormal_ratio)
     burst_plan = plan_non_standard_port_burst(targets, followup_hosts, params)
     return {
         "type": "http_followup",
@@ -315,7 +318,7 @@ def plan_http_followup(targets: TargetSet, params: dict[str, Any], *, dry_run: b
                 "method": plan.method,
                 "user_agent": (plan.headers or {}).get("User-Agent", "Mozilla/5.0"),
             }
-            for plan in plans
+            for plan in enriched_plans
         ],
         "non_standard_port_burst": burst_plan,
     }

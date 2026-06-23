@@ -22,16 +22,35 @@ from dsp.plugins import PluginLoader
 from dsp.validation.engine import ValidationEngine
 
 
-def test_plan_returns_empty_without_discovered_endpoints() -> None:
+def test_plan_includes_all_protocols_on_probe_fallback() -> None:
     targets = TargetSet.stub("10.10.10.0/24")
     plans = plan_rare_protocol_activity(targets, {})
-    assert plans == []
+    protocols = {plan.protocol for plan in plans}
+    assert protocols == set(RARE_PROTOCOL_PORTS.keys())
+    assert len(plans) == 4
 
 
-def test_plan_ignores_probe_hosts_without_discovery() -> None:
+def test_plan_uses_probe_hosts_for_fallback() -> None:
     targets = TargetSet.stub("10.10.10.0/24")
     plans = plan_rare_protocol_activity(targets, {"probe_hosts": ["10.10.10.20"]})
-    assert plans == []
+    protocols = {plan.protocol for plan in plans}
+    assert protocols == set(RARE_PROTOCOL_PORTS.keys())
+    assert all(plan.host == "10.10.10.20" for plan in plans)
+
+
+def test_plan_uses_webshell_execution_host_for_fallback() -> None:
+    targets = TargetSet.stub("10.10.10.0/24")
+    plans = plan_rare_protocol_activity(
+        targets,
+        {
+            "_webshell_execution": {
+                "execution_host": "10.10.10.20",
+                "webshell_url": "http://10.10.10.20:8080/shell.jsp",
+            }
+        },
+    )
+    assert len(plans) == 4
+    assert all(plan.host == "10.10.10.20" for plan in plans)
 
 
 def test_plan_uses_discovered_rare_port_endpoints() -> None:

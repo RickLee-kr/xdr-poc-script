@@ -1,11 +1,13 @@
-"""HTTP User-Agent pools — ported from stellar_poc_followup.sh http_ua_pick_*."""
+"""HTTP User-Agent pools — Stellar suspected malicious UA documents."""
 
 from __future__ import annotations
 
+import csv
 import random
 import re
+from functools import lru_cache
+from pathlib import Path
 
-# stellar_poc_followup.sh: url_scan burst 0% normal / 50% rare / 50% payload (roll < 10 normal)
 _UA_NORMAL = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -13,128 +15,81 @@ _UA_NORMAL = (
     "(KHTML, like Gecko) Version/17.0 Safari/605.1.15",
 )
 
-_UA_RARE = (
-    "TelemetryCollector/9.7",
-    "ReconEngine/5.4",
-    "SecurityAssessmentClient/3.1",
-    "ThreatHunterAgent/8.2",
-    "InternalAuditScanner/4.0",
-    "DiscoveryProbe/7.3",
-    "VulnerabilitySweep/2.6",
-    "WebEnumerationFramework/11.0",
-    "AssetProfiler/6.5",
-    "NetworkSurveyBot/3.9",
-    "Mozilla/5.0 ReconEngine/5.4",
-    "Mozilla/5.0 ThreatHunterAgent/8.2",
-)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_UA_CSV_DIR = _REPO_ROOT / "user-agent-csv"
+_UA_CSV_GLOB = "Suspected Malicious User Agent Documents*.csv"
 
-_PAYLOAD_SQLI = (
-    "' OR 1=1--",
-    '" OR 1=1--',
-    "1' OR '1'='1",
-    "1 OR 2+701-701-1=0+0+0+1",
-    "(select convert(int,char(65)))",
-    "select pg_sleep(3)",
-    "select pg_sleep(6)",
-    "waitfor delay '0:0:5'",
-    "waitfor delay '0:0:9'",
-)
-
-_PAYLOAD_ENC = (
-    "%00%0d%0a",
-    "%00%0a",
-    "%0d%0a",
-    "../../../../etc/passwd",
-    "..%2f..%2f..%2f",
-    "%252e%252e%252f",
-)
-
-_PAYLOAD_CMD = (
-    ";id",
-    ";whoami",
-    "&&hostname",
-    "|cat /etc/passwd",
-)
-
-_PAYLOAD_OTHER = (
-    '12345"""};]*',
-    "@@@@@@@",
-    "%%%%%%%",
-    "<<<<>>>>",
-)
-
-_RE_SQLI = re.compile(
-    r"OR 1=1|pg_sleep|waitfor delay|convert\(int|'='|2\+701",
-    re.IGNORECASE,
-)
-_RE_ENC = re.compile(r"%00|%0d|%0a|%2f|%252e|\.\./|/etc/passwd|%%%%|@@@@|<<<<|\|\|\|\|")
-_RE_CMD = re.compile(r";id|;whoami|&&hostname|\|cat ")
-_RE_RARE = re.compile(
+_RE_SCANNER = re.compile(
     r"TelemetryCollector|ReconEngine|ThreatHunter|DiscoveryProbe|"
     r"SecurityAssessment|AuditScanner|EnumerationFramework|AssetProfiler|"
-    r"NetworkSurvey|VulnerabilitySweep",
+    r"NetworkSurvey|VulnerabilitySweep|InternalAudit",
     re.IGNORECASE,
 )
+_RE_SQLI = re.compile(
+    r"OR 1=1|SLEEP\(|pg_sleep|waitfor delay|convert\(int|'='|2\+701|\$\{jndi:",
+    re.IGNORECASE,
+)
+_RE_ENC = re.compile(r"%00|%0d|%0a|%2f|%252e|\.\./|/etc/passwd|%%%%|@@@@|<<<<")
+_RE_CMD = re.compile(r";id|;whoami|&&hostname|\|cat ")
+
+
+@lru_cache(maxsize=1)
+def _load_malicious_user_agents() -> tuple[str, ...]:
+    csv_files = sorted(_UA_CSV_DIR.glob(_UA_CSV_GLOB))
+    if not csv_files:
+        raise FileNotFoundError(f"No user agent CSV found under {_UA_CSV_DIR}")
+    uas: set[str] = set()
+    for csv_path in csv_files:
+        with csv_path.open(newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                ua = (row.get("User Agent") or "").strip()
+                if ua:
+                    uas.add(ua)
+    if not uas:
+        raise ValueError(f"No user agents loaded from {_UA_CSV_DIR}")
+    return tuple(sorted(uas))
+
+
+def malicious_user_agents() -> tuple[str, ...]:
+    """Unique suspected malicious User-Agent strings from user-agent-csv/."""
+    return _load_malicious_user_agents()
 
 
 def pick_normal_user_agent() -> str:
     return random.choice(_UA_NORMAL)
 
 
+def pick_abnormal_user_agent() -> str:
+    return random.choice(_load_malicious_user_agents())
+
+
 def pick_rare_user_agent() -> str:
-    return random.choice(_UA_RARE)
-
-
-def pick_payload_fragment() -> str:
-    category = random.randrange(4)
-    if category == 0:
-        return random.choice(_PAYLOAD_SQLI)
-    if category == 1:
-        return random.choice(_PAYLOAD_ENC)
-    if category == 2:
-        return random.choice(_PAYLOAD_CMD)
-    return random.choice(_PAYLOAD_OTHER)
+    return pick_abnormal_user_agent()
 
 
 def pick_user_agent() -> str:
-    """Bash http_ua_pick_local — 10% normal, 40% rare, 50% payload."""
-    roll = random.randrange(100)
-    if roll < 10:
+    """10% normal browser UA, 90% Stellar suspected malicious UA."""
+    if random.randrange(100) < 10:
         return pick_normal_user_agent()
-    if roll < 50:
-        return pick_rare_user_agent()
-    if random.randrange(2) == 0:
-        return f"{pick_rare_user_agent()} {pick_payload_fragment()}"
-    return pick_payload_fragment()
+    return pick_abnormal_user_agent()
 
 
 def is_scanner_user_agent(ua: str) -> bool:
-    return bool(_RE_RARE.search(ua))
+    return bool(_RE_SCANNER.search(ua))
 
 
 def is_payload_only_user_agent(ua: str) -> bool:
-    """True when UA is a pure attack payload string with no scanner token."""
+    """True when UA is a pure attack string with no scanner token."""
     if is_scanner_user_agent(ua):
         return False
-    if any(marker in ua for marker in ("Chrome/120.0.0.0", "Version/17.0 Safari")):
+    if is_normal_user_agent(ua):
         return False
-    return bool(
-        _RE_SQLI.search(ua)
-        or _RE_ENC.search(ua)
-        or _RE_CMD.search(ua)
-        or ua in _PAYLOAD_OTHER
-    )
+    return ua in _load_malicious_user_agents()
 
 
 def pick_url_scan_user_agent() -> str:
-    """
-    URL scan UA policy — scanner exact strings only; payload goes in path/query.
-
-    Bash url_scan: 50% rare scanner, 50% rare scanner + payload suffix (never payload-only).
-    """
-    if random.randrange(2) == 0:
-        return pick_rare_user_agent()
-    return f"{pick_rare_user_agent()} {pick_payload_fragment()}"
+    """Pick a suspected malicious UA from Stellar documents."""
+    return pick_abnormal_user_agent()
 
 
 def is_normal_user_agent(ua: str) -> bool:
@@ -142,7 +97,7 @@ def is_normal_user_agent(ua: str) -> bool:
 
 
 def is_abnormal_user_agent(ua: str) -> bool:
-    """True for scanner/rare UA used to trigger User-Agent anomaly detection."""
+    """True for suspected malicious UA used to trigger User-Agent anomaly detection."""
     return not is_normal_user_agent(ua)
 
 
@@ -192,10 +147,10 @@ def attach_followup_user_agents(
 
 
 def classify_user_agent(ua: str) -> str:
-    """Bash http_ua_classify_local categories."""
-    if any(marker in ua for marker in ("Chrome/120.0.0.0", "Version/17.0 Safari")):
+    """Categorize UA for evidence reporting."""
+    if is_normal_user_agent(ua):
         return "normal"
-    if _RE_RARE.search(ua):
+    if _RE_SCANNER.search(ua):
         if _RE_SQLI.search(ua) or _RE_ENC.search(ua) or _RE_CMD.search(ua):
             return "rare_with_payload"
         return "rare"

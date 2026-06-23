@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dsp.protocols.http.urls import PAYLOAD_RECON_PATHS, compute_requests_per_target, plan_followup_requests
-from dsp.protocols.http.user_agents import attach_followup_user_agents, is_payload_only_user_agent
+from dsp.protocols.http.user_agents import attach_followup_user_agents, is_abnormal_user_agent
 from dsp.runtime.traffic_profiles import scenario_params_for_profile
 from dsp.runner import RunManager
 
@@ -68,12 +68,12 @@ def test_attach_followup_user_agents_ratio_10_percent():
     assert stats["abnormal_user_agents_planned"] == 30
     assert stats["normal_user_agents_planned"] == 270
     assert stats["abnormal_ua_ratio"] == 0.10
-    payload_only = sum(
+    abnormal = sum(
         1
         for plan in enriched
-        if is_payload_only_user_agent((plan.headers or {}).get("User-Agent", ""))
+        if is_abnormal_user_agent((plan.headers or {}).get("User-Agent", ""))
     )
-    assert payload_only == 0
+    assert abnormal == 30
 
 
 def test_payload_recon_paths_include_required_scan_paths():
