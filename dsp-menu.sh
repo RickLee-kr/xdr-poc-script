@@ -25,7 +25,8 @@ has_whiptail() {
 }
 
 show_webshell_setup_help() {
-  whiptail --title "Configure — Webshell help" --scrolltext --msgbox \
+  # Plain msgbox (no --scrolltext): focus stays on <Ok>, no scroll arrow.
+  whiptail --title "Configure — Webshell help" --msgbox \
 "Webshell remote execution — what to enter
 
 [1] Webshell family (pick one)
@@ -43,7 +44,7 @@ show_webshell_setup_help() {
   /tmp/dsp
   /var/tmp/dsp
   DSP uploads scripts and events here via the shell." \
-    24 78 2>/dev/null || true
+    20 78 2>/dev/null || true
 }
 
 normalize_webshell_family() {
