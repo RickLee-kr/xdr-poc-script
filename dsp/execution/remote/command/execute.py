@@ -50,6 +50,41 @@ if TYPE_CHECKING:
 DGA_SENT_LINE_PREFIX = "DGA_SENT:"
 
 
+def _collect_dns_tunnel_marker_output(
+    provider: WebshellExecutionProvider,
+    marker_path: str,
+) -> str:
+    """Fetch file-backed DNS tunnel send markers from the remote host."""
+    try:
+        raw = provider.fetch_remote_file_via_cat(marker_path)
+    except Exception:
+        return ""
+    return normalize_webshell_command_output(raw)
+
+
+def _resolve_dns_tunnel_sent_fqdns(
+    *,
+    session_output: str,
+    marker_output: str,
+    mock: bool,
+    target_queries: list[dict[str, Any]],
+    dispatch_transport_ok: bool,
+) -> frozenset[str]:
+    """Merge session stdout and remote marker file into confirmed send FQDNs."""
+    if mock:
+        if not dispatch_transport_ok:
+            return frozenset()
+        return frozenset(str(item["fqdn"]) for item in target_queries)
+
+    combined = "\n".join(part for part in (session_output, marker_output) if part)
+    return parse_dns_tunnel_session_sent_fqdns(combined)
+
+
+def _dns_tunnel_session_completed(session_output: str, marker_output: str) -> bool:
+    combined = "\n".join(part for part in (session_output, marker_output) if part)
+    return dns_tunnel_session_script_completed(combined)
+
+
 def _parse_dga_sent_marker(text: str) -> bool:
     for line in text.splitlines():
         if line.strip().startswith(DGA_SENT_LINE_PREFIX):
@@ -708,10 +743,13 @@ def _execute_dns_tunnel(
             dispatch_status = _dispatch(provider, command, timeout_seconds=timeout_seconds)
             dispatch_transport_ok = dispatch_status == CommandStatus.COMPLETED.value
             session_output = ""
-            sent_fqdns = (
-                frozenset(str(item["fqdn"]) for item in target_queries)
-                if dispatch_transport_ok
-                else frozenset()
+            marker_output = ""
+            sent_fqdns = _resolve_dns_tunnel_sent_fqdns(
+                session_output=session_output,
+                marker_output=marker_output,
+                mock=True,
+                target_queries=target_queries,
+                dispatch_transport_ok=dispatch_transport_ok,
             )
         else:
             command = session_meta["remote_command"]
@@ -724,6 +762,7 @@ def _execute_dns_tunnel(
             dispatch_status = CommandStatus.FAILED.value
             dispatch_transport_ok = False
             session_output = ""
+            marker_output = ""
             sent_fqdns = frozenset()
             try:
                 raw_output = provider.run_remote_command(
@@ -733,9 +772,19 @@ def _execute_dns_tunnel(
                 dispatch_transport_ok = True
                 dispatch_status = CommandStatus.COMPLETED.value
                 session_output = normalize_webshell_command_output(raw_output)
-                sent_fqdns = parse_dns_tunnel_session_sent_fqdns(session_output)
             except Exception as exc:
                 session_output = str(exc)
+            marker_output = _collect_dns_tunnel_marker_output(
+                provider,
+                session_meta["marker_output_path"],
+            )
+            sent_fqdns = _resolve_dns_tunnel_sent_fqdns(
+                session_output=session_output,
+                marker_output=marker_output,
+                mock=False,
+                target_queries=target_queries,
+                dispatch_transport_ok=dispatch_transport_ok,
+            )
 
         outcome_payload = {
             **dispatch_payload,
@@ -744,14 +793,16 @@ def _execute_dns_tunnel(
             "timeout_seconds": timeout_seconds,
             "dns_tunnel_sendto_success_count": len(sent_fqdns),
             "dns_tunnel_planned_queries": len(target_queries),
-            "dns_tunnel_session_script_completed": (
-                dns_tunnel_session_script_completed(session_output)
-                if session_output
-                else False
+            "dns_tunnel_session_script_completed": _dns_tunnel_session_completed(
+                session_output,
+                marker_output,
             ),
+            "marker_output_path": session_meta["marker_output_path"],
         }
         if session_output:
             outcome_payload["session_output_preview"] = session_output[:500]
+        if marker_output:
+            outcome_payload["marker_output_preview"] = marker_output[:500]
         cmd_events.append_event(
             store,
             run_id=run_id,
@@ -777,10 +828,18 @@ def _execute_dns_tunnel(
         http_dispatches += 1
 
         target_query_events = 0
-        for item in target_queries:
-            fqdn = str(item["fqdn"])
-            if fqdn not in sent_fqdns:
-                continue
+        planned_by_fqdn = {str(item["fqdn"]): item for item in target_queries}
+        for fqdn in sorted(sent_fqdns):
+            item = planned_by_fqdn.get(
+                fqdn,
+                {
+                    "target": target,
+                    "fqdn": fqdn,
+                    "query": fqdn,
+                    "protocol": "dns_udp",
+                    "port": 53,
+                },
+            )
             traffic_evidence = dns_tunnel_query_evidence(item)
             query_payload = {
                 **traffic_evidence,

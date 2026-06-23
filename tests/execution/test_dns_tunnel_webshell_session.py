@@ -35,6 +35,11 @@ def _targets() -> TargetSet:
     )
 
 
+def _mock_dns_tunnel_markers(provider: MagicMock, marker_text: str) -> None:
+    provider.run_remote_command.return_value = b""
+    provider.fetch_remote_file_via_cat.return_value = marker_text.encode("utf-8")
+
+
 def test_webshell_dns_tunnel_one_http_dispatch_per_target(tmp_path) -> None:
     store = EventStore(tmp_path / "events.db")
     store.open_run("run-session")
@@ -59,7 +64,7 @@ def test_webshell_dns_tunnel_one_http_dispatch_per_target(tmp_path) -> None:
         [f"DNS_TUNNEL_SENT:{item['fqdn']}" for item in queries]
         + ["DNS_TUNNEL_SESSION_DONE"]
     )
-    provider.run_remote_command.return_value = session_output.encode("utf-8")
+    _mock_dns_tunnel_markers(provider, session_output)
 
     http_calls = execute_command_plan(
         plan,
@@ -77,9 +82,9 @@ def test_webshell_dns_tunnel_one_http_dispatch_per_target(tmp_path) -> None:
 
     assert http_calls == 1
     assert provider.run_remote_command.call_count == 1
+    assert provider.fetch_remote_file_via_cat.call_count == 1
     remote_command = provider.run_remote_command.call_args[0][0]
     assert "python3 -c" in remote_command
-    assert "cat " in remote_command
     assert ".sent" in remote_command
 
     candidates = re.findall(r"[A-Za-z0-9+/=]{100,}", remote_command)
@@ -227,7 +232,7 @@ def test_webshell_high_profile_queries_sent_nonzero(tmp_path) -> None:
     session_output = "\n".join(
         f"DNS_TUNNEL_SENT:{item['fqdn']}" for item in plan["queries"]
     ) + "\nDNS_TUNNEL_SESSION_DONE\n"
-    provider.run_remote_command.return_value = session_output.encode("utf-8")
+    _mock_dns_tunnel_markers(provider, session_output)
 
     execute_command_plan(
         plan,

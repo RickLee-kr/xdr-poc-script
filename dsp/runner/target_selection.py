@@ -207,7 +207,23 @@ def scenario_start_metadata(
         meta["transport"] = "curl" if curl_available() else "urllib"
         meta["evidence"] = "http_followup_requests.jsonl"
     elif scenario_id == "dns_tunnel":
-        meta["planned_queries"] = int(params.get("max_queries", params.get("max_total", 50)))
+        from dsp.protocols.dns.tunnel import CHUNK_SIZE_DEFAULT, PAYLOAD_MB_DEFAULT, plan_chunk_count
+        from dsp.protocols.dns.volume_profiles import apply_volume_profile
+
+        tuned = apply_volume_profile(params, dry_run=False)
+        payload_mb = float(tuned.get("payload_mb", PAYLOAD_MB_DEFAULT))
+        chunk_size = int(tuned.get("chunk_size", CHUNK_SIZE_DEFAULT))
+        max_chunks = tuned.get("max_chunks")
+        include_markers = bool(tuned.get("include_session_markers", True))
+        meta["payload_mb"] = payload_mb
+        meta["payload_bytes"] = int(payload_mb * 1024 * 1024)
+        meta["chunk_size"] = chunk_size
+        if hosts:
+            idx_per_host = plan_chunk_count(payload_mb, chunk_size)
+            if max_chunks is not None:
+                idx_per_host = min(idx_per_host, int(max_chunks))
+            session_markers = 2 if include_markers else 0
+            meta["planned_queries"] = (idx_per_host + session_markers) * len(hosts)
     elif scenario_id == "dga":
         meta["planned_domains"] = int(params.get("max_domains", params.get("max_total", 15)))
     elif scenario_id in ("ssh_failure", "ldap_enumeration", "kerberos_failure", "smb_login_failure"):

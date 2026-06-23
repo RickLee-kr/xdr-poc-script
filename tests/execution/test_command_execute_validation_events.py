@@ -36,12 +36,18 @@ def _request(scenario_id: str) -> ScenarioExecutionRequest:
     )
 
 
+def _mock_dns_tunnel_markers(provider: MagicMock, marker_text: str) -> None:
+    provider.run_remote_command.return_value = b""
+    provider.fetch_remote_file_via_cat.return_value = marker_text.encode("utf-8")
+
+
 def test_dns_tunnel_command_evidence_includes_python_socket_method(tmp_path) -> None:
     ctx = _ctx(tmp_path)
     provider = MagicMock()
     fqdn = "idx-0000-abc.dns-tunnel.com"
-    provider.run_remote_command.return_value = (
-        f"DNS_TUNNEL_SENT:{fqdn}\nDNS_TUNNEL_SESSION_DONE\n".encode("utf-8")
+    _mock_dns_tunnel_markers(
+        provider,
+        f"DNS_TUNNEL_SENT:{fqdn}\nDNS_TUNNEL_SESSION_DONE\n",
     )
     plan = {
         "type": "dns_tunnel",
@@ -81,13 +87,14 @@ def test_dns_tunnel_command_evidence_includes_python_socket_method(tmp_path) -> 
     assert "MARKER" in script
     assert "sendto" in script
     assert "recvfrom" not in script
-    assert "DNS_TUNNEL_SESSION_DONE" in remote_command
+    assert "DNS_TUNNEL_SESSION_DONE" in script
+    assert provider.fetch_remote_file_via_cat.call_count == 1
 
 
 def test_dns_tunnel_dispatch_without_sendto_emits_no_query_sent(tmp_path) -> None:
     ctx = _ctx(tmp_path)
     provider = MagicMock()
-    provider.run_remote_command.return_value = b"DNS_TUNNEL_SESSION_DONE\n"
+    _mock_dns_tunnel_markers(provider, "DNS_TUNNEL_SESSION_DONE\n")
     plan = {
         "type": "dns_tunnel",
         "mode": "live",
@@ -120,8 +127,9 @@ def test_dns_tunnel_html_wrapped_markers_are_parsed(tmp_path) -> None:
     ctx = _ctx(tmp_path)
     provider = MagicMock()
     fqdn = "idx-0000-abc.dns-tunnel.com"
-    provider.run_remote_command.return_value = (
-        f"<pre>DNS_TUNNEL_SENT:{fqdn}\nDNS_TUNNEL_SESSION_DONE</pre>".encode("utf-8")
+    _mock_dns_tunnel_markers(
+        provider,
+        f"<pre>DNS_TUNNEL_SENT:{fqdn}\nDNS_TUNNEL_SESSION_DONE</pre>",
     )
     plan = {
         "type": "dns_tunnel",
@@ -149,6 +157,40 @@ def test_dns_tunnel_html_wrapped_markers_are_parsed(tmp_path) -> None:
         e for e in ctx.event_store.list_events("run-val") if e.event == "dns_tunnel_completed"
     )
     assert completed.evidence.get("dns_tunnel_query_sent_count") == 1
+
+
+def test_dns_tunnel_session_timeout_still_reads_marker_file(tmp_path) -> None:
+    ctx = _ctx(tmp_path)
+    provider = MagicMock()
+    fqdn = "idx-0000-abc.dns-tunnel.com"
+    provider.run_remote_command.side_effect = TimeoutError("session timed out")
+    _mock_dns_tunnel_markers(provider, f"DNS_TUNNEL_SENT:{fqdn}\n")
+    plan = {
+        "type": "dns_tunnel",
+        "mode": "live",
+        "payload_mb": 0.0001,
+        "chunk_size": 30,
+        "domain": "dns-tunnel.com",
+        "mock_filename": "mock_exfil.dat",
+        "send_interval_sec": 0.01,
+        "session_id": "sess01",
+        "queries": [
+            {
+                "target": "10.10.10.20",
+                "fqdn": fqdn,
+                "seq": 0,
+                "query_role": "idx_chunk",
+                "protocol": "dns_udp",
+                "port": 53,
+            },
+        ],
+    }
+    execute_command_plan(plan, provider, ctx, _request("dns_tunnel"))
+    completed = next(
+        e for e in ctx.event_store.list_events("run-val") if e.event == "dns_tunnel_completed"
+    )
+    assert completed.evidence.get("dns_tunnel_query_sent_count") == 1
+    assert provider.fetch_remote_file_via_cat.call_count == 1
 
 
 def test_dga_command_emits_validation_status_events(tmp_path) -> None:

@@ -53,6 +53,28 @@ def test_profile_dns_tunnel_payload_mb() -> None:
     assert scenario_params_for_profile("dns_tunnel", "high")["payload_mb"] == 4.0
 
 
+def test_dns_tunnel_start_metadata_uses_payload_volume_not_fixed_cap() -> None:
+    from dsp.engine.scenario_engine import TargetSet
+    from dsp.protocols.dns.tunnel import CHUNK_SIZE_DEFAULT, plan_chunk_count
+    from dsp.runner.target_selection import scenario_start_metadata
+
+    alive = ["10.10.10.97", "10.10.10.98"]
+    targets = TargetSet(
+        target_net="10.10.10.0/24",
+        hosts=alive,
+        service_hosts={"dns_hosts": ["10.10.10.1"], "http_targets": alive},
+        discovery_enabled=True,
+        discovery_meta={"alive_hosts": alive},
+    )
+    params = scenario_params_for_profile("dns_tunnel", "normal")
+    meta = scenario_start_metadata("dns_tunnel", targets, params)
+    idx_per_host = plan_chunk_count(2.0, CHUNK_SIZE_DEFAULT)
+    assert meta["payload_mb"] == 2.0
+    assert meta["payload_bytes"] == 2 * 1024 * 1024
+    assert meta["planned_queries"] == (idx_per_host + 2) * 2
+    assert meta["planned_queries"] != 50
+
+
 def _dga_total_domains(params: dict) -> int:
     return int(params["phase1_count"]) + int(params["phase2_count"])
 
