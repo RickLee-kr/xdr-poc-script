@@ -49,4 +49,9 @@ def test_http_followup_command_events_include_selected_targets(tmp_path) -> None
     assert events["http_followup_started"].evidence["selected_targets"]
     assert events["http_followup_completed"].evidence["target_count"] == 1
     assert events["http_followup_completed"].evidence["requests_sent"] == 1
+    completed = events["http_followup_completed"].evidence
+    assert len(completed["request_evidence"]) == 1
+    assert completed["request_evidence"][0]["dispatch_status"] == "completed"
+    assert completed["request_dump_summary"]["sample_count"] == 1
+    assert completed["response_tracking"] == "disabled_webshell_mode"
     store.close()

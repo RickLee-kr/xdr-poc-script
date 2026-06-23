@@ -50,17 +50,19 @@ def test_http_followup_completed_shows_evidence_file() -> None:
                 "unique_paths": 16,
                 "unique_user_agents": 47,
                 "malicious_rare_ua_count": 300,
+                "response_tracking": "disabled_webshell_mode",
             },
             "artifacts": {
                 "evidence_file": "/tmp/run/http_followup_requests.jsonl",
-                "sample_dump": "/tmp/run/http_request_dump.json",
+                "request_dump": "/tmp/run/http_request_dump.json",
             },
         },
     )
     output = buf.getvalue()
     assert "HTTP Follow-up Completed" in output
     assert "evidence_file=/tmp/run/http_followup_requests.jsonl" in output
-    assert "sample_dump=/tmp/run/http_request_dump.json" in output
+    assert "request_dump=/tmp/run/http_request_dump.json" in output
+    assert "response_tracking=disabled_webshell_mode" in output
     assert "unique_paths=16" in output
 
 

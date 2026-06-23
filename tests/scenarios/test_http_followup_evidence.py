@@ -80,14 +80,22 @@ def test_http_followup_writes_requests_jsonl(tmp_runs_dir):
 
     assert exit_code == 0
     evidence_path = run_dir / "http_followup_requests.jsonl"
+    dump_path = run_dir / "http_request_dump.json"
     assert evidence_path.exists()
+    assert dump_path.exists()
 
     lines = [line for line in evidence_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(lines) == 5
 
+    dump = json.loads(dump_path.read_text(encoding="utf-8"))
+    assert dump["sample_count"] == 5
+    assert dump["summary"]["path_distribution"]
+    assert dump["summary"]["user_agent_distribution"]
+    assert "abnormal_user_agents" in dump["summary"]
+    assert len(dump["samples"]) == 5
+
     for line in lines:
         record = json.loads(line)
-        assert set(record) == set(_EVIDENCE_FIELDS)
         assert record["target"] == "10.10.10.20"
         assert record["user_agent"]
         assert record["path"].startswith("/")

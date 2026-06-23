@@ -44,6 +44,7 @@ from dsp.manual_verification import (
 from dsp.plugins import PluginLoader, PluginStatus
 from dsp.reporting import ReportingEngine
 from dsp.runner.progress_emitter import ProgressEmitter
+from dsp.runner.log_timestamps import apply_run_timing_metadata, collect_git_info
 from dsp.runner.target_selection import (
     resolve_selected_targets_by_protocol,
     resolve_webshell_discovered_targets_by_protocol,
@@ -169,6 +170,7 @@ def _scenario_completion_extras(scenario_id: str, evidence: dict[str, Any]) -> d
         extras["selected_http_target_reason"] = evidence.get("selected_http_target_reason")
         extras["response_code_distribution"] = evidence.get("response_code_distribution")
         extras["redirect_only_warning"] = evidence.get("redirect_only_warning")
+        extras["response_tracking"] = evidence.get("response_tracking")
     elif scenario_id == "port_sweep":
         extras["duration_sec"] = evidence.get("duration_sec")
         extras["probes_per_second"] = evidence.get("probes_per_second")
@@ -184,7 +186,7 @@ def _scenario_artifact_paths(scenario_id: str, run_dir: Path) -> dict[str, str]:
     artifacts: dict[str, str] = {}
     if scenario_id == "http_followup":
         artifacts["evidence_file"] = str(run_dir / "http_followup_requests.jsonl")
-        artifacts["sample_dump"] = str(run_dir / "http_request_dump.json")
+        artifacts["request_dump"] = str(run_dir / "http_request_dump.json")
     elif scenario_id == "sql_injection":
         artifacts["evidence_file"] = str(run_dir / "sql_injection_requests.jsonl")
     return artifacts
@@ -402,6 +404,7 @@ class RunManager:
         run_started_at = datetime.now(timezone.utc)
 
         emitter = ProgressEmitter(on_progress) if on_progress is not None else None
+        git_info = collect_git_info()
         if emitter is not None:
             emitter.emit(
                 "run_started",
@@ -409,6 +412,7 @@ class RunManager:
                     "provider": execution_provider,
                     "target_net": target_net,
                     "profile": operational_profile,
+                    "started_at": run_started_at,
                 },
             )
 
@@ -432,6 +436,9 @@ class RunManager:
                 "operational_profile": operational_profile,
             },
             dsp_version=DSP_VERSION,
+            git_commit=git_info.get("git_commit"),
+            git_branch=git_info.get("git_branch"),
+            started_at_utc=run_started_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
 
         db_path = run_dir / "events.db"
@@ -633,6 +640,7 @@ class RunManager:
             validator.write_validation_json(run_dir / "validation.json", results)
             store.export_jsonl(run_dir / "events.jsonl")
             store.close_run()
+            self._finalize_run_record(run, started_at=run_started_at)
             self._write_run_json(run_dir / "run.json", run)
             exit_code = compute_exit_code(results)
             duration_sec = (datetime.now(timezone.utc) - run_started_at).total_seconds()
@@ -646,6 +654,10 @@ class RunManager:
                         "run_dir": str(run_dir),
                         "validation_warnings": format_validation_warnings(results),
                         "webshell_connect_failed": True,
+                        "started_at": run_started_at,
+                        "completed_at": run.ended_at,
+                        "git_commit": run.git_commit,
+                        "git_branch": run.git_branch,
                     },
                 )
             store.close()
@@ -902,6 +914,7 @@ class RunManager:
             _write_sql_injection_artifacts(run_dir, sql_completed.evidence or {})
 
         store.close_run()
+        self._finalize_run_record(run, started_at=run_started_at)
         self._write_run_json(run_dir / "run.json", run)
 
         if export_evidence:
@@ -920,6 +933,10 @@ class RunManager:
                     "summaries": summaries,
                     "run_dir": str(run_dir),
                     "validation_warnings": format_validation_warnings(results),
+                    "started_at": run_started_at,
+                    "completed_at": run.ended_at,
+                    "git_commit": run.git_commit,
+                    "git_branch": run.git_branch,
                 },
             )
         store.close()
@@ -1002,6 +1019,10 @@ class RunManager:
         reporter.write_report_json(run_dir / "report.json", report)
         store.close()
         return run_dir / "report.md"
+
+    @staticmethod
+    def _finalize_run_record(run: Run, *, started_at: datetime) -> None:
+        apply_run_timing_metadata(run, started_at=started_at, ended_at=run.ended_at)
 
     @staticmethod
     def _write_run_json(path: Path, run: Run) -> None:

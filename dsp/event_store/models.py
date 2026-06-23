@@ -57,9 +57,14 @@ class Run:
     requested_scenarios: list[str] = field(default_factory=list)
     config_snapshot: dict[str, Any] = field(default_factory=dict)
     dsp_version: str = "1.0.0"
+    git_commit: str | None = None
+    git_branch: str | None = None
+    started_at_utc: str | None = None
+    completed_at_utc: str | None = None
+    duration_seconds: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "run_id": self.run_id,
             "event_schema_version": self.event_schema_version,
             "target_net": self.target_net,
@@ -71,6 +76,17 @@ class Run:
             "config_snapshot": self.config_snapshot,
             "dsp_version": self.dsp_version,
         }
+        if self.git_commit is not None:
+            payload["git_commit"] = self.git_commit
+        if self.git_branch is not None:
+            payload["git_branch"] = self.git_branch
+        if self.started_at_utc is not None:
+            payload["started_at_utc"] = self.started_at_utc
+        if self.completed_at_utc is not None:
+            payload["completed_at_utc"] = self.completed_at_utc
+        if self.duration_seconds is not None:
+            payload["duration_seconds"] = self.duration_seconds
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Run:
@@ -87,6 +103,11 @@ class Run:
             requested_scenarios=list(data.get("requested_scenarios", [])),
             config_snapshot=dict(data.get("config_snapshot", {})),
             dsp_version=data.get("dsp_version", "1.0.0"),
+            git_commit=data.get("git_commit"),
+            git_branch=data.get("git_branch"),
+            started_at_utc=data.get("started_at_utc"),
+            completed_at_utc=data.get("completed_at_utc"),
+            duration_seconds=data.get("duration_seconds"),
         )
 
 

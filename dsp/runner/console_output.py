@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
+from dsp.runner.log_timestamps import format_utc_timestamp
 from dsp.runner.traffic_summary import (
     format_scenario_traffic_block,
     traffic_lines_for_scenario,
@@ -48,13 +49,14 @@ class OperationalConsole:
         self._scenario_total = 0
         self._scenario_index = 0
         self._run_dir: Path | None = None
+        self._run_started_at: datetime | None = None
 
     def handle_progress(self, phase: str, data: dict[str, Any]) -> None:
         if phase == "run_started":
             self._emit_run_started(data)
         elif phase == "discovery_started":
             target_net = data.get("target_net") or self.target_net
-            self._write("Discovery Started")
+            self._write_ts("Discovery Started")
             if target_net:
                 self._write(f"target_net={target_net}")
             if data.get("candidate_hosts"):
@@ -68,7 +70,7 @@ class OperationalConsole:
             open_endpoints = data.get("open_endpoints", 0)
             alive_hosts = data.get("alive_hosts", 0)
             pct = round((completed / total) * 100, 1) if total else 0.0
-            self._write(
+            self._write_ts(
                 f"Discovery progress: probes={completed}/{total} ({pct}%), "
                 f"open={open_endpoints}, alive={alive_hosts}"
             )
@@ -78,7 +80,7 @@ class OperationalConsole:
             alive = data.get("alive_hosts") or []
             open_endpoints = data.get("open_endpoints", 0)
             service_hosts: dict[str, list[str]] = data.get("service_hosts") or {}
-            self._write("Discovery Completed")
+            self._write_ts("Discovery Completed")
             if data.get("discovery_method"):
                 self._write(f"  discovery_method={data['discovery_method']}")
             if data.get("command_delivery"):
@@ -113,7 +115,7 @@ class OperationalConsole:
         elif phase == "scenario_skipped":
             self._emit_scenario_skipped(data)
         elif phase == "evidence_generated":
-            self._write("Evidence Generated")
+            self._write_ts("Evidence Generated")
             self._write("")
         elif phase == "run_completed":
             duration = data.get("duration_sec", 0.0)
@@ -123,8 +125,21 @@ class OperationalConsole:
                 self._traffic_summaries = self._normalize_summaries(raw_summaries)
             if data.get("run_dir"):
                 self._run_dir = Path(data["run_dir"])
-            self._write("Run Completed")
+            completed_at = self._coerce_timestamp(data.get("completed_at")) or self._utc_now()
+            started_at = self._coerce_timestamp(data.get("started_at")) or self._run_started_at
+            git_commit = data.get("git_commit")
+            git_branch = data.get("git_branch")
+            if git_commit:
+                self._write(f"Git Commit: {git_commit}")
+            if git_branch:
+                self._write(f"Git Branch: {git_branch}")
+            if git_commit or git_branch:
+                self._write("")
+            self._write_ts("Run Completed", at=completed_at)
             self._write("")
+            if started_at is not None:
+                self._write(f"Started At: {format_utc_timestamp(started_at)}")
+            self._write(f"Completed At: {format_utc_timestamp(completed_at)}")
             self._write(f"Duration: {format_duration(duration)}")
             self._write(f"Events Generated: {events}")
             self._write("")
@@ -154,7 +169,9 @@ class OperationalConsole:
         profile = data.get("profile") or self.profile or "normal"
         provider = data.get("provider") or self.provider
         target_net = data.get("target_net") or self.target_net
-        self._write("DSP Run Started")
+        started_at = self._coerce_timestamp(data.get("started_at")) or self._utc_now()
+        self._run_started_at = started_at
+        self._write_ts("DSP Run Started", at=started_at)
         self._write("")
         self._write(f"Provider: {_PROVIDER_LABELS.get(provider, provider)}")
         self._write(f"Target Net: {target_net}")
@@ -247,7 +264,7 @@ class OperationalConsole:
         sid = data.get("scenario_id", "")
         reason = data.get("reason", "scenario_skipped")
         if sid:
-            self._write(f"{scenario_display_name(sid)} SKIPPED")
+            self._write_ts(f"{scenario_display_name(sid)} SKIPPED")
             self._write(f"  skip_reason={reason}")
             evidence = data.get("evidence") or {}
             if evidence.get("requests_sent") == 0:
@@ -264,7 +281,7 @@ class OperationalConsole:
         self._scenario_total = total
         if data.get("run_dir"):
             self._run_dir = Path(data["run_dir"])
-        self._write(f"[{index}/{total}] {scenario_id} STARTED")
+        self._write_ts(f"[{index}/{total}] {scenario_id} STARTED")
         meta = data.get("metadata") or {}
         for key in (
             "target",
@@ -340,7 +357,7 @@ class OperationalConsole:
             return
 
         if kind == "progress":
-            self._write(f"[{scenario_id}] progress")
+            self._write_ts(f"[{scenario_id}] progress")
             self._emit_progress_lines(scenario_id, data)
             self._write("")
             return
@@ -442,8 +459,11 @@ class OperationalConsole:
         artifacts = data.get("artifacts") or {}
         if sid:
             if metrics:
-                self._traffic_summaries[sid] = dict(metrics)
-            self._write(f"{scenario_display_name(sid)} Completed")
+                summary = dict(metrics)
+                if sid == "http_followup" and extras.get("response_tracking"):
+                    summary["response_tracking"] = extras["response_tracking"]
+                self._traffic_summaries[sid] = summary
+            self._write_ts(f"{scenario_display_name(sid)} Completed")
             for label, value in traffic_lines_for_scenario(sid, metrics):
                 self._write(f"  {label}={value}")
             for key in (
@@ -468,6 +488,8 @@ class OperationalConsole:
                 if dist:
                     dist_text = ", ".join(f"{code}={count}" for code, count in sorted(dist.items()))
                     self._write(f"  response_code_distribution={dist_text}")
+                if extras.get("response_tracking"):
+                    self._write(f"  response_tracking={extras['response_tracking']}")
                 target_dist = extras.get("target_distribution") or {}
                 if target_dist:
                     self._write(f"  target_distribution={target_dist}")
@@ -561,6 +583,21 @@ class OperationalConsole:
 
     def _write(self, line: str) -> None:
         print(line, file=self._stream, flush=True)
+
+    def _write_ts(self, line: str, *, at: datetime | None = None) -> None:
+        self._write(f"{format_utc_timestamp(at or self._utc_now())} | {line}")
+
+    @staticmethod
+    def _utc_now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _coerce_timestamp(value: datetime | str | None) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
 def format_duration(seconds: float) -> str:

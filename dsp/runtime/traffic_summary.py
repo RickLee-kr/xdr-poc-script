@@ -517,6 +517,8 @@ def build_traffic_summary(
                 scenario_summary,
                 _http_scenario_fallback_fields(targets, scenario_params, sid),
             )
+            if completed.get("response_tracking"):
+                scenario_summary["response_tracking"] = completed["response_tracking"]
             _merge_nonempty_fields(scenario_summary, request_metadata)
             if not scenario_summary.get("http_targets"):
                 scenario_summary["http_targets"] = targets.hosts_for_capability("http_targets")

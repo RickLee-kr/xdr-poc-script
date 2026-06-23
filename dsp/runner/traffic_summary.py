@@ -49,6 +49,10 @@ def traffic_lines_for_scenario(
         resolved = int(metrics.get("dga_resolved_observed_count", 0))
         if nx or resolved:
             lines.append(("queries_sent", nx + resolved))
+    if scenario_id == "http_followup":
+        tracking = metrics.get("response_tracking")
+        if tracking:
+            lines.append(("response_tracking", tracking))
     return lines
 
 

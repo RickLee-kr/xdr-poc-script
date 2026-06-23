@@ -26,6 +26,7 @@ from dsp.protocols.http import (
     build_http_request_sent_event,
     plan_followup_requests,
 )
+from dsp.protocols.http.followup_evidence import summarize_http_followup_evidence
 from dsp.protocols.http.urls import (
     ATTACK_SCAN_PATHS,
     MAX_HOSTS_DEFAULT,
@@ -555,6 +556,7 @@ def run(
         raise ScenarioSkipError(SKIP_REASON_HTTP_TARGETS_NOT_FOUND)
 
     request_evidence = [_evidence_dump_record(outcome) for outcome in outcomes]
+    request_dump, request_dump_summary = summarize_http_followup_evidence(request_evidence)
     request_log_path = _write_request_log(ctx, request_evidence)
     wire_log_path = _write_wire_evidence_log(ctx, wire_log) if write_wire_evidence else None
 
@@ -596,6 +598,8 @@ def run(
                 "concurrency": concurrency,
                 "requests_per_second": requests_per_second,
                 "request_evidence": request_evidence,
+                "request_dump": request_dump,
+                "request_dump_summary": request_dump_summary,
                 "sample_urls": sample_urls,
                 "user_agent_classes": ua_classes,
                 "user_agent_samples": ua_samples,

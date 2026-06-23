@@ -24,6 +24,11 @@ from dsp.execution.remote.command.shell import (
 )
 from dsp.execution.remote.models import ScenarioExecutionRequest
 from dsp.execution.webshell.event_sync.bundle_content import normalize_webshell_command_output
+from dsp.protocols.http.followup_evidence import (
+    WEBSHELL_RESPONSE_TRACKING,
+    build_dispatch_request_evidence,
+    summarize_http_followup_evidence,
+)
 from dsp.protocols.dns.tunnel import (
     CHUNK_SIZE_DEFAULT,
     MOCK_PAYLOAD_FILENAME,
@@ -219,6 +224,7 @@ def _execute_http_followup(
         evidence=started_evidence,
     )
     dispatched = 0
+    request_evidence: list[dict[str, Any]] = []
     for index, item in enumerate(requests_list, start=1):
         url = str(item["url"])
         method = str(item.get("method") or "GET")
@@ -229,6 +235,15 @@ def _execute_http_followup(
             else curl_request_command(url, method=method, user_agent=user_agent, timeout=timeout)
         )
         status = _dispatch(provider, command, timeout_seconds=int(timeout) + 5)
+        request_evidence.append(
+            build_dispatch_request_evidence(
+                url=url,
+                method=method,
+                user_agent=user_agent,
+                dispatch_status=status,
+                seq=index,
+            )
+        )
         cmd_events.append_event(
             store,
             run_id=run_id,
@@ -236,7 +251,7 @@ def _execute_http_followup(
             event="http_request_created",
             status="info",
             target=url,
-            evidence={"seq": index, "url": url, "method": method},
+            evidence={"seq": index, "url": url, "method": method, "user_agent": user_agent},
         )
         cmd_events.append_command_dispatched(
             store,
@@ -247,9 +262,14 @@ def _execute_http_followup(
             protocol="http",
             dispatch_status=status,
             traffic_event="http_request_sent",
-            evidence={"url": url, "method": method},
+            evidence={"url": url, "method": method, "user_agent": user_agent},
         )
         dispatched += 1
+    request_dump, request_dump_summary = summarize_http_followup_evidence(
+        request_evidence,
+        response_tracking=WEBSHELL_RESPONSE_TRACKING,
+    )
+    abnormal_user_agents = int(request_dump_summary.get("abnormal_user_agents", 0))
     cmd_events.append_event(
         store,
         run_id=run_id,
@@ -260,6 +280,15 @@ def _execute_http_followup(
         evidence={
             "requests_sent": dispatched,
             "request_count": dispatched,
+            "request_evidence": request_evidence,
+            "request_dump": request_dump,
+            "request_dump_summary": request_dump_summary,
+            "response_tracking": WEBSHELL_RESPONSE_TRACKING,
+            "abnormal_user_agents": abnormal_user_agents,
+            "normal_user_agents": int(request_dump_summary.get("normal_user_agents", 0)),
+            "abnormal_user_agent_ratio": request_dump_summary.get("abnormal_user_agent_ratio", 0.0),
+            "target_distribution": request_dump_summary.get("target_distribution", {}),
+            "target_count": len(request_dump_summary.get("target_distribution", {})),
             **selection_fields,
         },
     )
