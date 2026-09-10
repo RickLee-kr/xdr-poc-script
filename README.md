@@ -1,293 +1,74 @@
 # Detection Scenario Platform (DSP)
 
-Generate realistic security traffic for XDR, SIEM, EDR, and lab validation.
+**Generate realistic, observable security activity for XDR and NDR customer POC validation.**
 
-**Release 1.4.0** — Generate realistic security-scenario traffic, collect structured events, and produce validation reports for lab and XDR testing.
+DSP helps POC engineers create repeatable security activity when a customer environment is too quiet to produce enough useful detections during an evaluation. It runs controlled scenarios against an authorized target network, records structured execution evidence, and produces reports that can be compared with XDR/NDR detections.
 
-DSP runs attack-simulation scenarios (port sweep, DNS tunnel, HTTP follow-up, SQL injection, SSH failure, and more) against a target network you define. Results land in a local run folder as events, reports, and evidence you can review or export.
+> DSP validates **activity and event generation**. It does not automatically claim that a vendor alert fired or that an XDR case was correlated.
 
----
+## Install & run
 
-## 🚀 Install & Run (30 Seconds)
-
-**One command** — clone, install, and open the operator menu:
+Requirements: Linux, Git, and Python 3.11+ with `venv` support.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xdr-labs/xdr-poc-script/release/v1.4.0-rc/install-dsp.sh | bash
 ```
 
-Then in the menu:
+The installer now uses `$HOME/xdr-poc-script` by default, creates `.venv`, installs DSP, preserves `~/.dsp/`, and opens the operator menu.
 
-| Step | Menu | Action |
-|------|------|--------|
-| 1 | *(install finishes)* | Menu opens automatically |
-| 2 | **2 — Configure environment** | Set target network (CIDR), profile (`normal` / `high`), local vs webshell |
-| 3 | **3 — Run scenario** | Execute using saved settings |
+Then:
 
-**Output:** `~/.dsp/runs/<run_id>/` (`report.md`, `events.db`, `validation.json`, …)  
-**Config:** `~/.dsp/config.env`
+1. Choose **Configure environment**.
+2. Set the authorized target CIDR.
+3. Use **local** + **normal** for the first run.
+4. Choose **Run scenario**.
+5. Use **Show latest report** to review the result.
 
-Install only (no menu): `DSP_NO_LAUNCH=1 bash install-dsp.sh`  
-Custom path: `DSP_REPO_DIR=/opt/xdr-poc-script bash install-dsp.sh`
+Run artifacts are stored under:
 
----
-
-## What it does
-
-| | |
-|---|---|
-| **Runs scenarios** | Dispatches protocol traffic from this host (**local**) or via a **webshell** on a remote host |
-| **Records events** | Append-only event store (`events.db` / `events.jsonl`) — single source of truth |
-| **Produces reports** | `report.md`, `validation.json`, `traffic_summary.json` per run |
-| **Profiles** | `normal` (default) or `high` — coverage expansion, not intensity |
-
-DSP validates **traffic and event generation**, not vendor alert firing.
-
----
-
-## Quick Start
-
-### Step 1 — Install once
-
-Run this **once** on a new machine. It clones or updates the repo, creates `.venv`, installs DSP, and opens the menu.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/xdr-labs/xdr-poc-script/release/v1.4.0-rc/install-dsp.sh | bash
+```text
+~/.dsp/runs/<run_id>/
 ```
 
-Install only (no menu): `DSP_NO_LAUNCH=1 bash install-dsp.sh`
+The most useful first files are `traffic_summary.json`, `report.md`, and `verification_checklist.md`.
 
-### Step 2 — Use the menu every day
+## Operational profiles
 
-From the repository root:
+| Profile | Behavior |
+| --- | --- |
+| `normal` | Default; representative target coverage |
+| `high` | Same per-target volume, expanded across more discovered targets |
 
-```bash
-cd /path/to/xdr-poc-script
-./dsp-menu.sh
-```
-
-| Menu item | What it does |
-|-----------|----------------|
-| **Configure environment** | Target network (CIDR), profile, local vs webshell, webshell URL |
-| **Run scenario** | Execute using saved settings |
-| **Show latest report** | Open the most recent run under `~/.dsp/runs/` |
-| **Update latest patch** | Pull `release/v1.4.0-rc` |
-| **Show version/status** | Git state, `dsp --version`, current config |
-
-**Config file:** `~/.dsp/config.env`  
-**Run output:** `~/.dsp/runs/<run_id>/` (`report.md`, `events.db`, `validation.json`, …)
-
----
-
-## Release Validation Status
-
-Release 1.0 recommendation: **READY WITH KNOWN LIMITATIONS** (release **v1.4.0**).
-
-| Status | Component |
-|--------|-----------|
-| Validated | Local Provider |
-| Validated | JSP Webshell |
-| Validated | PHP Webshell |
-| Known limitation | ASPX Runtime Validation Pending |
-
-DSP validates **traffic and event generation**, not vendor alert firing. See [Release 1.0 Summary](./RELEASE_1_0_SUMMARY.md) for scope and limitations.
-
----
-
-## Validated Runtime Platforms
-
-| Platform | Status | Notes |
-|----------|--------|-------|
-| **Linux** | Validated | Local provider; JSP (Tomcat) and PHP (Apache) webshell paths validated on lab host |
-| **Windows** | Not yet validated | ASPX / IIS webshell execution path not validated in real environment |
-
----
-
-## Validated Webshell Families
-
-| Family | Status | Notes |
-|--------|--------|-------|
-| **JSP** | Validated | Real Tomcat + `shell.jsp` — 10/10 scenarios including `host_behavior_check` |
-| **PHP** | Validated | Real Apache + PHP + `shell.php` — 10/10 scenarios including `host_behavior_check` |
-| **ASPX** | Preview / not yet validated | Contract and HTTP transport exist; real Windows IIS execution has not been validated |
-
----
-
-## Known Limitations
-
-- ASPX runtime not validated on real Windows IIS
-- Windows webshell execution path not validated (bundle runner, collector, and artifact handling are Linux-oriented today)
-- ASPX should be considered **preview status** until Windows lab validation completes
-
-Details: [`docs/validation/ASPX_REAL_WEBSHELL_VALIDATION_REPORT.md`](docs/validation/ASPX_REAL_WEBSHELL_VALIDATION_REPORT.md), [`docs/validation/RELEASE_DOCUMENTATION_AUDIT.md`](docs/validation/RELEASE_DOCUMENTATION_AUDIT.md)
-
----
-
-## Fake JSP webshell lab (quick test)
-
-Use this when you want to try **DSP webshell mode** without installing Tomcat. The script starts a small Flask app that mimics a JSP webshell at `/shell.jsp?cmd=...` — enough for connectivity checks and basic scenario runs in a **lab only**.
-
-> **Warning:** This endpoint runs arbitrary shell commands. Use only on an isolated test machine. Never expose it to the public internet.
-
-### What you need
-
-| Item | Details |
-|------|---------|
-| OS | Debian/Ubuntu Linux (uses `apt`) |
-| Network | Port **8080** free on the webshell host |
-| DSP | Installed on the same machine **or** another host that can reach port 8080 |
-
-### Step 1 — Run the setup script
-
-From the repository root (or download the script from GitHub):
-
-```bash
-cd /path/to/xdr-poc-script
-chmod +x scripts/setup_fake_shelljsp_lab.sh
-./scripts/setup_fake_shelljsp_lab.sh
-```
-
-The script will:
-
-1. Install `python3`, `python3-venv`, and `curl` (may ask for `sudo`)
-2. Create `~/fake_shelljsp_lab/` with a Python virtual environment and Flask server
-3. Start the fake webshell on **http://0.0.0.0:8080/shell.jsp**
-
-Leave this terminal open while testing. Press **Ctrl+C** to stop the server.
-
-**Start again later** (after setup):
-
-```bash
-cd ~/fake_shelljsp_lab && ./start.sh
-```
-
-### Step 2 — Verify the webshell works
-
-Open a **second terminal** on the same machine:
-
-```bash
-cd ~/fake_shelljsp_lab
-./test_local.sh
-```
-
-You should see output from `whoami`, `id`, and `hostname`. Manual check:
-
-```bash
-curl --get --data-urlencode "cmd=whoami" http://127.0.0.1:8080/shell.jsp
-```
-
-If another machine runs DSP, replace `127.0.0.1` with the webshell host IP (shown when setup finishes). If a firewall blocks access:
-
-```bash
-sudo ufw allow 8080/tcp
-```
-
-### Step 3 — Point DSP at the fake webshell
-
-**Option A — Menu**
-
-```bash
-cd /path/to/xdr-poc-script
-./dsp-menu.sh
-```
-
-1. **Configure environment**
-2. Execution mode: **webshell**
-3. Family: **jsp**
-4. URL: `http://127.0.0.1:8080/shell.jsp` (same host) or `http://WEBSHELL_HOST_IP:8080/shell.jsp` (remote)
-5. Remote work dir: `/tmp/dsp`
-6. **Run scenario**
-
-**Option B — CLI**
-
-Same machine as the fake webshell:
-
-```bash
-source .venv/bin/activate
-dsp run --profile low --target-net 10.10.10.0/24 \
-  --execution-provider webshell \
-  --webshell-family jsp \
-  --webshell-url http://127.0.0.1:8080/shell.jsp \
-  --remote-work-dir /tmp/dsp
-```
-
-DSP on a different machine (use the webshell host’s IP):
-
-```bash
-dsp run --profile low --target-net 10.10.10.0/24 \
-  --execution-provider webshell \
-  --webshell-family jsp \
-  --webshell-url http://10.10.10.50:8080/shell.jsp \
-  --remote-work-dir /tmp/dsp
-```
-
-### Lab files (after setup)
-
-| Path | Purpose |
-|------|---------|
-| `~/fake_shelljsp_lab/shell_server.py` | Flask webshell server |
-| `~/fake_shelljsp_lab/start.sh` | Start the server |
-| `~/fake_shelljsp_lab/test_local.sh` | Quick curl smoke test |
-| `scripts/setup_fake_shelljsp_lab.sh` | One-time setup (in this repo) |
-
-### Fake vs real Tomcat
-
-| | Fake lab (this script) | Real Tomcat (`shell.jsp`) |
-|--|------------------------|---------------------------|
-| Setup time | ~1 minute | Longer (Java/Tomcat install) |
-| Best for | Quick DSP webshell smoke tests | Full Release 1.0 validation |
-| Validated scenarios | Basic connectivity; not all bundle features | 10/10 scenarios validated |
-
-For production-like validation, use a real Tomcat deployment — see [Lab guide](./RELEASE_1_0_LAB_GUIDE.md) and [JSP validation report](./docs/validation/JSP_REAL_WEBSHELL_VALIDATION_REPORT.md).
-
----
+Legacy aliases are still normalized by the runtime (`low`/`balanced` → `normal`, `burst` → `high`), but new usage should use only `normal` and `high`.
 
 ## Execution modes
 
-| Mode | When to use |
-|------|-------------|
-| **local** | DSP runs scenarios from this machine into `--target-net` |
-| **webshell** | Scenarios run on a remote host through a webshell endpoint (**validated:** JSP, PHP; **preview:** ASPX) |
+| Mode | Use |
+| --- | --- |
+| `local` | Generate activity directly from the DSP host |
+| `webshell` | Generate activity from an authorized remote host inside the target environment |
 
-Webshell configure hints (in the menu):
+Validated webshell families: **JSP** and **PHP**. **ASPX/Windows IIS remains preview** because real Windows runtime validation is still pending.
 
-- **Family:** `jsp` or `php` for validated remote execution; `aspx` is preview only (not yet validated on Windows IIS)  
-- **URL:** full HTTP(S) path, e.g. `http://10.10.10.50:8080/shell.jsp`  
-- **Remote work dir:** writable path on the target, e.g. `/tmp/dsp` (Linux validated paths)
+## Current release
 
----
+- Package version: **1.4.0**
+- Active operator branch: **`release/v1.4.0-rc`**
+- Release status: **READY WITH KNOWN LIMITATIONS**
+- Python requirement: **3.11+**
 
-## CLI (optional)
+The older `release/v1.4.0` branch is retired by the installer/menu because it contains stale traffic-volume behavior.
 
-If you prefer the command line after `source .venv/bin/activate`:
+## Documentation
 
-```bash
-# Local run
-dsp run --profile normal --target-net 10.10.10.0/24
+Full English and Korean documentation:
 
-# Webshell run
-dsp run --profile normal --target-net 10.10.10.0/24 \
-  --execution-provider webshell \
-  --webshell-family jsp \
-  --webshell-url http://10.10.10.50:8080/shell.jsp \
-  --remote-work-dir /tmp/dsp
-```
+**https://dsp.xdr.ooo**
 
----
+The documentation covers Quick Start, POC workflow, scenario coverage, local/webshell operation, reports/evidence, safety guardrails, CLI reference, validation status, and architecture.
 
-## Requirements
+## Safety
 
-- Python 3.11+
-- `git`, `python3-venv`, `pip`
-- `whiptail` (recommended for the TUI menu on Debian/Ubuntu)
+Use DSP only in an explicitly authorized lab or customer POC scope. Networks wider than `/24` require both `--allow-large-target` and `--max-hosts`.
 
----
-
-## More documentation
-
-- [Release 1.0 Summary](./RELEASE_1_0_SUMMARY.md)
-- [Release notes](./RELEASE_NOTES.md)
-- [Release documentation audit](./docs/validation/RELEASE_DOCUMENTATION_AUDIT.md)
-- [Operator menu](./docs/DSP_MENU.md)
-- [Bootstrap install](./docs/DSP_BOOTSTRAP_INSTALL.md)
-- [Lab guide](./RELEASE_1_0_LAB_GUIDE.md)
+For detailed scope and limitations, see `RELEASE_1_0_SUMMARY.md`, `RELEASE_NOTES.md`, and the validation reports under `docs/validation/`.
