@@ -28,11 +28,9 @@ require_cmd() {
 }
 
 die_python311_required() {
-  printf '[install-dsp] ERROR: DSP requires Python 3.11 or newer.\n' >&2
-  printf '[install-dsp] Install Python 3.11+ and venv support, then rerun the installer.\n' >&2
-  printf '[install-dsp] On Ubuntu 22.04:\n' >&2
-  printf '  sudo apt update\n' >&2
-  printf '  sudo apt install -y python3.11 python3.11-venv python3.11-dev\n' >&2
+  printf '[install-dsp] ERROR: DSP requires Python 3.11 or newer with venv support.\n' >&2
+  printf '[install-dsp] Install a supported Python 3.11+ runtime for your Linux distribution, then rerun the installer.\n' >&2
+  printf '[install-dsp] Verify that one of python3.11/python3.12/python3.13 is available and can import venv.\n' >&2
   exit 1
 }
 
