@@ -8,13 +8,13 @@ DSP helps POC engineers create repeatable security activity when a customer envi
 
 ## Install & run
 
-Requirements: Linux, Git, and Python 3.11+ with `venv` support.
+Requirements: Linux, Git, curl, and Python 3.11+ with `venv` support.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xdr-labs/xdr-poc-script/release/v1.4.0-rc/install-dsp.sh | bash
 ```
 
-The installer now uses `$HOME/xdr-poc-script` by default, creates `.venv`, installs DSP, preserves `~/.dsp/`, and opens the operator menu.
+The installer uses `$HOME/xdr-poc-script` by default, creates `.venv`, installs DSP, preserves `~/.dsp/`, and opens the operator menu.
 
 Then:
 
